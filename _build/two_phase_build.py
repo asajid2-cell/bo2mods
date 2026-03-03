@@ -1088,16 +1088,22 @@ def deploy_ipak():
         deployed_any = False
         if DEPLOY_TO_BASE:
             dst = os.path.join(DEPLOY_DIR, IPAK_NAME)
-            shutil.copy2(src, dst)
-            size = os.path.getsize(dst)
-            print(f"  Deployed {IPAK_NAME} to base zone/all ({size:,} bytes)")
-            deployed_any = True
+            try:
+                shutil.copy2(src, dst)
+                size = os.path.getsize(dst)
+                print(f"  Deployed {IPAK_NAME} to base zone/all ({size:,} bytes)")
+                deployed_any = True
+            except PermissionError as ex:
+                print(f"  WARNING: Could not deploy {IPAK_NAME} to base zone/all (file locked?): {ex}")
         if DEPLOY_TO_MOD:
             os.makedirs(DEPLOY_DIR_MOD, exist_ok=True)
             dst_mod = os.path.join(DEPLOY_DIR_MOD, IPAK_NAME)
-            shutil.copy2(src, dst_mod)
-            print(f"  Deployed {IPAK_NAME} to mod directory")
-            deployed_any = True
+            try:
+                shutil.copy2(src, dst_mod)
+                print(f"  Deployed {IPAK_NAME} to mod directory")
+                deployed_any = True
+            except PermissionError as ex:
+                print(f"  WARNING: Could not deploy {IPAK_NAME} to mod directory (file locked?): {ex}")
         if not deployed_any:
             print(f"  WARNING: {IPAK_NAME} build exists but deployment targets are disabled/missing")
         return deployed_any
