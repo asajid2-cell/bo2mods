@@ -1,6 +1,6 @@
 # BO3 -> BO2 Porting Runbook (Single-Variable Cycle)
 
-This runbook is the operational companion to `_build/PORTING_ARCHITECTURE_V2.md`.
+This runbook is the operational companion to `docs/explanation/porting-architecture.md`.
 
 ## 1. Preconditions
 - Work from repo root: `z:\Games\pluto_t6_full_game`
@@ -17,6 +17,11 @@ Use a unique run ID for every iteration:
 ### 3.1 Clean lane (before normal play)
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
+```
+
+### 3.1b Server lane (before joining servers)
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
 ```
 
 ### 3.2 Dev lane (one mod only)

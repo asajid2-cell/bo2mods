@@ -22,9 +22,15 @@ This project is strict about runtime lanes:
 
 Use the lane tool:
 ```powershell
+# From repo root: z:\Games\pluto_t6_full_game
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
+```
+
+If you keep runtime mods under the game install `mods/` directory (less common) and want them quarantined too:
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer" -ManageGameMods
 ```
 
 ## 3) Run the build spine

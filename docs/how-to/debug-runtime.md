@@ -8,6 +8,8 @@ Most “random” failures in this project were actually **runtime provenance** 
 This guide is the shortest path to proving what is loaded.
 
 ## 1) Reset runtime lanes
+Run from repo root (`z:\\Games\\pluto_t6_full_game`):
+
 Clean lane:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
@@ -28,6 +30,23 @@ Audit (no mutations):
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode audit
 ```
 
+### Recommended loops
+Before joining public servers (guarantee nothing local can interfere):
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
+```
+
+Before local testing (make the mod show up + be loadable):
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
+python _build/two_phase_build.py
+```
+
+After you’re done testing and want to go back to servers:
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
+```
+
 ## 2) Read the runtime_reset report
 Each run emits:
 - `_build/runtime_reset/<timestamp>/report.json`
@@ -43,9 +62,18 @@ Note on mods:
   - cannot be accidentally loaded when you join servers
 - `dev` restores exactly one mod folder into `mods/` and quarantines the rest
 
-By default, quarantine is applied to the **Plutonium storage** mods directory.
-If you also have runtime mods living under the game install `mods/` directory and need to quarantine them too, pass:
-`-ManageGameMods`
+Where quarantine goes:
+- Storage mods quarantine:
+  - `%LOCALAPPDATA%\\Plutonium\\storage\\t6\\_runtime_quarantine\\mods\\<timestamp>\\`
+- Game install mods quarantine (only if enabled):
+  - `z:\\Games\\pluto_t6_full_game\\_build\\runtime_quarantine\\game_mods\\<timestamp>\\`
+
+By default, quarantine is applied to the **Plutonium storage** mods directory (this is the one that affects the in-game mod list).
+If you also have runtime mods living under the game install `mods/` directory and need to quarantine/restore them too, pass:
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server -ManageGameMods
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer" -ManageGameMods
+```
 
 ## 3) Health check the lane
 ```powershell
