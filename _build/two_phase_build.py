@@ -2626,35 +2626,52 @@ def enforce_thundergun_dobj_bone_budget():
             )
         return False
 
-    # Zombie maps set player viewhands via `setviewmodel("c_zom_*_viewhands")`.
-    # If the weapon viewmodel carries a large skeleton (e.g. BO3 combined arms+gun),
-    # the *stock* viewhands DObj can exceed the hard cap even if weapondef handModel
-    # is minimal. Warn explicitly so crash cause is visible at build time.
-    stock_viewmodels = [
-        "c_zom_suit_viewhands",
-        "c_zom_hazmat_viewhands",
-    ]
-    for vm in stock_viewmodels:
-        vm_bones = _resolve_model_joint_count(vm)
-        vm_joint_names = _resolve_model_joint_name_set(vm)
-        if vm_bones is None:
-            continue
-        if isinstance(gun_joint_names, set) and isinstance(vm_joint_names, set) and gun_joint_names and vm_joint_names:
-            vm_total = len(gun_joint_names | vm_joint_names)
-            vm_mode = "union_joint_names"
-        else:
-            vm_total = int(gun_bones) + int(vm_bones)
-            vm_mode = "sum_counts"
-        if vm_total > DOBJ_BONE_LIMIT:
+    # Real crash guard: on ZM, the runtime first-person DObj is built from:
+    # - player viewhands xmodel (usually c_zom_*_viewhands)
+    # - weapon gunModel xmodel
+    # - weapon handModel xmodel (varies by weapon/profile)
+    #
+    # If we ship a large BO3 rig as gunModel while stock viewhands are active, the game
+    # will COM_ERROR with: dobj for xmodel 'c_zom_*_viewhands' has more than 160 bones.
+    #
+    # If viewhands swap mode is enabled, the thundergun's viewhands becomes the BO3 rig
+    # and gunModel is expected to be a no-visual carrier; in that case the stock viewhands
+    # cap does not apply when the TG is equipped.
+    stock_viewmodels = ["c_zom_suit_viewhands", "c_zom_hazmat_viewhands"]
+    if not THUNDERGUN_VIEWHANDS_ENABLE:
+        worst = None
+        for vm in stock_viewmodels:
+            vm_bones = _resolve_model_joint_count(vm)
+            vm_joint_names = _resolve_model_joint_name_set(vm)
+            if vm_bones is None:
+                continue
+            if (
+                isinstance(gun_joint_names, set)
+                and isinstance(hand_joint_names, set)
+                and isinstance(vm_joint_names, set)
+                and gun_joint_names
+                and hand_joint_names
+                and vm_joint_names
+            ):
+                vm_total = len(gun_joint_names | hand_joint_names | vm_joint_names)
+                vm_mode = "union_joint_names"
+            else:
+                vm_total = int(gun_bones) + int(hand_bones) + int(vm_bones)
+                vm_mode = "sum_counts"
+            if worst is None or vm_total > worst["total"]:
+                worst = {"vm": vm, "vm_bones": vm_bones, "total": vm_total, "mode": vm_mode}
+
+        if worst and worst["total"] > DOBJ_BONE_LIMIT:
             print(
-                "WARNING: stock ZM viewmodel DObj would exceed bone cap "
-                f"(viewmodel={vm}:{vm_bones}, gunModel={gun_model}:{gun_bones}, "
-                f"total={vm_total}/{DOBJ_BONE_LIMIT}, mode={vm_mode})."
+                "ERROR: stock ZM viewhands + weapon viewmodel would exceed bone cap "
+                f"(viewhands={worst['vm']}:{worst['vm_bones']}, gunModel={gun_model}:{gun_bones}, "
+                f"handModel={hand_model}:{hand_bones}, total={worst['total']}/{DOBJ_BONE_LIMIT}, mode={worst['mode']})."
             )
-            print(
-                "  Hint: override player viewmodel to a minimal xmodel (e.g. via `setviewmodel`) "
-                "when using a full-rig BO3 combined viewmodel weapon."
-            )
+            print("  Fix: build with viewhands swap mode enabled so TG uses a dedicated BO3 viewhands xmodel:")
+            print('    $env:ROGUE_TG_VIEWHANDS_ENABLE=\"1\"')
+            print("  Then in-game enable runtime swap (default off):")
+            print("    set rogue_tg_viewhands_enable 1")
+            return False
     return True
 
 

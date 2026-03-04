@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File "_build/test_local.ps1"
 
 This will:
 - reset runtime to a safe dev lane (single active mod)
-- rebuild + deploy with safe defaults (base deploy on, stub viewhands off)
+- rebuild + deploy with safe defaults (base deploy on, stub viewhands off, build viewhands-swap lane on)
 - print the next in-game steps
 
 ### Common environment knobs

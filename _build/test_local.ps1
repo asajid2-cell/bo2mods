@@ -26,7 +26,10 @@ param(
   # Lane toggles (defaults are the recommended local dev setup)
   [switch]$DeployToBase = $true,
   [switch]$RuntimeXanimToBase = $false,
-  [switch]$StubZmViewhands = $false
+  [switch]$StubZmViewhands = $false,
+
+  # Viewmodel architecture (recommended for BO3 rigs in T6)
+  [switch]$BuildViewhandsSwap = $true
 )
 
 Set-StrictMode -Version Latest
@@ -52,6 +55,7 @@ try {
   $env:ROGUE_DEPLOY_TO_BASE = $(if ($DeployToBase) { "1" } else { "0" })
   $env:ROGUE_TG_RUNTIME_XANIM_TO_BASE = $(if ($RuntimeXanimToBase) { "1" } else { "0" })
   $env:ROGUE_TG_STUB_ZM_VIEWHANDS = $(if ($StubZmViewhands) { "1" } else { "0" })
+  $env:ROGUE_TG_VIEWHANDS_ENABLE = $(if ($BuildViewhandsSwap) { "1" } else { "0" })
 
   python _build/two_phase_build.py
 
@@ -59,7 +63,9 @@ try {
   Write-Host "1) Fully restart Plutonium (xmodels can be cached)."
   Write-Host "2) Load mod: $ModName"
   Write-Host "3) Start a local match and verify stock weapons render (hands + gun)."
-  Write-Host "4) Then test Thundergun give/spawn."
+  Write-Host "4) (Once per session) Enable TG viewhands swap for BO3 visuals:"
+  Write-Host "     set rogue_tg_viewhands_enable 1"
+  Write-Host "5) Then test Thundergun give/spawn."
   Write-Host ""
   Write-Host "Before joining public servers, run:"
   Write-Host "  powershell -ExecutionPolicy Bypass -File `_build/runtime_reset.ps1` -Mode server"
@@ -67,4 +73,3 @@ try {
 finally {
   Pop-Location
 }
-
