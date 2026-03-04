@@ -17,6 +17,12 @@ start_mod()
     level.simple_wonder_mod_started = 1;
     rogue_log_event( "build", "id=2026-03-03-panzer-thundergun-v110-truth-alias-override" );
 
+    // Plutonium/T6 console doesn't reliably allow setting custom dvars interactively.
+    // Default the TG viewhands swap gate ON so local testing doesn't require a console command.
+    // (The swap still only occurs when .tg has precached and the carrier weapon is equipped.)
+    if ( getdvar( "rogue_tg_viewhands_enable" ) == "" )
+        setdvar( "rogue_tg_viewhands_enable", 1 );
+
     // Defer thundergun precache until first .tg usage.
     // Startup precache can block map load when custom anim payloads are unstable.
     level.rogue_tg_precached = false;
@@ -629,9 +635,12 @@ rogue_thundergun_viewmodel_swap_watcher()
         if ( !isdefined( level.rogue_tg_precached ) || !level.rogue_tg_precached )
             continue;
 
-        // Gate the risky viewmodel swap behind a dvar (default off).
-        // Use `set rogue_tg_viewhands_enable 1` to enable at runtime.
-        if ( 0 == getdvarint( "rogue_tg_viewhands_enable" ) )
+        // Gate the risky viewmodel swap behind a dvar.
+        // Note: if the dvar is missing, default it ON for local testing.
+        enabled = getdvarint( "rogue_tg_viewhands_enable" );
+        if ( getdvar( "rogue_tg_viewhands_enable" ) == "" )
+            enabled = 1;
+        if ( 0 == enabled )
         {
             // If we were previously set, restore and stay disabled.
             if ( isdefined( self.rogue_vm_tg_set ) && self.rogue_vm_tg_set )
