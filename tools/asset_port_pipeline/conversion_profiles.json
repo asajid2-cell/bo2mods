@@ -1,0 +1,29 @@
+{
+  "profiles": [
+    {
+      "name": "quality_high",
+      "decimate_ratio": 0.7,
+      "max_bones": 128,
+      "max_weights": 4
+    },
+    {
+      "name": "quality_mid",
+      "decimate_ratio": 0.55,
+      "max_bones": 128,
+      "max_weights": 4
+    },
+    {
+      "name": "balanced",
+      "decimate_ratio": 0.45,
+      "max_bones": 96,
+      "max_weights": 4
+    },
+    {
+      "name": "aggressive",
+      "decimate_ratio": 0.3,
+      "max_bones": 64,
+      "max_weights": 4
+    }
+  ]
+}
+

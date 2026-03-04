@@ -1,0 +1,31 @@
+// Starter template for a BO2 patch map port
+>game,T6
+
+>level.ipak_read,base
+>level.ipak_read,lowmip
+>level.ipak_read,common_zm
+>level.ipak_read,zm_tomb
+>level.ipak_read,zm_transit
+>level.ipak_write,zm_tomb_port_patch
+
+// ---- Core map ----
+// mapents,zm_tomb_port_patch
+// stringtable,mp/configstrings/configstrings_zm_tomb.csv
+
+// ---- Render assets ----
+// techniqueset,<techset_name>
+// image,<image_name>
+// material,mc/<material_name>
+// xmodel,<xmodel_name>
+
+// ---- Gameplay assets ----
+// weapon,<weapon_name>
+// aitype,<aitype_name>
+// animtree,<animtree_name>
+// animstatedef,<animstatedef_name>
+// xanim,<xanim_name>
+// xmodelalias,<xmodelalias_name>
+
+// ---- Scripts/raw ----
+// rawfile,maps/mp/zm_tomb_port_patch.gsc
+// script,maps/mp/zm_tomb_port_patch.gsc

@@ -10,7 +10,7 @@ This mod installs one auto-loaded script for Plutonium T6 Zombies:
 - Each match, those 3 choices are randomly drawn from a themed class catalog of 20 archetypes.
 - Each loadout contains:
   - 3 themed weapons from the current map weapon pool (including available upgrades/wonder weapons).
-  - 1 random melee weapon from the current map melee pool.
+  - 1 themed melee weapon from valid melee registries (with map-safe fallback if unavailable).
   - 5 perks total with Juggernog guaranteed and the other 4 randomized.
 - After selection, the player receives:
   - `10000` points
@@ -24,6 +24,7 @@ This mod installs one auto-loaded script for Plutonium T6 Zombies:
   - custom title + subtitle
   - themed weapon tag preferences (used to bias weapon rolls)
   - themed UI colors for header/accent/sections
+  - decorative glyphs + subtle pulse animation on the card frame
 
 ## Picker Controls
 

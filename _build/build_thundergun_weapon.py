@@ -64,7 +64,7 @@ ANIM_FIELDS = {
 # are preserved when --semantics thundergun is selected.
 FORCE_CLEAR = set()
 
-def get_force_set(model_mode):
+def get_force_set(model_mode, gun_model_override=None, world_model_override=None):
     force = {}
     if model_mode == "base":
         # Keep donor weapon fields untouched for pure donor-clone probing.
@@ -79,6 +79,11 @@ def get_force_set(model_mode):
     else:
         force["gunModel"] = "rogue_tg_view"
         force["worldModel"] = "rogue_tg_world"
+
+    if gun_model_override is not None and gun_model_override != "":
+        force["gunModel"] = gun_model_override
+    if world_model_override is not None and world_model_override != "":
+        force["worldModel"] = world_model_override
     return force
 
 SAFE_ANIMS = {
@@ -116,6 +121,20 @@ CORE_BO3_FIELDS = {
     "emptyDropAnim": "vm_thunder_gun_putaway",
     "adsUpAnim": "vm_thunder_gun_ads_base_up",
     "adsDownAnim": "vm_thunder_gun_ads_base_down",
+    # Movement/transition states: remove donor N/A refs and force vm_thunder_gun_*.
+    "sprintInAnim": "vm_thunder_gun_sprint_in",
+    "sprintLoopAnim": "vm_thunder_gun_sprint_loop",
+    "sprintOutAnim": "vm_thunder_gun_sprint_out",
+    "crawlInAnim": "vm_thunder_gun_crawl_in",
+    "crawlForwardAnim": "vm_thunder_gun_crawl_f",
+    "crawlBackAnim": "vm_thunder_gun_crawl_b",
+    "crawlRightAnim": "vm_thunder_gun_crawl_r",
+    "crawlLeftAnim": "vm_thunder_gun_crawl_l",
+    "crawlOutAnim": "vm_thunder_gun_crawl_out",
+    "dtp_in": "vm_thunder_gun_slide_in",
+    "dtp_loop": "vm_thunder_gun_slide_loop",
+    "dtp_out": "vm_thunder_gun_slide_out",
+    "slide_in": "vm_thunder_gun_slide_in",
 }
 
 IDLE_BO3_FIELDS = {
@@ -324,6 +343,7 @@ def apply_optional_field_overrides(
     clip_name=None,
     hud_icon=None,
     kill_icon=None,
+    hand_model=None,
     clear_camo=False,
 ):
     out = []
@@ -349,6 +369,10 @@ def apply_optional_field_overrides(
             if v != kill_icon:
                 changed += 1
             out.append((k, kill_icon))
+        elif k == "handModel" and hand_model is not None:
+            if v != hand_model:
+                changed += 1
+            out.append((k, hand_model))
         elif k == "camo" and clear_camo:
             if v != "":
                 changed += 1
@@ -416,6 +440,21 @@ def main():
         help="Optional forced killIcon override."
     )
     parser.add_argument(
+        "--hand-model",
+        default=None,
+        help="Optional forced handModel override (e.g. viewmodel_usa_no_model).",
+    )
+    parser.add_argument(
+        "--gun-model",
+        default=None,
+        help="Optional forced gunModel override (e.g. viewmodel_usa_no_model).",
+    )
+    parser.add_argument(
+        "--world-model",
+        default=None,
+        help="Optional forced worldModel override.",
+    )
+    parser.add_argument(
         "--clear-camo",
         action="store_true",
         help="Force camo field to empty string."
@@ -458,7 +497,7 @@ def main():
     print(f"  Minigun has {mini_anim_count} non-empty animation references (will be KEPT)")
 
     print("\nBuilding merged weapon...")
-    force_set = get_force_set(args.model_mode)
+    force_set = get_force_set(args.model_mode, gun_model_override=args.gun_model, world_model_override=args.world_model)
     merged = build_weapon(minigun, thundergun, args.semantics, force_set)
     merged, filled = fill_empty_anim_fields(merged)
     print(f"  Result: {len(merged)} fields")
@@ -469,6 +508,7 @@ def main():
         clip_name=args.clip_name,
         hud_icon=args.hud_icon,
         kill_icon=args.kill_icon,
+        hand_model=args.hand_model,
         clear_camo=args.clear_camo,
     )
     if forced_changed:

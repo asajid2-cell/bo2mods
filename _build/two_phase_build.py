@@ -30,15 +30,16 @@ MOD_SCRIPT_SRC_DISABLED = r"z:\Games\pluto_t6_full_game\mods\__disabled__zm_rogu
 MOD_SCRIPT_DST_DIR = os.path.expandvars(r"%localappdata%\Plutonium\storage\t6\mods\zm_roguelike_panzer\scripts")
 RUNTIME_RESET_SCRIPT = r"z:\Games\pluto_t6_full_game\_build\runtime_reset.ps1"
 
-# Runtime in this workspace resolves Transit map FFs from zone/all.
-# Keep base deploy enabled by default so custom weapon assets are actually live in-game.
-DEPLOY_TO_BASE = os.environ.get("ROGUE_DEPLOY_TO_BASE", "1") not in ("0", "false", "False")
+# Server-safe default: do not touch base zone/all unless explicitly requested.
+# Base deployment can contaminate dedicated servers that load stock Transit lanes.
+DEPLOY_TO_BASE = os.environ.get("ROGUE_DEPLOY_TO_BASE", "0") not in ("0", "false", "False")
 DEPLOY_TO_MOD = os.environ.get("ROGUE_DEPLOY_TO_MOD", "1") not in ("0", "false", "False")
 
 LINKER = r"z:\Games\pluto_t6_full_game\tools\oat\Linker.exe"
 UNLINKER = r"z:\Games\pluto_t6_full_game\tools\oat\Unlinker.exe"
 THUNDERGUN_WEAPON_BUILDER = r"z:\Games\pluto_t6_full_game\_build\build_thundergun_weapon.py"
-THUNDERGUN_WEAPON_PROFILE = os.environ.get("ROGUE_TG_PROFILE", "stable")
+# Step-1 conversion lane: wire BO3 core anim names first (stub-backed verification).
+THUNDERGUN_WEAPON_PROFILE = os.environ.get("ROGUE_TG_PROFILE", "hybrid_core")
 # Gameplay lane: default to thundergun semantics now that carrier alias override is stable.
 # Set ROGUE_TG_SEMANTICS=minigun if you need to fall back to a pure donor behavior probe.
 THUNDERGUN_WEAPON_SEMANTICS = os.environ.get("ROGUE_TG_SEMANTICS", "thundergun")
@@ -64,12 +65,62 @@ THUNDERGUN_FORCE_AMMO_NAME = os.environ.get("ROGUE_TG_AMMO_NAME", "")
 THUNDERGUN_FORCE_CLIP_NAME = os.environ.get("ROGUE_TG_CLIP_NAME", "")
 THUNDERGUN_FORCE_HUD_ICON = os.environ.get("ROGUE_TG_HUD_ICON", "")
 THUNDERGUN_FORCE_KILL_ICON = os.environ.get("ROGUE_TG_KILL_ICON", THUNDERGUN_FORCE_HUD_ICON)
+COMBINED_VIEWMODEL_MODE = os.environ.get("ROGUE_TG_COMBINED_VIEWMODEL", "0") not in ("0", "false", "False")
+# NOTE: viewmodel_hands_no_model carries a full hands skeleton (~70 joints),
+# which combined with BO3 thundergun viewmodel (~134 joints) exceeds T6's
+# first-person DObj 160-bone cap. Default to a low-joint visible proxy.
+THUNDERGUN_FORCE_HAND_MODEL = os.environ.get("ROGUE_TG_HAND_MODEL", "viewmodel_usa_morphine")
+# Require a non-degenerate handModel mesh by default so we stop silently shipping
+# no-visual handModel lanes (e.g. no_model placeholders).
+REQUIRE_VISIBLE_HANDMODEL = os.environ.get("ROGUE_TG_REQUIRE_VISIBLE_HANDMODEL", "1") not in ("0", "false", "False")
+if COMBINED_VIEWMODEL_MODE:
+    # Combined BO3 path: hands are expected inside gunModel rig/mesh.
+    # Default hand model to no-hands carrier unless user explicitly overrides.
+    if "ROGUE_TG_HAND_MODEL" not in os.environ:
+        THUNDERGUN_FORCE_HAND_MODEL = "viewmodel_usa_no_model"
+    # No-hands model is intentionally degenerate; skip visibility guard by default.
+    if "ROGUE_TG_REQUIRE_VISIBLE_HANDMODEL" not in os.environ:
+        REQUIRE_VISIBLE_HANDMODEL = False
 # Default to clearing camo to avoid dragging in large base-game camo image chains
 # (OAT can't always source them from loaded FFs and will try to build IPaks from disk IWIs).
 THUNDERGUN_CLEAR_CAMO = os.environ.get("ROGUE_TG_CLEAR_CAMO", "1") not in ("0", "false", "False")
 THUNDERGUN_TRUTH_ALIAS = os.environ.get("ROGUE_TG_TRUTH_ALIAS", "ak74u_zm")
 THUNDERGUN_TRUTH_ALIAS_UPG = os.environ.get("ROGUE_TG_TRUTH_ALIAS_UPG", "ak74u_upgraded_zm")
 USE_SO_SURVIVAL_LOAD_BASELINE = True
+
+HANDMODEL_SOURCE_ROOT = r"z:\Games\pluto_t6_full_game\_build\runtime_unlink_zm_transit_full_1"
+ZONE_DUMP_SOURCE_ROOT = r"z:\Games\pluto_t6_full_game\zone_dump\zone_raw\so_zsurvival_zm_transit"
+
+STUB_ZM_VIEWHANDS = os.environ.get("ROGUE_TG_STUB_ZM_VIEWHANDS", "0").strip() not in ("0", "false", "False", "")
+STUB_ZM_VIEWHANDS_NAMES = ["c_zom_suit_viewhands", "c_zom_hazmat_viewhands"]
+
+THUNDERGUN_VIEWHANDS_MODEL = os.environ.get("ROGUE_TG_VIEWHANDS_MODEL", "rogue_tg_viewhands").strip() or "rogue_tg_viewhands"
+THUNDERGUN_VIEWHANDS_ENABLE = os.environ.get(
+    "ROGUE_TG_VIEWHANDS_ENABLE",
+    "0",
+).strip() not in ("0", "false", "False", "")
+THUNDERGUN_FORCE_GUN_MODEL = os.environ.get("ROGUE_TG_GUN_MODEL", "").strip()
+THUNDERGUN_FORCE_WORLD_MODEL = os.environ.get("ROGUE_TG_WORLD_MODEL", "").strip()
+DOBJ_BONE_LIMIT = 160
+
+if THUNDERGUN_VIEWHANDS_ENABLE and not THUNDERGUN_FORCE_GUN_MODEL and "ROGUE_TG_GUN_MODEL" not in os.environ:
+    # When the BO3 combined viewmodel is used as the *viewhands* model, the weapon's
+    # gunModel should be a minimal/no-visual carrier to avoid bone cap + duplication.
+    THUNDERGUN_FORCE_GUN_MODEL = "viewmodel_usa_no_model"
+KNOWN_HANDMODEL_BONES = {
+    "viewmodel_usa_no_model": 7,
+    "viewmodel_usa_morphine": 6,
+    "viewmodel_hands_no_model": 70,
+    "c_zom_hazmat_viewhands": 60,
+    "c_zom_suit_viewhands": 52,
+}
+
+_phase_guard_env = os.environ.get("ROGUE_TG_ENFORCE_PHASE_SIZE", "").strip()
+if _phase_guard_env == "":
+    # Conversion profiles can validly produce a smaller phase2 FF.
+    ENFORCE_PHASE_SIZE_GUARD = THUNDERGUN_WEAPON_PROFILE == "stable"
+else:
+    ENFORCE_PHASE_SIZE_GUARD = _phase_guard_env not in ("0", "false", "False")
 
 SO_SURVIVAL_LOAD_FF_VANILLA = r"z:\Games\pluto_t6_full_game\zone\all\so_zsurvival_zm_transit.ff.vanilla_save"
 SO_SURVIVAL_LOAD_FF_CURRENT = r"z:\Games\pluto_t6_full_game\zone\all\so_zsurvival_zm_transit.ff"
@@ -80,6 +131,8 @@ SO_SURVIVAL_LOAD_FF_HARDFALLBACK = r"z:\Games\pluto_t6_full_game\_build\ff_backu
 # Deterministic baseline: pin to known-good stock backup for carrier-load builds.
 # Local unpatched outputs can inherit prior experimental drift and reintroduce load hangs.
 SO_SURVIVAL_LOAD_FF_FIXED = SO_SURVIVAL_LOAD_FF_HARDFALLBACK
+SO_SURVIVAL_LOAD_CANONICAL_STAGE_DIR = os.path.join(OUTPUT_DIR, "_baseline_load")
+SO_SURVIVAL_LOAD_CANONICAL_NAME = "so_zsurvival_zm_transit.ff"
 SO_SURVIVAL_LOAD_FF = (
     SO_SURVIVAL_LOAD_FF_FIXED
     if (SO_SURVIVAL_LOAD_FF_FIXED and os.path.exists(SO_SURVIVAL_LOAD_FF_FIXED))
@@ -93,6 +146,7 @@ SO_SURVIVAL_LOAD_FF = (
         )
     )
 )
+SO_SURVIVAL_LOAD_FF_SOURCE = SO_SURVIVAL_LOAD_FF
 
 # Control-group mode: compile standalone thundergun_xanims.ff and load it via --load.
 # This bypasses in-place Phase 3 binary splicing entirely.
@@ -111,10 +165,77 @@ THUNDERGUN_FORCE_ROOT_ONLY_XANIM = False
 THUNDERGUN_VIEW_GLB = r"z:\Games\pluto_t6_full_game\_build\panzer_work\so_zsurvival_zm_transit\model_export\thundergun_view_lod0.glb"
 THUNDERGUN_VIEW_GLB_FALLBACK = THUNDERGUN_VIEW_GLB + ".prescale_bak"
 THUNDERGUN_VIEW_GLB_MASTER = THUNDERGUN_VIEW_GLB + ".bak"
+VIEWHANDS_REF_GLB = r"z:\Games\pluto_t6_full_game\_build\runtime_unlink_so_zsurvival_1\model_export\c_zom_suit_viewhands_lod0.glb"
 NEUTRALIZE_ROOT_BONES = ["tag_player", "tag_camera", "tag_origin"]
 # Carrier FF crypto seed must match the carrier zone seed used by linker load.
 # Using the parent map seed causes inflate -3 when loading thundergun_xanims.ff.
 CUSTOM_XANIM_CRYPTO_SEED = "thundergun_xanims"
+CUSTOM_XANIM_EMIT_MODE = os.environ.get(
+    "ROGUE_TG_XANIM_EMIT_MODE",
+    ("donor_clone" if THUNDERGUN_WEAPON_PROFILE == "hybrid_core" else "static_pose"),
+)
+CUSTOM_XANIM_DONOR_FF = os.environ.get(
+    "ROGUE_TG_XANIM_DONOR_FF",
+    r"z:\Games\pluto_t6_full_game\_build\ff_backup\20260213-125735\zm_transit.ff",
+)
+CUSTOM_XANIM_DONOR_ZONE = os.environ.get("ROGUE_TG_XANIM_DONOR_ZONE", "zm_transit")
+CUSTOM_XANIM_DONOR_ASSET = os.environ.get("ROGUE_TG_XANIM_DONOR_ASSET", "viewmodel_ak74u_t6_idle")
+CUSTOM_XANIM_DONOR_FALLBACK = os.environ.get("ROGUE_TG_XANIM_DONOR_FALLBACK", "1") not in ("0", "false", "False")
+CUSTOM_XANIM_REQUIRE_NO_FALLBACK = os.environ.get("ROGUE_TG_XANIM_REQUIRE_NO_FALLBACK", "1") not in ("0", "false", "False")
+CUSTOM_XANIM_BO3_TARGETS = [
+    s.strip() for s in os.environ.get("ROGUE_TG_XANIM_BO3_TARGETS", "vm_thunder_gun_idle").split(",") if s.strip()
+]
+CUSTOM_XANIM_BO3_FALLBACK_MODE = os.environ.get("ROGUE_TG_XANIM_BO3_FALLBACK_MODE", "donor_clone")
+CUSTOM_XANIM_BO3_ROOT_BONES = [
+    s.strip()
+    for s in os.environ.get(
+        "ROGUE_TG_XANIM_BO3_ROOT_BONES",
+        "tag_weapon_right,j_mainroot,tag_player,tag_camera,tag_origin",
+    ).split(",")
+    if s.strip()
+]
+CUSTOM_XANIM_BO3_NONROOT_BONES = [
+    s.strip()
+    for s in os.environ.get(
+        "ROGUE_TG_XANIM_BO3_NONROOT_BONES",
+        "j_gun,j_bolt,j_clip,j_stripper,j_switch,j_pump,j_drum,j_mag",
+    ).split(",")
+    if s.strip()
+]
+CUSTOM_XANIM_BO3_MOTION_REPORT_TOP = max(
+    1, int(os.environ.get("ROGUE_TG_XANIM_BO3_MOTION_REPORT_TOP", "3") or "3")
+)
+CUSTOM_XANIM_ORACLE_ENABLE = os.environ.get(
+    "ROGUE_TG_XANIM_ORACLE",
+    "1" if CUSTOM_XANIM_EMIT_MODE == "donor_clone" else "0",
+) not in ("0", "false", "False")
+CUSTOM_XANIM_ORACLE_FF = os.environ.get("ROGUE_TG_XANIM_ORACLE_FF", CUSTOM_XANIM_DONOR_FF)
+CUSTOM_XANIM_ORACLE_ZONE = os.environ.get("ROGUE_TG_XANIM_ORACLE_ZONE", CUSTOM_XANIM_DONOR_ZONE)
+CUSTOM_XANIM_ORACLE_ASSET = os.environ.get("ROGUE_TG_XANIM_ORACLE_ASSET", "viewmodel_ak74u_t6_reload")
+RIG_AUTOFALLBACK_STUB = os.environ.get("ROGUE_TG_RIG_AUTOFALLBACK_STUB", "1") not in ("0", "false", "False")
+CUSTOM_XANIM_RUNTIME_ENABLE = (
+    USE_CUSTOM_XANIM_FF
+    and os.environ.get("ROGUE_TG_RUNTIME_XANIM_ENABLE", "1") not in ("0", "false", "False")
+)
+CUSTOM_XANIM_RUNTIME_FF_NAME = os.environ.get("ROGUE_TG_RUNTIME_XANIM_FF", "mod_load.ff")
+CUSTOM_XANIM_RUNTIME_ZONE_NAME = os.path.splitext(CUSTOM_XANIM_RUNTIME_FF_NAME)[0]
+CUSTOM_XANIM_RUNTIME_OUTPUT_FF = os.path.join(OUTPUT_DIR, CUSTOM_XANIM_RUNTIME_FF_NAME)
+CUSTOM_XANIM_RUNTIME_DEPLOY_BASE = os.environ.get(
+    "ROGUE_TG_RUNTIME_XANIM_TO_BASE",
+    "0",
+) not in ("0", "false", "False")
+CUSTOM_XANIM_RUNTIME_DEPLOY_MOD = os.environ.get(
+    "ROGUE_TG_RUNTIME_XANIM_TO_MOD",
+    "1" if DEPLOY_TO_MOD else "0",
+) not in ("0", "false", "False")
+_custom_xanim_verify_env = os.environ.get("ROGUE_TG_XANIM_VERIFY_NAMES", "").strip()
+if _custom_xanim_verify_env:
+    CUSTOM_XANIM_VERIFY_NAMES = [s.strip() for s in _custom_xanim_verify_env.split(",") if s.strip()]
+else:
+    CUSTOM_XANIM_VERIFY_NAMES = ["vm_thunder_gun_idle", "vm_thunder_gun_fire", "vm_thunder_gun_reload_empty"]
+LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES = set()
+LAST_CUSTOM_XANIM_EMIT_MODE = CUSTOM_XANIM_EMIT_MODE
+CUSTOM_XANIM_LINKER_LOAD_ENABLE = os.environ.get("ROGUE_TG_LINKER_LOAD_CUSTOM_XANIM", "").strip().lower()
 
 # Offline safety gate: run integrity check before deployment.
 PRECHECK_ENABLED = True
@@ -122,6 +243,9 @@ PRECHECK_STRICT_COUNTS = False
 PRECHECK_REPORT_DIR = r"z:\Games\pluto_t6_full_game\_build\reports"
 PRECHECK_BASELINE_OVERRIDE = SO_SURVIVAL_LOAD_FF_HARDFALLBACK
 TG_BUILD_MANIFEST_PATH = os.path.join(PRECHECK_REPORT_DIR, "last_tg_build_manifest.json")
+RIG_VALIDATE_ENABLE = os.environ.get("ROGUE_TG_RIG_VALIDATE", "1") not in ("0", "false", "False")
+RIG_VALIDATE_STRICT = os.environ.get("ROGUE_TG_RIG_STRICT", "0") not in ("0", "false", "False")
+RIG_VALIDATE_REPORT = os.path.join(PRECHECK_REPORT_DIR, "last_tg_rig_validation.json")
 
 # Critical mechz scripts must stay as text source files.
 # If these are staged from unlinked binary script blobs (e.g. leading "€GSC"),
@@ -235,10 +359,43 @@ def _baseline_is_contaminated(path):
     return False
 
 
+def _materialize_so_survival_load_ff(path):
+    """
+    Copy baseline FF to a canonical filename that matches zone crypto seed derivation.
+    Many T6 tool paths derive seed from filename; aliases like *_vanilla.ff can inflate -3.
+    """
+    src = os.path.abspath(path)
+    stage_dir = os.path.abspath(SO_SURVIVAL_LOAD_CANONICAL_STAGE_DIR)
+    dst = os.path.join(stage_dir, SO_SURVIVAL_LOAD_CANONICAL_NAME)
+    os.makedirs(stage_dir, exist_ok=True)
+    shutil.copy2(src, dst)
+    return dst
+
+
+def _unlinker_list_so_survival_ok(ff_path):
+    """Quick tool-level sanity: Unlinker should parse as Zone 'so_zsurvival_zm_transit' with no inflate failure."""
+    if not os.path.exists(UNLINKER):
+        return False, f"missing unlinker: {UNLINKER}"
+    cmd = [UNLINKER, "--list", ff_path]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    out = (result.stdout or "") + (result.stderr or "")
+    text = out.lower()
+    if "inflate of stream failed" in text or "invalid temp offset" in text:
+        tail = out.strip().splitlines()
+        return False, tail[-1] if tail else "unlinker inflate/offset failure"
+    if result.returncode != 0:
+        tail = out.strip().splitlines()
+        return False, f"unlinker failed rc={result.returncode}: {(tail[-1] if tail else 'no output')}"
+    if "zone 'so_zsurvival_zm_transit'" not in text:
+        return False, "unlinker list did not report Zone 'so_zsurvival_zm_transit'"
+    return True, "ok"
+
+
 def _set_so_survival_load_ff(path):
     """Update SO_SURVIVAL_LOAD_FF and mutate BASE_ARGS in-place."""
-    global SO_SURVIVAL_LOAD_FF
-    SO_SURVIVAL_LOAD_FF = os.path.abspath(path)
+    global SO_SURVIVAL_LOAD_FF, SO_SURVIVAL_LOAD_FF_SOURCE
+    SO_SURVIVAL_LOAD_FF_SOURCE = os.path.abspath(path)
+    SO_SURVIVAL_LOAD_FF = _materialize_so_survival_load_ff(SO_SURVIVAL_LOAD_FF_SOURCE)
 
     # Try replacing an existing so_zsurvival load entry first.
     for i in range(len(BASE_ARGS) - 1):
@@ -333,20 +490,106 @@ COMMENT_PATTERNS = [
 ]
 
 
-def maybe_add_custom_xanim_load():
+def _should_linker_load_custom_xanim(effective_emit_mode):
+    # Explicit override wins.
+    if CUSTOM_XANIM_LINKER_LOAD_ENABLE in ("1", "true", "yes", "on"):
+        return True
+    if CUSTOM_XANIM_LINKER_LOAD_ENABLE in ("0", "false", "no", "off"):
+        return False
+    # Default: keep linker stable by not loading bo3_frames FFs directly.
+    return effective_emit_mode != "bo3_frames"
+
+
+def maybe_add_custom_xanim_load(effective_emit_mode):
     """Optionally inject custom thundergun_xanims.ff into linker args."""
     if not USE_CUSTOM_XANIM_FF:
         return
     if not os.path.exists(CUSTOM_XANIM_FF):
         print(f"  WARNING: USE_CUSTOM_XANIM_FF=1 but missing {CUSTOM_XANIM_FF}")
         return
+    if not _should_linker_load_custom_xanim(effective_emit_mode):
+        print(
+            "  Skipping linker --load for custom xanim FF "
+            f"(emit_mode={effective_emit_mode}); runtime lane deploy remains enabled."
+        )
+        return
     BASE_ARGS.insert(-1, "--load")
     BASE_ARGS.insert(-1, CUSTOM_XANIM_FF)
     print(f"  Using custom xanim load: {CUSTOM_XANIM_FF}")
 
 
-def build_custom_xanim_ff():
+def _build_custom_xanim_compile_cmd(compiler_script, xanim_dir, zone_name, crypto_seed, output_dir, emit_mode):
+    cmd = [
+        sys.executable, compiler_script,
+        "--xanim-dir", xanim_dir,
+        "--pattern", XANIM_EXPORT_GLOB,
+        "--output-dir", output_dir,
+        "--zone-name", zone_name,
+        "--crypto-seed", crypto_seed,
+        "--emit-mode", emit_mode,
+        "--neutralize-bones", *NEUTRALIZE_ROOT_BONES,
+    ]
+    if emit_mode == "donor_clone" or (
+        emit_mode == "bo3_frames" and CUSTOM_XANIM_BO3_FALLBACK_MODE == "donor_clone"
+    ):
+        cmd.extend([
+            "--donor-ff", CUSTOM_XANIM_DONOR_FF,
+            "--donor-zone-name", CUSTOM_XANIM_DONOR_ZONE,
+            "--donor-asset", CUSTOM_XANIM_DONOR_ASSET,
+        ])
+        if not CUSTOM_XANIM_DONOR_FALLBACK:
+            cmd.append("--no-donor-fallback-idle")
+        if CUSTOM_XANIM_REQUIRE_NO_FALLBACK:
+            cmd.append("--require-no-donor-fallback")
+    if emit_mode == "bo3_frames":
+        if CUSTOM_XANIM_BO3_TARGETS:
+            cmd.extend(["--bo3-frames-targets", *CUSTOM_XANIM_BO3_TARGETS])
+        cmd.extend(["--bo3-fallback-mode", CUSTOM_XANIM_BO3_FALLBACK_MODE])
+        if CUSTOM_XANIM_BO3_ROOT_BONES:
+            cmd.extend(["--bo3-root-bone-priority", *CUSTOM_XANIM_BO3_ROOT_BONES])
+        if CUSTOM_XANIM_BO3_NONROOT_BONES:
+            cmd.extend(["--bo3-nonroot-bone-priority", *CUSTOM_XANIM_BO3_NONROOT_BONES])
+        cmd.extend(["--bo3-motion-bone-report-top", str(CUSTOM_XANIM_BO3_MOTION_REPORT_TOP)])
+    return cmd
+
+
+def run_custom_xanim_roundtrip_oracle():
+    """Run strict donor parse/rebuild oracle before BO3 conversion work."""
+    if not CUSTOM_XANIM_ORACLE_ENABLE:
+        return True
+    oracle_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xanim_roundtrip_oracle.py")
+    if not os.path.exists(oracle_script):
+        print(f"  ERROR: Missing oracle script: {oracle_script}")
+        return False
+    cmd = [
+        sys.executable,
+        oracle_script,
+        "--ff",
+        CUSTOM_XANIM_ORACLE_FF,
+        "--zone-name",
+        CUSTOM_XANIM_ORACLE_ZONE,
+        "--asset",
+        CUSTOM_XANIM_ORACLE_ASSET,
+    ]
+    print(
+        "  Running donor roundtrip oracle: "
+        f"asset={CUSTOM_XANIM_ORACLE_ASSET} zone={CUSTOM_XANIM_ORACLE_ZONE}"
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    if output:
+        print(output)
+    if result.returncode != 0:
+        print("  ERROR: donor roundtrip oracle failed")
+        return False
+    print("  Donor roundtrip oracle PASS")
+    return True
+
+
+def build_custom_xanim_ff(emit_mode):
     """Compile standalone thundergun_xanims.ff from staged xanim_export files."""
+    global LAST_CUSTOM_XANIM_EMIT_MODE
+    LAST_CUSTOM_XANIM_EMIT_MODE = emit_mode
     if not USE_CUSTOM_XANIM_FF:
         return True
 
@@ -364,17 +607,16 @@ def build_custom_xanim_ff():
             print(f"         checked: {XANIM_EXPORT_SRC_PRIMARY}")
             return False
 
-    cmd = [
-        sys.executable, compiler_script,
-        "--xanim-dir", xanim_dir,
-        "--pattern", XANIM_EXPORT_GLOB,
-        "--output-dir", OUTPUT_DIR,
-        "--zone-name", "thundergun_xanims",
-        "--crypto-seed", CUSTOM_XANIM_CRYPTO_SEED,
-        "--emit-mode", "static_pose",
-        "--neutralize-bones", *NEUTRALIZE_ROOT_BONES,
-    ]
+    cmd = _build_custom_xanim_compile_cmd(
+        compiler_script,
+        xanim_dir,
+        "thundergun_xanims",
+        CUSTOM_XANIM_CRYPTO_SEED,
+        OUTPUT_DIR,
+        emit_mode,
+    )
     print(f"  Building custom xanim FF from: {xanim_dir}")
+    print(f"  emit_mode={emit_mode}")
     result = subprocess.run(cmd, timeout=600)
     if result.returncode != 0:
         print("  ERROR: compile_xanim_zone failed")
@@ -385,7 +627,87 @@ def build_custom_xanim_ff():
         return False
 
     print(f"  Built custom xanim FF: {CUSTOM_XANIM_FF} ({os.path.getsize(CUSTOM_XANIM_FF):,} bytes)")
+
+    # Build runtime alias FF with matching crypto seed for autoloaded runtime zone names
+    # (e.g. mod_load.ff must use crypto seed "mod_load").
+    if CUSTOM_XANIM_RUNTIME_ENABLE:
+        runtime_base = os.path.splitext(os.path.basename(CUSTOM_XANIM_FF))[0]
+        if CUSTOM_XANIM_RUNTIME_ZONE_NAME != runtime_base:
+            cmd_runtime = _build_custom_xanim_compile_cmd(
+                compiler_script,
+                xanim_dir,
+                CUSTOM_XANIM_RUNTIME_ZONE_NAME,
+                CUSTOM_XANIM_RUNTIME_ZONE_NAME,
+                OUTPUT_DIR,
+                emit_mode,
+            )
+            print(
+                f"  Building runtime custom xanim alias: "
+                f"{CUSTOM_XANIM_RUNTIME_FF_NAME} (seed={CUSTOM_XANIM_RUNTIME_ZONE_NAME})"
+            )
+            result_runtime = subprocess.run(cmd_runtime, timeout=600)
+            if result_runtime.returncode != 0:
+                print("  ERROR: compile_xanim_zone failed for runtime alias FF")
+                return False
+            if not os.path.exists(CUSTOM_XANIM_RUNTIME_OUTPUT_FF):
+                print(f"  ERROR: runtime alias FF not produced: {CUSTOM_XANIM_RUNTIME_OUTPUT_FF}")
+                return False
+            print(
+                f"  Built runtime alias FF: {CUSTOM_XANIM_RUNTIME_OUTPUT_FF} "
+                f"({os.path.getsize(CUSTOM_XANIM_RUNTIME_OUTPUT_FF):,} bytes)"
+            )
     return True
+
+
+def _find_anim_header(data, name):
+    target = name.encode("ascii") + b"\x00"
+    start = 0
+    while True:
+        idx = data.find(target, start)
+        if idx < 0:
+            return None
+        for gap in range(0, 5):
+            h = idx - gap - 104
+            if h < 0:
+                continue
+            if struct.unpack_from("<I", data, h)[0] != 0xFFFFFFFF:
+                continue
+            names_ptr = struct.unpack_from("<I", data, h + 0x40)[0]
+            if names_ptr not in (0, 0xFFFFFFFF):
+                continue
+            dbc = struct.unpack_from("<H", data, h + 0x04)[0]
+            dsc = struct.unpack_from("<H", data, h + 0x06)[0]
+            dic = struct.unpack_from("<H", data, h + 0x08)[0]
+            return (dbc, dsc, dic, names_ptr)
+        start = idx + 1
+
+
+def _verify_xanim_ff_has_real_states(ff_path, zone_name, required_names, require_real=True):
+    if not os.path.exists(ff_path):
+        return False, f"missing ff: {ff_path}"
+    try:
+        from patch_zone_xanims import decrypt_zone
+        _, raw = decrypt_zone(ff_path, zone_name)
+    except Exception as e:
+        return False, f"decrypt failed: {e}"
+
+    missing = []
+    not_real = []
+    for anim_name in required_names:
+        header = _find_anim_header(raw, anim_name)
+        if not header:
+            missing.append(anim_name)
+            continue
+        dbc, dsc, dic, names_ptr = header
+        is_real = names_ptr == 0xFFFFFFFF and (dbc or dsc or dic)
+        if not is_real:
+            not_real.append(anim_name)
+
+    if missing:
+        return False, "missing anims: " + ",".join(missing)
+    if require_real and not_real:
+        return False, "non-real anims: " + ",".join(not_real)
+    return True, "ok"
 
 
 def verify_custom_xanim_ff():
@@ -432,6 +754,34 @@ def verify_custom_xanim_ff():
     print(
         "  Custom xanim FF validation PASS: "
         f"raw={len(raw):,} totalSize={total_size:,} TEMP={block_sizes[0]:,} VIRTUAL={block_sizes[5]:,}"
+    )
+    return True
+
+
+def verify_runtime_custom_xanim_ff():
+    """Validate runtime-load xanim FF payload when runtime alias lane is enabled."""
+    if not CUSTOM_XANIM_RUNTIME_ENABLE:
+        return True
+
+    runtime_source = (
+        CUSTOM_XANIM_RUNTIME_OUTPUT_FF
+        if CUSTOM_XANIM_RUNTIME_ZONE_NAME != os.path.splitext(os.path.basename(CUSTOM_XANIM_FF))[0]
+        else CUSTOM_XANIM_FF
+    )
+    require_real = LAST_CUSTOM_XANIM_EMIT_MODE != "stub"
+    ok, reason = _verify_xanim_ff_has_real_states(
+        runtime_source,
+        CUSTOM_XANIM_RUNTIME_ZONE_NAME,
+        CUSTOM_XANIM_VERIFY_NAMES,
+        require_real=require_real,
+    )
+    if not ok:
+        print(f"  ERROR: runtime custom xanim FF validation failed: {reason}")
+        return False
+    mode_note = "presence-only" if not require_real else "real-payload"
+    print(
+        "  Runtime custom xanim FF validation PASS: "
+        f"zone={CUSTOM_XANIM_RUNTIME_ZONE_NAME} file={runtime_source} mode={mode_note}"
     )
     return True
 
@@ -524,8 +874,7 @@ def stage_thundergun_xanim_exports():
     Ensure vm_thunder_gun_*.xanim_export are available for native OAT compilation.
     """
     if USE_CUSTOM_XANIM_FF:
-        print("  Skipping native xanim_export staging (custom xanim FF mode)")
-        return
+        print("  Staging xanim_export files for custom xanim FF mode")
 
     def _read_numparts(path):
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -858,7 +1207,9 @@ def ensure_thundergun_viewmodel_glb():
     skin_count = len(gltf.get("skins", []))
     if skin_count > 0:
         print(f"  Viewmodel GLB OK: nodes={node_count}, skins={skin_count}")
-        return
+        # Normalize camera chain hierarchy + align basis so equip doesn't flip view.
+        normalize_thundergun_camera_hierarchy()
+        return align_thundergun_tag_view_basis()
 
     if not os.path.exists(THUNDERGUN_VIEW_GLB_FALLBACK):
         raise RuntimeError(
@@ -871,6 +1222,95 @@ def ensure_thundergun_viewmodel_glb():
         f"({os.path.basename(THUNDERGUN_VIEW_GLB_FALLBACK)})"
     )
     # Keep fallback as-is; do not force rigid skinning.
+    normalize_thundergun_camera_hierarchy()
+    return align_thundergun_tag_view_basis()
+
+
+def validate_thundergun_viewmodel_rig():
+    """Validate GLB contains bones referenced by vm_thunder_gun_*.xanim_export files."""
+    if not RIG_VALIDATE_ENABLE:
+        return True
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validate_thundergun_viewmodel_rig.py")
+    if not os.path.exists(script):
+        print(f"  WARNING: rig validation script missing: {script}")
+        return True
+
+    cmd = [
+        sys.executable,
+        script,
+        "--glb",
+        THUNDERGUN_VIEW_GLB,
+        "--xanim-dir",
+        XANIM_EXPORT_DST_ROOT,
+        "--pattern",
+        XANIM_EXPORT_GLOB,
+        "--report",
+        RIG_VALIDATE_REPORT,
+    ]
+    hand_glb = _resolve_model_primary_glb(THUNDERGUN_FORCE_HAND_MODEL)
+    if hand_glb:
+        main_glb_abs = os.path.abspath(THUNDERGUN_VIEW_GLB)
+        hand_glb_abs = os.path.abspath(hand_glb)
+        if hand_glb_abs != main_glb_abs:
+            cmd.extend(["--extra-glb", hand_glb_abs])
+    if RIG_VALIDATE_STRICT:
+        cmd.append("--strict")
+    print(f"  Rig validate: enable=1 strict={'1' if RIG_VALIDATE_STRICT else '0'}")
+    result = subprocess.run(cmd, timeout=120)
+    if result.returncode == 0:
+        return True
+    if not RIG_VALIDATE_STRICT:
+        print("  WARNING: rig validation reported mismatches (non-strict mode).")
+        return True
+    print("  ERROR: rig validation failed (strict mode).")
+    return False
+
+
+def _read_json_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _get_rig_missing_nodes_count():
+    report = _read_json_file(RIG_VALIDATE_REPORT)
+    if not isinstance(report, dict):
+        return None
+    counts = report.get("counts")
+    if not isinstance(counts, dict):
+        return None
+    try:
+        return int(counts.get("missing_from_nodes", 0))
+    except Exception:
+        return None
+
+
+def resolve_effective_xanim_emit_mode():
+    """
+    Pick xanim compile mode after rig validation.
+    If rig is mismatched and donor_clone is requested, auto-fallback to stub
+    to avoid misleading stretched/warped visual tests.
+    """
+    mode = CUSTOM_XANIM_EMIT_MODE
+    if not RIG_AUTOFALLBACK_STUB:
+        return mode
+    if mode not in ("donor_clone", "bo3_frames"):
+        return mode
+    missing_nodes = _get_rig_missing_nodes_count()
+    if missing_nodes is None:
+        return mode
+    if missing_nodes > 0:
+        print(
+            "  Rig mismatch detected "
+            f"(missing_from_nodes={missing_nodes}); "
+            "forcing emit_mode=stub for this run. "
+            "Set ROGUE_TG_RIG_AUTOFALLBACK_STUB=0 to keep donor_clone."
+        )
+        return "stub"
+    return mode
 
 
 def _load_glb_json_and_bin(path):
@@ -918,6 +1358,199 @@ def _save_glb_json_and_bin(path, gltf, blob):
     out.extend(bin_bytes)
     with open(path, "wb") as f:
         f.write(out)
+
+
+def _find_glb_node_index(gltf, node_name):
+    nodes = gltf.get("nodes") or []
+    for i, n in enumerate(nodes):
+        if isinstance(n, dict) and n.get("name") == node_name:
+            return i
+    return None
+
+
+def _read_glb_node_rotation(path, node_name):
+    try:
+        gltf, _ = _load_glb_json_and_bin(path)
+    except Exception:
+        return None
+    idx = _find_glb_node_index(gltf, node_name)
+    if idx is None:
+        return None
+    node = (gltf.get("nodes") or [])[idx] or {}
+    rot = node.get("rotation")
+    if not isinstance(rot, list) or len(rot) != 4:
+        return [0.0, 0.0, 0.0, 1.0]
+    return [float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])]
+
+
+def _glb_remove_child(nodes, parent_idx, child_idx):
+    if parent_idx is None or child_idx is None:
+        return
+    if not (0 <= int(parent_idx) < len(nodes)):
+        return
+    parent = nodes[int(parent_idx)]
+    if not isinstance(parent, dict):
+        return
+    children = parent.get("children")
+    if not isinstance(children, list):
+        return
+    if child_idx in children:
+        parent["children"] = [c for c in children if c != child_idx]
+
+
+def _glb_add_child(nodes, parent_idx, child_idx):
+    if parent_idx is None or child_idx is None:
+        return
+    if not (0 <= int(parent_idx) < len(nodes)) or not (0 <= int(child_idx) < len(nodes)):
+        return
+    parent = nodes[int(parent_idx)]
+    if not isinstance(parent, dict):
+        return
+    children = parent.get("children")
+    if not isinstance(children, list):
+        children = []
+        parent["children"] = children
+    if child_idx not in children:
+        children.append(child_idx)
+
+
+def _glb_parent_map(nodes):
+    parent = {}
+    for i, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            continue
+        for ch in n.get("children") or []:
+            if isinstance(ch, int):
+                parent[ch] = i
+    return parent
+
+
+def normalize_thundergun_camera_hierarchy():
+    """
+    Our rebuilt BO3 rig initially had camera bones under `tag_torso`:
+      tag_camera -> tag_cambone -> tag_torso -> *_skel
+    That means any torso motion during equip/sprint can rotate the camera basis,
+    presenting as an instant view flip (controls feel inverted / looking behind).
+
+    Stock T6 ZM viewhands use:
+      tag_camera -> tag_cambone -> tag_view -> *_skel
+    where the camera chain is NOT driven by the torso animation.
+    """
+    if not os.path.exists(THUNDERGUN_VIEW_GLB):
+        return True
+    gltf, blob = _load_glb_json_and_bin(THUNDERGUN_VIEW_GLB)
+    nodes = gltf.get("nodes") or []
+    idx_view = _find_glb_node_index(gltf, "tag_view")
+    idx_cam = _find_glb_node_index(gltf, "tag_cambone")
+    idx_camera = _find_glb_node_index(gltf, "tag_camera")
+    idx_torso = _find_glb_node_index(gltf, "tag_torso")
+    if idx_view is None or idx_cam is None or idx_camera is None:
+        return True
+
+    # Prefer attaching tag_view to the *_skel container if present.
+    idx_skel = _find_glb_node_index(gltf, "thundergun_view_lod0_skel")
+    if idx_skel is None:
+        # Fallback to the first scene node.
+        scene_idx = int(gltf.get("scene", 0) or 0)
+        scenes = gltf.get("scenes") or []
+        scene_nodes = (scenes[scene_idx] if 0 <= scene_idx < len(scenes) else {}) or {}
+        root_nodes = scene_nodes.get("nodes") or []
+        idx_skel = root_nodes[0] if root_nodes else None
+
+    parent = _glb_parent_map(nodes)
+    p_view = parent.get(idx_view)
+    p_cam = parent.get(idx_cam)
+    p_torso = parent.get(idx_torso) if idx_torso is not None else None
+
+    # Already normalized if:
+    # - tag_cambone is under tag_view
+    # - tag_torso is under tag_view
+    # - tag_view is not under tag_cambone/tag_torso
+    if p_cam == idx_view and (idx_torso is None or p_torso == idx_view) and p_view not in (idx_cam, idx_torso):
+        return True
+
+    # Detach tag_view from its current parent (often tag_cambone) and reattach to skel/root.
+    _glb_remove_child(nodes, p_view, idx_view)
+    _glb_add_child(nodes, idx_skel, idx_view)
+
+    # Ensure torso is under tag_view so the skin has a single common root (tag_view).
+    if idx_torso is not None:
+        _glb_remove_child(nodes, p_torso, idx_torso)
+        _glb_add_child(nodes, idx_view, idx_torso)
+
+    # Detach tag_cambone from torso and attach under tag_view.
+    _glb_remove_child(nodes, p_cam, idx_cam)
+    _glb_add_child(nodes, idx_view, idx_cam)
+
+    # Update skin skeleton root to tag_view (required by OAT glTF loader).
+    skins = gltf.get("skins") or []
+    if skins:
+        skin = skins[0] if isinstance(skins[0], dict) else None
+        if skin and idx_view in (skin.get("joints") or []):
+            skin["skeleton"] = idx_view
+
+    gltf["nodes"] = nodes
+    _save_glb_json_and_bin(THUNDERGUN_VIEW_GLB, gltf, blob)
+    print("  Normalized thundergun camera hierarchy (tag_view root, camera chain decoupled).")
+    return True
+
+
+def align_thundergun_tag_view_basis():
+    """
+    Fix camera/view flips by aligning our combined-rig `tag_view` basis with
+    stock ZM viewhands. T6's viewmodel system expects tag_view to be rotated
+    (-90° about X in the reference viewhands GLB). If we leave tag_view as
+    identity, equipping the weapon can present as an immediate 180° view flip.
+    """
+    if not os.path.exists(THUNDERGUN_VIEW_GLB):
+        return True
+
+    # Prefer copying from stock viewhands if available.
+    ref_rot = None
+    if os.path.exists(VIEWHANDS_REF_GLB):
+        ref_rot = _read_glb_node_rotation(VIEWHANDS_REF_GLB, "tag_view")
+
+    # Hard fallback: matches c_zom_suit_viewhands_lod0.glb tag_view rotation.
+    if not ref_rot:
+        ref_rot = [-0.7071068, 0.0, 0.0, 0.7071068]
+
+    gltf, blob = _load_glb_json_and_bin(THUNDERGUN_VIEW_GLB)
+    idx_view = _find_glb_node_index(gltf, "tag_view")
+    idx_cam = _find_glb_node_index(gltf, "tag_cambone")
+    if idx_view is None or idx_cam is None:
+        print("  WARNING: viewmodel GLB missing tag_view/tag_cambone (cannot align basis).")
+        return True
+
+    nodes = gltf.get("nodes") or []
+    identity = [0.0, 0.0, 0.0, 1.0]
+
+    cam_node = nodes[idx_cam] if isinstance(nodes[idx_cam], dict) else {}
+    view_node = nodes[idx_view] if isinstance(nodes[idx_view], dict) else {}
+
+    cur_cam = cam_node.get("rotation")
+    if not isinstance(cur_cam, list) or len(cur_cam) != 4:
+        cur_cam = identity
+    cur_view = view_node.get("rotation")
+    if not isinstance(cur_view, list) or len(cur_view) != 4:
+        cur_view = identity
+
+    # Avoid churn if already aligned.
+    eps = 1e-6
+    cam_ok = all(abs(float(cur_cam[i]) - float(ref_rot[i])) <= eps for i in range(4))
+    view_ok = all(abs(float(cur_view[i]) - float(identity[i])) <= eps for i in range(4))
+    if cam_ok and view_ok:
+        return True
+
+    # After `normalize_thundergun_camera_hierarchy()`, `tag_cambone` is under `tag_view`
+    # like stock viewhands. Match stock: rotate tag_view, keep tag_cambone identity.
+    view_node["rotation"] = [float(ref_rot[0]), float(ref_rot[1]), float(ref_rot[2]), float(ref_rot[3])]
+    cam_node["rotation"] = identity
+    nodes[idx_cam] = cam_node
+    nodes[idx_view] = view_node
+    gltf["nodes"] = nodes
+    _save_glb_json_and_bin(THUNDERGUN_VIEW_GLB, gltf, blob)
+    print("  Aligned thundergun viewmodel tag_view basis to stock viewhands.")
+    return True
 
 
 def _pack_component_u(v, component_type):
@@ -1081,6 +1714,98 @@ def deploy_ff():
         print(f"  WARNING: {FF_NAME} not deployed (DEPLOY_TO_BASE={DEPLOY_TO_BASE}, DEPLOY_TO_MOD={DEPLOY_TO_MOD})")
 
 
+def _runtime_custom_xanim_targets():
+    targets = []
+    if not CUSTOM_XANIM_RUNTIME_ENABLE:
+        return targets
+    if CUSTOM_XANIM_RUNTIME_DEPLOY_BASE and DEPLOY_TO_BASE:
+        targets.append(("base", os.path.join(DEPLOY_DIR, CUSTOM_XANIM_RUNTIME_FF_NAME)))
+    if CUSTOM_XANIM_RUNTIME_DEPLOY_MOD and DEPLOY_TO_MOD:
+        targets.append(("mod", os.path.join(DEPLOY_DIR_MOD, CUSTOM_XANIM_RUNTIME_FF_NAME)))
+    return targets
+
+
+def deploy_runtime_custom_xanim_ff():
+    """Deploy runtime-load custom xanim FF (e.g. mod_load.ff) for in-game load."""
+    global LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES
+    LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES = set()
+    if not CUSTOM_XANIM_RUNTIME_ENABLE:
+        return True
+
+    src = (
+        CUSTOM_XANIM_RUNTIME_OUTPUT_FF
+        if CUSTOM_XANIM_RUNTIME_ZONE_NAME != os.path.splitext(os.path.basename(CUSTOM_XANIM_FF))[0]
+        else CUSTOM_XANIM_FF
+    )
+    if not os.path.exists(src):
+        print(f"  ERROR: missing runtime custom xanim source FF: {src}")
+        return False
+
+    targets = _runtime_custom_xanim_targets()
+    if not targets:
+        print(
+            "  ERROR: runtime custom xanim deploy has no active target lanes "
+            f"(to_base={CUSTOM_XANIM_RUNTIME_DEPLOY_BASE}, to_mod={CUSTOM_XANIM_RUNTIME_DEPLOY_MOD})"
+        )
+        return False
+
+    deployed_any = False
+    for lane, dst in targets:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        try:
+            shutil.copy2(src, dst)
+            print(
+                f"  Deployed runtime custom xanim ({lane}): "
+                f"{os.path.basename(dst)} ({os.path.getsize(dst):,} bytes)"
+            )
+            deployed_any = True
+            LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES.add(lane)
+        except PermissionError as ex:
+            print(
+                f"  WARNING: Could not deploy runtime custom xanim ({lane}) "
+                f"(file locked?): {ex}"
+            )
+        except Exception as ex:
+            print(
+                f"  WARNING: Could not deploy runtime custom xanim ({lane}) "
+                f"(unexpected error): {ex}"
+            )
+
+    if not deployed_any:
+        print("  ERROR: runtime custom xanim was not deployed to any active lane")
+        return False
+    return True
+
+
+def verify_deployed_runtime_custom_xanim_ff():
+    """Confirm deployed runtime custom xanim FF has REAL payloads for core states."""
+    global LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES
+    if not CUSTOM_XANIM_RUNTIME_ENABLE:
+        return True
+
+    all_ok = True
+    targets = _runtime_custom_xanim_targets()
+    if LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES:
+        targets = [(lane, ff_path) for lane, ff_path in targets if lane in LAST_RUNTIME_CUSTOM_XANIM_DEPLOYED_LANES]
+    require_real = LAST_CUSTOM_XANIM_EMIT_MODE != "stub"
+    for lane, ff_path in targets:
+        ok, reason = _verify_xanim_ff_has_real_states(
+            ff_path,
+            CUSTOM_XANIM_RUNTIME_ZONE_NAME,
+            CUSTOM_XANIM_VERIFY_NAMES,
+            require_real=require_real,
+        )
+        if ok:
+            print(f"  Runtime custom xanim verify ({lane}): PASS ({ff_path})")
+        else:
+            print(f"  Runtime custom xanim verify ({lane}): FAIL ({reason})")
+            all_ok = False
+    skipped = [lane for lane, _ in _runtime_custom_xanim_targets() if lane not in set(l for l, _ in targets)]
+    for lane in skipped:
+        print(f"  Runtime custom xanim verify ({lane}): SKIP (not deployed this run)")
+    return all_ok
+
+
 def deploy_ipak():
     """Copy the .ipak if it exists to zone directory and mod directory."""
     src = os.path.join(OUTPUT_DIR, IPAK_NAME)
@@ -1174,7 +1899,7 @@ def _load_expected_runtime_weapon_fields():
         wanted.append(THUNDERGUN_TRUTH_ALIAS)
     if THUNDERGUN_TRUTH_ALIAS_UPG and THUNDERGUN_TRUTH_ALIAS_UPG not in wanted:
         wanted.append(THUNDERGUN_TRUTH_ALIAS_UPG)
-    fields = ("displayName", "parentWeaponName", "ammoName", "clipName", "gunModel", "worldModel")
+    fields = ("displayName", "parentWeaponName", "ammoName", "clipName", "gunModel", "worldModel", "handModel")
 
     manifest = None
     if os.path.exists(TG_BUILD_MANIFEST_PATH):
@@ -1292,6 +2017,7 @@ def _read_weapon_manifest_fields(path):
         "clipName",
         "gunModel",
         "worldModel",
+        "handModel",
     ):
         entry[field_name] = _extract_weapon_field(raw, field_name)
     return entry
@@ -1309,9 +2035,14 @@ def _collect_tg_build_context():
             "ROGUE_TG_CLIP_NAME": THUNDERGUN_FORCE_CLIP_NAME,
             "ROGUE_TG_HUD_ICON": THUNDERGUN_FORCE_HUD_ICON,
             "ROGUE_TG_KILL_ICON": THUNDERGUN_FORCE_KILL_ICON,
+            "ROGUE_TG_COMBINED_VIEWMODEL": COMBINED_VIEWMODEL_MODE,
+            "ROGUE_TG_HAND_MODEL": THUNDERGUN_FORCE_HAND_MODEL,
+            "ROGUE_TG_REQUIRE_VISIBLE_HANDMODEL": REQUIRE_VISIBLE_HANDMODEL,
             "ROGUE_TG_CLEAR_CAMO": THUNDERGUN_CLEAR_CAMO,
             "ROGUE_TG_TRUTH_ALIAS": THUNDERGUN_TRUTH_ALIAS,
             "ROGUE_TG_TRUTH_ALIAS_UPG": THUNDERGUN_TRUTH_ALIAS_UPG,
+            "ROGUE_TG_XANIM_BO3_NONROOT_BONES": CUSTOM_XANIM_BO3_NONROOT_BONES,
+            "ROGUE_TG_XANIM_BO3_MOTION_REPORT_TOP": CUSTOM_XANIM_BO3_MOTION_REPORT_TOP,
         },
     }
 
@@ -1356,6 +2087,14 @@ def _append_tg_weapon_manifest_and_guardrails(manifest):
             guardrail_errors.append(
                 f"{name}: parentWeaponName={entry.get('parentWeaponName')} rejected in proxy cycle"
             )
+        if name.startswith("truth_alias::"):
+            hand_model = (entry.get("handModel") or "").strip()
+            if not hand_model:
+                guardrail_errors.append(f"{name}: handModel is empty")
+            elif THUNDERGUN_FORCE_HAND_MODEL and hand_model != THUNDERGUN_FORCE_HAND_MODEL:
+                guardrail_errors.append(
+                    f"{name}: handModel={hand_model} != forced {THUNDERGUN_FORCE_HAND_MODEL}"
+                )
 
     manifest["guardrails"] = {
         "proxy_cycle_reject_parentWeaponName": sorted(reject_parent_names),
@@ -1414,6 +2153,12 @@ def prepare_thundergun_weapondefs():
         cmd.extend(["--hud-icon", THUNDERGUN_FORCE_HUD_ICON])
     if THUNDERGUN_FORCE_KILL_ICON:
         cmd.extend(["--kill-icon", THUNDERGUN_FORCE_KILL_ICON])
+    if THUNDERGUN_FORCE_HAND_MODEL:
+        cmd.extend(["--hand-model", THUNDERGUN_FORCE_HAND_MODEL])
+    if THUNDERGUN_FORCE_GUN_MODEL:
+        cmd.extend(["--gun-model", THUNDERGUN_FORCE_GUN_MODEL])
+    if THUNDERGUN_FORCE_WORLD_MODEL:
+        cmd.extend(["--world-model", THUNDERGUN_FORCE_WORLD_MODEL])
     if THUNDERGUN_CLEAR_CAMO:
         cmd.append("--clear-camo")
     if THUNDERGUN_TRUTH_ALIAS:
@@ -1477,6 +2222,426 @@ def ensure_truth_alias_zone_entries():
         print(f"Prep: appended {changed} truth alias weapon entries to zone source.")
     else:
         print("Prep: truth alias weapon entries already present in zone source.")
+    return True
+
+
+def _zone_has_xmodel_entry(lines, model_name):
+    needle_a = f"xmodel,{model_name}"
+    needle_b = f"xmodel,,{model_name}"
+    for line in lines:
+        s = line.strip()
+        if s == needle_a or s == needle_b:
+            return True
+    return False
+
+
+def ensure_handmodel_zone_entry(model_name):
+    if not model_name:
+        return True
+    if not os.path.exists(ZONE_SOURCE):
+        print(f"ERROR: zone source missing: {ZONE_SOURCE}")
+        return False
+    with open(ZONE_SOURCE, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    if _zone_has_xmodel_entry(lines, model_name):
+        print(f"Prep: hand model zone entry already present: {model_name}")
+        return True
+    lines.append(f"xmodel,{model_name}")
+    with open(ZONE_SOURCE, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"Prep: appended hand model xmodel entry: {model_name}")
+    return True
+
+
+def stage_handmodel_asset(model_name):
+    """
+    Stage handModel xmodel JSON + referenced GLB into WORK_DIR so linker can
+    resolve it deterministically without donor/load-order dependency.
+    """
+    if not model_name:
+        return False
+    src_json = os.path.join(HANDMODEL_SOURCE_ROOT, "xmodel", f"{model_name}.json")
+    if not os.path.exists(src_json):
+        print(f"  WARNING: handModel source JSON not found (will rely on loaded FF): {src_json}")
+        return False
+
+    os.makedirs(os.path.join(WORK_DIR, "xmodel"), exist_ok=True)
+    dst_json = os.path.join(WORK_DIR, "xmodel", f"{model_name}.json")
+    shutil.copy2(src_json, dst_json)
+
+    copied = 0
+    try:
+        with open(src_json, "r", encoding="utf-8", errors="replace") as f:
+            meta = json.load(f)
+        for lod in meta.get("lods", []):
+            rel = lod.get("file", "")
+            if not rel:
+                continue
+            src_glb = os.path.join(HANDMODEL_SOURCE_ROOT, rel.replace("/", os.sep))
+            dst_glb = os.path.join(WORK_DIR, rel.replace("/", os.sep))
+            if not os.path.exists(src_glb):
+                continue
+            os.makedirs(os.path.dirname(dst_glb), exist_ok=True)
+            shutil.copy2(src_glb, dst_glb)
+            copied += 1
+    except Exception as ex:
+        print(f"  WARNING: failed parsing handModel source JSON {src_json}: {ex}")
+
+    print(f"Prep: staged handModel asset '{model_name}' ({copied} lod files)")
+    return True
+
+
+def stage_stub_zm_viewhands_assets():
+    """
+    Build and stage minimal ZM viewhands (c_zom_*_viewhands) into WORK_DIR.
+
+    This prevents DObj bone cap overflow when a large combined viewmodel weapon
+    is present, while keeping the viewmodel type/tag hierarchy valid (unlike
+    forcing a non-viewhands xmodel via `setviewmodel()`).
+    """
+    if not STUB_ZM_VIEWHANDS:
+        print("Prep: stub ZM viewhands disabled.")
+        return True
+
+    tool = os.path.join(os.path.dirname(__file__), "rebuild_min_viewhands_glb.py")
+    if not os.path.exists(tool):
+        print(f"ERROR: missing viewhands stub tool: {tool}")
+        return False
+
+    os.makedirs(os.path.join(WORK_DIR, "xmodel"), exist_ok=True)
+    os.makedirs(os.path.join(WORK_DIR, "model_export"), exist_ok=True)
+
+    ok = True
+    for name in STUB_ZM_VIEWHANDS_NAMES:
+        src_json = os.path.join(ZONE_DUMP_SOURCE_ROOT, "xmodel", f"{name}.json")
+        src_glb = os.path.join(ZONE_DUMP_SOURCE_ROOT, "model_export", f"{name}_lod0.glb")
+        if not os.path.exists(src_json) or not os.path.exists(src_glb):
+            print(f"  WARNING: missing stock viewhands source for {name} (json={os.path.exists(src_json)}, glb={os.path.exists(src_glb)})")
+            ok = False
+            continue
+
+        # Stage xmodel metadata (keeps type=viewhands, flags, etc.)
+        dst_json = os.path.join(WORK_DIR, "xmodel", f"{name}.json")
+        shutil.copy2(src_json, dst_json)
+
+        # Emit minimal GLB under the same relative path referenced by the xmodel JSON.
+        dst_glb = os.path.join(WORK_DIR, "model_export", f"{name}_lod0.glb")
+        cmd = ["python", tool, "--src-glb", src_glb, "--out-glb", dst_glb]
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError as ex:
+            print(f"  ERROR: failed building stub viewhands glb for {name}: {ex}")
+            ok = False
+            continue
+
+        try:
+            bones = _read_glb_skin_joint_count(dst_glb)
+            print(f"Prep: staged stub viewhands '{name}' (bones={bones})")
+        except Exception:
+            print(f"Prep: staged stub viewhands '{name}'")
+    return ok
+
+
+def ensure_thundergun_handmodel_resolves():
+    if not THUNDERGUN_FORCE_HAND_MODEL:
+        print("ERROR: ROGUE_TG_HAND_MODEL is empty; refusing ambiguous handModel.")
+        return False
+    stage_handmodel_asset(THUNDERGUN_FORCE_HAND_MODEL)
+    if not ensure_handmodel_zone_entry(THUNDERGUN_FORCE_HAND_MODEL):
+        return False
+    return True
+
+
+def stage_thundergun_viewhands_asset():
+    """
+    Stage a dedicated viewhands xmodel that points at the full BO3 viewmodel GLB.
+
+    Zombies maps set a stock viewhands model via `setviewmodel("c_zom_*_viewhands")`.
+    That stock skeleton is too small for BO3 viewmodel animations (vm_thunder_gun_*).
+    We keep stock viewhands for normal weapons, and swap to this model only when
+    the thundergun carrier weapon is equipped.
+    """
+    if not THUNDERGUN_VIEWHANDS_ENABLE:
+        print("Prep: thundergun viewhands swap disabled.")
+        return True
+
+    src = os.path.join(WORK_DIR, "model_export", "thundergun_view_lod0.glb")
+    if not os.path.exists(src):
+        print(f"ERROR: missing thundergun viewmodel GLB for viewhands staging: {src}")
+        return False
+
+    os.makedirs(os.path.join(WORK_DIR, "xmodel"), exist_ok=True)
+    dst_json = os.path.join(WORK_DIR, "xmodel", f"{THUNDERGUN_VIEWHANDS_MODEL}.json")
+
+    # Copy safe defaults from a stock ZM viewhands definition (flags/type semantics).
+    stock_json = os.path.join(ZONE_DUMP_SOURCE_ROOT, "xmodel", "c_zom_suit_viewhands.json")
+    flags = 786432
+    lighting = {"x": 0.0, "y": 0.0, "z": 0.5}
+    rng = 0.5
+    try:
+        if os.path.exists(stock_json):
+            with open(stock_json, "r", encoding="utf-8", errors="replace") as f:
+                meta = json.load(f)
+            flags = int(meta.get("flags", flags))
+            lighting = meta.get("lightingOriginOffset", lighting)
+            rng = float(meta.get("lightingOriginRange", rng))
+    except Exception:
+        pass
+
+    out = {
+        "$schema": "http://openassettools.dev/schema/xmodel.v1.json",
+        "_game": "t6",
+        "_type": "xmodel",
+        "_version": 2,
+        "flags": flags,
+        "lightingOriginOffset": lighting,
+        "lightingOriginRange": rng,
+        "lods": [{"distance": 900.0, "file": "model_export/thundergun_view_lod0.glb"}],
+        "type": "viewhands",
+    }
+    with open(dst_json, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2)
+        f.write("\n")
+    print(f"Prep: staged thundergun viewhands xmodel: {THUNDERGUN_VIEWHANDS_MODEL}")
+    return ensure_handmodel_zone_entry(THUNDERGUN_VIEWHANDS_MODEL)
+
+
+def _read_glb_skin_joint_count(glb_path):
+    with open(glb_path, "rb") as f:
+        head = f.read(20)
+        if len(head) < 20 or head[:4] != b"glTF":
+            raise RuntimeError(f"invalid glb header: {glb_path}")
+        json_len = struct.unpack("<I", head[12:16])[0]
+        json_type = head[16:20]
+        if json_type != b"JSON":
+            raise RuntimeError(f"invalid glb JSON chunk: {glb_path}")
+        j = f.read(json_len)
+    gltf = json.loads(j.decode("utf-8"))
+    skins = gltf.get("skins", [])
+    if not skins:
+        return 0
+    return len(skins[0].get("joints", []))
+
+
+def _read_glb_skin_joint_names(glb_path):
+    with open(glb_path, "rb") as f:
+        head = f.read(20)
+        if len(head) < 20 or head[:4] != b"glTF":
+            raise RuntimeError(f"invalid glb header: {glb_path}")
+        json_len = struct.unpack("<I", head[12:16])[0]
+        json_type = head[16:20]
+        if json_type != b"JSON":
+            raise RuntimeError(f"invalid glb JSON chunk: {glb_path}")
+        j = f.read(json_len)
+    gltf = json.loads(j.decode("utf-8"))
+    nodes = gltf.get("nodes", []) or []
+    skins = gltf.get("skins", []) or []
+    if not skins:
+        return set()
+    joints = (skins[0] or {}).get("joints", []) or []
+    out = set()
+    for idx in joints:
+        if not isinstance(idx, int):
+            continue
+        if idx < 0 or idx >= len(nodes):
+            continue
+        nm = (nodes[idx] or {}).get("name")
+        if isinstance(nm, str) and nm:
+            out.add(nm)
+    return out
+
+
+def _read_glb_mesh_stats(glb_path):
+    with open(glb_path, "rb") as f:
+        head = f.read(20)
+        if len(head) < 20 or head[:4] != b"glTF":
+            raise RuntimeError(f"invalid glb header: {glb_path}")
+        json_len = struct.unpack("<I", head[12:16])[0]
+        json_type = head[16:20]
+        if json_type != b"JSON":
+            raise RuntimeError(f"invalid glb JSON chunk: {glb_path}")
+        j = f.read(json_len)
+    gltf = json.loads(j.decode("utf-8"))
+    accessors = gltf.get("accessors", []) or []
+    meshes = gltf.get("meshes", []) or []
+    prim_count = 0
+    pos_vert_count = 0
+    for m in meshes:
+        for prim in (m or {}).get("primitives", []) or []:
+            prim_count += 1
+            attrs = prim.get("attributes") or {}
+            pos_idx = attrs.get("POSITION")
+            if isinstance(pos_idx, int) and 0 <= pos_idx < len(accessors):
+                try:
+                    pos_vert_count += int((accessors[pos_idx] or {}).get("count", 0))
+                except Exception:
+                    pass
+    return {"meshes": len(meshes), "prims": prim_count, "pos_verts": pos_vert_count}
+
+
+def _resolve_model_primary_glb(model_name):
+    for root in (WORK_DIR, HANDMODEL_SOURCE_ROOT, ZONE_DUMP_SOURCE_ROOT):
+        xmodel_json = os.path.join(root, "xmodel", f"{model_name}.json")
+        if not os.path.exists(xmodel_json):
+            continue
+        try:
+            with open(xmodel_json, "r", encoding="utf-8", errors="replace") as f:
+                meta = json.load(f)
+            lods = meta.get("lods", [])
+            if not lods:
+                return ""
+            rel = lods[0].get("file", "")
+            if not rel:
+                return ""
+            glb_path = os.path.join(root, rel.replace("/", os.sep))
+            if os.path.exists(glb_path):
+                return glb_path
+            return ""
+        except Exception:
+            return ""
+    return ""
+
+
+def _resolve_model_joint_count(model_name):
+    glb_path = _resolve_model_primary_glb(model_name)
+    if glb_path:
+        try:
+            return _read_glb_skin_joint_count(glb_path)
+        except Exception:
+            return None
+
+    # 2) known engine-native defaults as deterministic fallback.
+    key = (model_name or "").strip().lower()
+    if key in KNOWN_HANDMODEL_BONES:
+        return KNOWN_HANDMODEL_BONES[key]
+    return None
+
+
+def _resolve_model_mesh_stats(model_name):
+    glb_path = _resolve_model_primary_glb(model_name)
+    if not glb_path:
+        return None
+    try:
+        return _read_glb_mesh_stats(glb_path)
+    except Exception:
+        return None
+
+
+def _resolve_model_joint_name_set(model_name):
+    glb_path = _resolve_model_primary_glb(model_name)
+    if not glb_path:
+        return None
+    try:
+        return _read_glb_skin_joint_names(glb_path)
+    except Exception:
+        return None
+
+
+def enforce_thundergun_dobj_bone_budget():
+    """
+    Fail early if first-person DObj would exceed T6 hard cap (160 bones).
+    """
+    alias = THUNDERGUN_TRUTH_ALIAS or "thundergun_zm"
+    weapon_path = os.path.join(WORK_DIR, "weapons", alias)
+    fields = _read_weapon_manifest_fields(weapon_path)
+    if not fields.get("exists"):
+        print(f"ERROR: missing truth alias weapondef for DObj gate: {weapon_path}")
+        return False
+
+    gun_model = fields.get("gunModel", "").strip()
+    hand_model = fields.get("handModel", "").strip()
+    if not gun_model:
+        print(f"ERROR: DObj gate: {alias} has empty gunModel")
+        return False
+    if not hand_model:
+        print(f"ERROR: DObj gate: {alias} has empty handModel")
+        return False
+    if THUNDERGUN_FORCE_HAND_MODEL and hand_model != THUNDERGUN_FORCE_HAND_MODEL:
+        print(
+            "ERROR: DObj gate: truth alias handModel does not match forced hand model "
+            f"(weapon={hand_model}, forced={THUNDERGUN_FORCE_HAND_MODEL})."
+        )
+        return False
+
+    gun_bones = _resolve_model_joint_count(gun_model)
+    hand_bones = _resolve_model_joint_count(hand_model)
+    gun_joint_names = _resolve_model_joint_name_set(gun_model)
+    hand_joint_names = _resolve_model_joint_name_set(hand_model)
+    hand_mesh = _resolve_model_mesh_stats(hand_model)
+    if gun_bones is None:
+        print(f"ERROR: DObj gate: unable to resolve bone count for gunModel '{gun_model}'")
+        return False
+    if hand_bones is None:
+        print(f"ERROR: DObj gate: unable to resolve bone count for handModel '{hand_model}'")
+        return False
+
+    budget_mode = "sum_counts"
+    if isinstance(gun_joint_names, set) and isinstance(hand_joint_names, set) and gun_joint_names and hand_joint_names:
+        total = len(gun_joint_names | hand_joint_names)
+        budget_mode = "union_joint_names"
+    else:
+        total = int(gun_bones) + int(hand_bones)
+    print(
+        "Prep: DObj bone budget "
+        f"(alias={alias}, gunModel={gun_model}:{gun_bones}, "
+        f"handModel={hand_model}:{hand_bones}, total={total}/{DOBJ_BONE_LIMIT}, mode={budget_mode})"
+    )
+    if hand_mesh:
+        print(
+            "Prep: handModel mesh stats "
+            f"(model={hand_model}, meshes={hand_mesh['meshes']}, "
+            f"prims={hand_mesh['prims']}, pos_verts={hand_mesh['pos_verts']})"
+        )
+    if REQUIRE_VISIBLE_HANDMODEL:
+        # Guard against shipping degenerate no-visual hand model placeholders.
+        if not hand_mesh or hand_mesh.get("prims", 0) <= 0 or hand_mesh.get("pos_verts", 0) < 64:
+            print(
+                "ERROR: handModel visibility gate failed. "
+                f"{hand_model} appears degenerate/non-visible for runtime hands."
+            )
+            print("  Hint: use ROGUE_TG_HAND_MODEL=viewmodel_usa_morphine (budget-visible proxy).")
+            return False
+    if total > DOBJ_BONE_LIMIT:
+        print(
+            "ERROR: DObj bone budget exceeded. "
+            f"{gun_model} ({gun_bones}) + {hand_model} ({hand_bones}) = {total} > {DOBJ_BONE_LIMIT}"
+        )
+        if hand_model == "viewmodel_hands_no_model":
+            print(
+                "  Hint: viewmodel_hands_no_model includes full hand skeleton. "
+                "Use ROGUE_TG_HAND_MODEL=viewmodel_usa_no_model for BO3 full-rig path."
+            )
+        return False
+
+    # Zombie maps set player viewhands via `setviewmodel("c_zom_*_viewhands")`.
+    # If the weapon viewmodel carries a large skeleton (e.g. BO3 combined arms+gun),
+    # the *stock* viewhands DObj can exceed the hard cap even if weapondef handModel
+    # is minimal. Warn explicitly so crash cause is visible at build time.
+    stock_viewmodels = [
+        "c_zom_suit_viewhands",
+        "c_zom_hazmat_viewhands",
+    ]
+    for vm in stock_viewmodels:
+        vm_bones = _resolve_model_joint_count(vm)
+        vm_joint_names = _resolve_model_joint_name_set(vm)
+        if vm_bones is None:
+            continue
+        if isinstance(gun_joint_names, set) and isinstance(vm_joint_names, set) and gun_joint_names and vm_joint_names:
+            vm_total = len(gun_joint_names | vm_joint_names)
+            vm_mode = "union_joint_names"
+        else:
+            vm_total = int(gun_bones) + int(vm_bones)
+            vm_mode = "sum_counts"
+        if vm_total > DOBJ_BONE_LIMIT:
+            print(
+                "WARNING: stock ZM viewmodel DObj would exceed bone cap "
+                f"(viewmodel={vm}:{vm_bones}, gunModel={gun_model}:{gun_bones}, "
+                f"total={vm_total}/{DOBJ_BONE_LIMIT}, mode={vm_mode})."
+            )
+            print(
+                "  Hint: override player viewmodel to a minimal xmodel (e.g. via `setviewmodel`) "
+                "when using a full-rig BO3 combined viewmodel weapon."
+            )
     return True
 
 
@@ -1582,31 +2747,112 @@ def snapshot_live_ff():
     mod_src = os.path.join(DEPLOY_DIR_MOD, FF_NAME) if (DEPLOY_TO_MOD and os.path.isdir(DEPLOY_DIR_MOD)) else None
     main_snap = None
     mod_snap = None
+    custom_snap = {"base": None, "mod": None}
 
     if main_src and os.path.exists(main_src):
         main_snap = os.path.join(snap_dir, f"{stamp}_zone_all_{FF_NAME}")
-        shutil.copy2(main_src, main_snap)
-        print(f"  Snapshot main FF: {main_snap}")
+        try:
+            shutil.copy2(main_src, main_snap)
+            print(f"  Snapshot main FF: {main_snap}")
+        except PermissionError as ex:
+            main_snap = None
+            print(f"  WARNING: could not snapshot main FF (locked): {main_src} ({ex})")
+        except Exception as ex:
+            main_snap = None
+            print(f"  WARNING: could not snapshot main FF: {main_src} ({ex})")
     if mod_src and os.path.exists(mod_src):
         mod_snap = os.path.join(snap_dir, f"{stamp}_mod_{FF_NAME}")
-        shutil.copy2(mod_src, mod_snap)
-        print(f"  Snapshot mod FF:  {mod_snap}")
+        try:
+            shutil.copy2(mod_src, mod_snap)
+            print(f"  Snapshot mod FF:  {mod_snap}")
+        except PermissionError as ex:
+            mod_snap = None
+            print(f"  WARNING: could not snapshot mod FF (locked): {mod_src} ({ex})")
+        except Exception as ex:
+            mod_snap = None
+            print(f"  WARNING: could not snapshot mod FF: {mod_src} ({ex})")
 
-    return main_snap, mod_snap
+    # Snapshot runtime custom xanim lane targets (e.g. mod_load.ff), including
+    # existence state so restore can remove files we introduced during this run.
+    if CUSTOM_XANIM_RUNTIME_ENABLE:
+        for lane, dst in _runtime_custom_xanim_targets():
+            entry = {
+                "dst": dst,
+                "existed": os.path.exists(dst),
+                "snap": None,
+            }
+            if entry["existed"]:
+                snap_name = os.path.basename(dst)
+                snap_path = os.path.join(snap_dir, f"{stamp}_{lane}_{snap_name}.before")
+                try:
+                    shutil.copy2(dst, snap_path)
+                    entry["snap"] = snap_path
+                    print(f"  Snapshot runtime custom xanim ({lane}): {snap_path}")
+                except PermissionError as ex:
+                    print(
+                        f"  WARNING: could not snapshot runtime custom xanim ({lane}) "
+                        f"(locked): {dst} ({ex})"
+                    )
+                except Exception as ex:
+                    print(
+                        f"  WARNING: could not snapshot runtime custom xanim ({lane}): "
+                        f"{dst} ({ex})"
+                    )
+            custom_snap[lane] = entry
+
+    return main_snap, mod_snap, custom_snap
 
 
-def restore_live_ff(main_snap, mod_snap):
+def restore_live_ff(main_snap, mod_snap, custom_snap=None):
     """Restore deployed FFs from snapshots."""
     main_dst = os.path.join(DEPLOY_DIR, FF_NAME)
     if DEPLOY_TO_BASE and main_snap and os.path.exists(main_snap):
-        shutil.copy2(main_snap, main_dst)
-        print(f"  Restored main FF from snapshot")
+        try:
+            shutil.copy2(main_snap, main_dst)
+            print(f"  Restored main FF from snapshot")
+        except PermissionError as ex:
+            print(f"  WARNING: failed restoring main FF (locked): {main_dst} ({ex})")
+        except Exception as ex:
+            print(f"  WARNING: failed restoring main FF: {main_dst} ({ex})")
 
     if DEPLOY_TO_MOD and os.path.isdir(DEPLOY_DIR_MOD):
         mod_dst = os.path.join(DEPLOY_DIR_MOD, FF_NAME)
         if mod_snap and os.path.exists(mod_snap):
-            shutil.copy2(mod_snap, mod_dst)
-            print(f"  Restored mod FF from snapshot")
+            try:
+                shutil.copy2(mod_snap, mod_dst)
+                print(f"  Restored mod FF from snapshot")
+            except PermissionError as ex:
+                print(f"  WARNING: failed restoring mod FF (locked): {mod_dst} ({ex})")
+            except Exception as ex:
+                print(f"  WARNING: failed restoring mod FF: {mod_dst} ({ex})")
+
+    if custom_snap:
+        for lane in ("base", "mod"):
+            entry = custom_snap.get(lane) if isinstance(custom_snap, dict) else None
+            if not entry:
+                continue
+            dst = entry.get("dst")
+            if not dst:
+                continue
+            existed = bool(entry.get("existed"))
+            snap_path = entry.get("snap")
+            if existed and snap_path and os.path.exists(snap_path):
+                try:
+                    shutil.copy2(snap_path, dst)
+                    print(f"  Restored runtime custom xanim ({lane}) from snapshot")
+                except PermissionError as ex:
+                    print(
+                        f"  WARNING: failed restoring runtime custom xanim ({lane}) "
+                        f"(locked): {dst} ({ex})"
+                    )
+                except Exception as ex:
+                    print(f"  WARNING: failed restoring runtime custom xanim ({lane}): {dst} ({ex})")
+            elif (not existed) and os.path.exists(dst):
+                try:
+                    os.remove(dst)
+                    print(f"  Removed runtime custom xanim ({lane}) introduced by failed run")
+                except Exception as ex:
+                    print(f"  WARNING: failed removing runtime custom xanim ({lane}): {ex}")
 
 
 def phase3_patch_xanims():
@@ -1659,7 +2905,15 @@ def main():
         return False
     if not prepare_thundergun_weapondefs():
         return False
+    if not stage_thundergun_viewhands_asset():
+        return False
+    if not stage_stub_zm_viewhands_assets():
+        return False
+    if not ensure_thundergun_handmodel_resolves():
+        return False
     if not ensure_truth_alias_zone_entries():
+        return False
+    if not enforce_thundergun_dobj_bone_budget():
         return False
     if not ensure_core_transit_integrity():
         return False
@@ -1668,7 +2922,7 @@ def main():
     if not ensure_mod_runtime_script_alignment():
         return False
 
-    live_main_snap, live_mod_snap = snapshot_live_ff()
+    live_main_snap, live_mod_snap, live_custom_snap = snapshot_live_ff()
 
     load_candidates = []
     if USE_SO_SURVIVAL_LOAD_BASELINE:
@@ -1707,26 +2961,42 @@ def main():
             load_candidates.append(ap)
         if not load_candidates:
             print("ERROR: No usable baseline FF candidate found.")
-            restore_live_ff(live_main_snap, live_mod_snap)
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
             return False
 
         _set_so_survival_load_ff(load_candidates[0])
-        print(f"Prep: baseline FF for linker: {SO_SURVIVAL_LOAD_FF}")
+        print(
+            "Prep: baseline FF for linker: "
+            f"source={SO_SURVIVAL_LOAD_FF_SOURCE} staged={SO_SURVIVAL_LOAD_FF}"
+        )
+        ok_list, reason = _unlinker_list_so_survival_ok(SO_SURVIVAL_LOAD_FF)
+        if not ok_list:
+            print(f"ERROR: baseline Unlinker sanity failed: {reason}")
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
     else:
         print("Prep: so_zsurvival baseline --load disabled (building against stock shared FF loads only)")
-    if USE_CUSTOM_XANIM_FF:
-        print("Prep: building standalone custom xanim FF...")
-        if not build_custom_xanim_ff():
-            return False
-        if not verify_custom_xanim_ff():
-            return False
-    maybe_add_custom_xanim_load()
 
     print("Prep: verifying thundergun viewmodel GLB...")
     ensure_thundergun_viewmodel_glb()
     # Keep xanim inputs deterministic between runs.
     print("\nPrep: staging thundergun xanim exports...")
     stage_thundergun_xanim_exports()
+    if not validate_thundergun_viewmodel_rig():
+        return False
+    effective_emit_mode = resolve_effective_xanim_emit_mode()
+
+    if USE_CUSTOM_XANIM_FF:
+        if not run_custom_xanim_roundtrip_oracle():
+            return False
+        print("Prep: building standalone custom xanim FF...")
+        if not build_custom_xanim_ff(effective_emit_mode):
+            return False
+        if not verify_custom_xanim_ff():
+            return False
+        if not verify_runtime_custom_xanim_ff():
+            return False
+    maybe_add_custom_xanim_load(effective_emit_mode)
 
     print("=" * 60)
     print("PHASE 1: Build clean zone WITHOUT thundergun images")
@@ -1742,10 +3012,17 @@ def main():
     if USE_SO_SURVIVAL_LOAD_BASELINE and (not success) and _is_load_ff_failure(output):
         print("  Detected baseline load FF failure; trying fallback candidates...")
         for cand in load_candidates[1:]:
-            if os.path.abspath(cand) == os.path.abspath(SO_SURVIVAL_LOAD_FF):
+            if os.path.abspath(cand) == os.path.abspath(SO_SURVIVAL_LOAD_FF_SOURCE):
                 continue
             _set_so_survival_load_ff(cand)
-            print(f"  Retrying with baseline FF: {cand}")
+            print(
+                "  Retrying with baseline FF: "
+                f"source={SO_SURVIVAL_LOAD_FF_SOURCE} staged={SO_SURVIVAL_LOAD_FF}"
+            )
+            ok_list, reason = _unlinker_list_so_survival_ok(SO_SURVIVAL_LOAD_FF)
+            if not ok_list:
+                print(f"  Skipping candidate (Unlinker sanity failed): {reason}")
+                continue
             success, output = build_zone()
             if success:
                 print(f"  Baseline FF fallback selected: {cand}")
@@ -1776,18 +3053,23 @@ def main():
     success, output = build_zone()
     if not success:
         print("ERROR: Phase 2 build failed!")
-        restore_live_ff(live_main_snap, live_mod_snap)
+        restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
         return False
     phase2_ff = os.path.join(OUTPUT_DIR, FF_NAME)
     phase2_size = os.path.getsize(phase2_ff) if os.path.exists(phase2_ff) else -1
     print(f"  Phase size check: phase1={phase1_size:,} phase2={phase2_size:,}")
     if phase1_size > 0 and phase2_size > 0 and phase2_size <= phase1_size:
+        if ENFORCE_PHASE_SIZE_GUARD:
+            print(
+                "ERROR: Phase 2 FF is not larger than phase 1 FF; "
+                "thundergun assets likely not present in final output."
+            )
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
         print(
-            "ERROR: Phase 2 FF is not larger than phase 1 FF; "
-            "thundergun assets likely not present in final output."
+            "  WARNING: phase2 <= phase1 but allowed for current conversion profile "
+            f"(profile={THUNDERGUN_WEAPON_PROFILE}, enforce={ENFORCE_PHASE_SIZE_GUARD})."
         )
-        restore_live_ff(live_main_snap, live_mod_snap)
-        return False
 
     if USE_CUSTOM_XANIM_FF:
         print("\n" + "=" * 60)
@@ -1811,15 +3093,23 @@ def main():
     print("\nPreflight integrity check...")
     if not run_preflight(candidate_ff, os.path.splitext(FF_NAME)[0]):
         print("\nERROR: Build output rejected by preflight.")
-        restore_live_ff(live_main_snap, live_mod_snap)
+        restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
         return False
 
     # Deploy
     print("\nDeploying zone...")
     deploy_ff()
+    if not deploy_runtime_custom_xanim_ff():
+        print("ERROR: failed deploying runtime custom xanim FF lane.")
+        restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+        return False
     if not verify_deployed_runtime_ff():
         print("ERROR: deployed runtime FF is missing required thundergun weapon aliases.")
-        restore_live_ff(live_main_snap, live_mod_snap)
+        restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+        return False
+    if not verify_deployed_runtime_custom_xanim_ff():
+        print("ERROR: deployed runtime custom xanim FF validation failed.")
+        restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
         return False
     has_ipak = deploy_ipak()
 

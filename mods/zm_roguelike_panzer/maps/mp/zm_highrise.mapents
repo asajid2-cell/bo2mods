@@ -1,0 +1,263 @@
+
+{
+"origin" "1657.9 2163.2 3511"
+"export" "1"
+"model" "veh_t6_dlc_zm_mech"
+"classname" "actor_zm_tomb_mech_zombie"
+"script_noteworthy" "mechz_spawner"
+"spawnflags" "1"
+"guid" "FDA9FEA2"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1657.9 2163.2 3391"
+"targetname" "rogue_mechz_loc_1"
+"guid" "E261FF3E"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1965.9 1684.2 3391"
+"targetname" "rogue_mechz_loc_2"
+"guid" "5A8A8E90"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1965.9 1684.2 3216"
+"targetname" "rogue_mechz_loc_3"
+"guid" "06B29B33"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1470.9 1217.2 3216"
+"targetname" "rogue_mechz_loc_4"
+"guid" "1AF37FC5"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1965.9 1684.2 3390"
+"targetname" "rogue_mechz_loc_5"
+"guid" "2E32667D"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1965.9 1684.2 3040"
+"targetname" "rogue_mechz_loc_6"
+"guid" "1D55C921"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1649.9 2165.2 3213"
+"targetname" "rogue_mechz_loc_7"
+"guid" "9067E5F3"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1651.9 2165.2 3039"
+"targetname" "rogue_mechz_loc_8"
+"guid" "9593BB15"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1470.9 1217.2 3040"
+"targetname" "rogue_mechz_loc_9"
+"guid" "9B75D412"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2673.92 -620.82 2879"
+"targetname" "rogue_mechz_loc_10"
+"guid" "98C246B9"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2441.94 -692.84 2879"
+"targetname" "rogue_mechz_loc_11"
+"guid" "607FA777"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2673.92 -620.82 2703"
+"targetname" "rogue_mechz_loc_12"
+"guid" "48068A4D"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2441.94 -692.84 2703"
+"targetname" "rogue_mechz_loc_13"
+"guid" "1FD966F3"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2673.92 -620.82 1296"
+"targetname" "rogue_mechz_loc_14"
+"guid" "38664CEE"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2441.94 -692.84 1296"
+"targetname" "rogue_mechz_loc_15"
+"guid" "14925B48"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "3050.92 30.18 2879"
+"targetname" "rogue_mechz_loc_16"
+"guid" "60A8194F"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "3049.92 30.18 2704"
+"targetname" "rogue_mechz_loc_17"
+"guid" "3B303807"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1431.94 -569.84 2704"
+"targetname" "rogue_mechz_loc_18"
+"guid" "F514EE00"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1431.94 -569.84 1296"
+"targetname" "rogue_mechz_loc_19"
+"guid" "926AD24A"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1427.94 -569.84 1120"
+"targetname" "rogue_mechz_loc_20"
+"guid" "895A268F"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2674.92 -621.82 1120"
+"targetname" "rogue_mechz_loc_21"
+"guid" "790894D2"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "2441.94 -692.84 1120"
+"targetname" "rogue_mechz_loc_22"
+"guid" "07793FA8"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1961.8 1963.9 3420"
+"targetname" "rogue_mechz_loc_23"
+"guid" "B223D46D"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1314.9 1788.2 3596"
+"targetname" "rogue_mechz_loc_24"
+"guid" "95CBE179"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1613 1532 3584"
+"targetname" "rogue_mechz_loc_25"
+"guid" "09F90B02"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1737 1092 3424"
+"targetname" "rogue_mechz_loc_26"
+"guid" "6521664B"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1155.5 1668 3264"
+"targetname" "rogue_mechz_loc_27"
+"guid" "F8EB7608"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1516.5 1054 3068"
+"targetname" "rogue_mechz_loc_28"
+"guid" "639B8842"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1425.5 1765 3068"
+"targetname" "rogue_mechz_loc_29"
+"guid" "642406D1"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1573.5 2626 3228"
+"targetname" "rogue_mechz_loc_30"
+"guid" "823580A5"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1165.9 1936.2 3421"
+"targetname" "rogue_mechz_loc_31"
+"guid" "7197D63D"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1265 1380 3424"
+"targetname" "rogue_mechz_loc_32"
+"guid" "368E7973"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1188 1680 3256"
+"targetname" "rogue_mechz_loc_33"
+"guid" "E0616C53"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1294.5 1588 3068"
+"targetname" "rogue_mechz_loc_34"
+"guid" "D2C38FA3"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "1299.5 1732 3068"
+"targetname" "rogue_mechz_loc_35"
+"guid" "612E10A1"
+}
+{
+"classname" "script_struct"
+"script_noteworthy" "mechz_location"
+"origin" "957 1223 3624"
+"targetname" "rogue_mechz_loc_36"
+"guid" "FA6CAE2B"
+}
+

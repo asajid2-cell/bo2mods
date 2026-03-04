@@ -1,0 +1,28 @@
+{
+  "boss_name": "panzer_ported",
+  "model": "c_zom_mech_body",
+  "health": 8000,
+  "speed_scale": 1.2,
+  "melee_damage": 90,
+  "melee_range": 110,
+  "spawn_fx": "zmb_spawn_boss",
+  "death_fx": "zmb_death_boss",
+  "abilities": [
+    {
+      "name": "flame_burst",
+      "cooldown": 12.0,
+      "radius": 180,
+      "damage": 55,
+      "startup_delay": 0.2,
+      "fx": "zmb_boss_flame"
+    },
+    {
+      "name": "shockwave",
+      "cooldown": 18.0,
+      "radius": 240,
+      "damage": 70,
+      "startup_delay": 0.4,
+      "fx": "zmb_boss_shock"
+    }
+  ]
+}

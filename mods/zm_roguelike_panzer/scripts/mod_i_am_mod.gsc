@@ -498,6 +498,12 @@ on_player_spawn()
         if ( !is_zombies_map() )
             continue;
 
+        if ( !isdefined( self.rogue_vm_watcher_started ) )
+        {
+            self.rogue_vm_watcher_started = 1;
+            self thread rogue_thundergun_viewmodel_swap_watcher();
+        }
+
         if ( !isdefined( self.mod_loadout_options ) || self.mod_loadout_options.size < 3 )
             self.mod_loadout_options = generate_loadout_options();
 
@@ -515,6 +521,74 @@ on_player_spawn()
 
         if ( isdefined( level.rogue_bootstrapped ) && level.rogue_bootstrapped && ( !isdefined( level.rogue_started ) || !level.rogue_started ) )
             self thread rogue_send_join_chat_hint();
+    }
+}
+
+rogue_thundergun_viewmodel_swap_watcher()
+{
+    self endon( "disconnect" );
+
+    for ( ;; )
+    {
+        wait 0.05;
+
+        if ( !is_zombies_map() )
+            continue;
+
+        // Only swap after TG assets are precached (triggered by .tg).
+        if ( !isdefined( level.rogue_tg_precached ) || !level.rogue_tg_precached )
+            continue;
+
+        // Gate the risky viewmodel swap behind a dvar (default off).
+        // Use `set rogue_tg_viewhands_enable 1` to enable at runtime.
+        if ( 0 == getdvarint( "rogue_tg_viewhands_enable" ) )
+        {
+            // If we were previously set, restore and stay disabled.
+            if ( isdefined( self.rogue_vm_tg_set ) && self.rogue_vm_tg_set )
+            {
+                if ( isdefined( self.rogue_vm_default ) && self.rogue_vm_default != "" && self.rogue_vm_default != "viewmodel_usa_no_model" )
+                    self setviewmodel( self.rogue_vm_default );
+
+                self.rogue_vm_tg_set = 0;
+                rogue_log_event( "tg_viewmodel", "stage=restore_disabled;vm=" + rogue_safe_str( self.rogue_vm_default ) + ";cur=" + self getcurrentweapon() );
+            }
+
+            continue;
+        }
+
+        want = false;
+        if ( isdefined( self.rogue_tg_proxy_enabled ) && self.rogue_tg_proxy_enabled &&
+             isdefined( self.rogue_tg_proxy_carrier ) && self.rogue_tg_proxy_carrier != "" )
+        {
+            if ( self getcurrentweapon() == self.rogue_tg_proxy_carrier )
+                want = true;
+        }
+
+        if ( want )
+        {
+            if ( !isdefined( self.rogue_vm_tg_set ) || !self.rogue_vm_tg_set )
+            {
+                // Don't lock in a bad default (no_model can be active before the loadout is applied).
+                if ( !isdefined( self.rogue_vm_default ) || self.rogue_vm_default == "" || self.rogue_vm_default == "viewmodel_usa_no_model" || self.rogue_vm_default == "rogue_tg_viewhands" )
+                    self.rogue_vm_default = self getviewmodel();
+
+                precachemodel( "rogue_tg_viewhands" );
+                self setviewmodel( "rogue_tg_viewhands" );
+                self.rogue_vm_tg_set = 1;
+                rogue_log_event( "tg_viewmodel", "stage=set;vm=rogue_tg_viewhands;cur=" + self getcurrentweapon() );
+            }
+        }
+        else
+        {
+            if ( isdefined( self.rogue_vm_tg_set ) && self.rogue_vm_tg_set )
+            {
+                if ( isdefined( self.rogue_vm_default ) && self.rogue_vm_default != "" && self.rogue_vm_default != "viewmodel_usa_no_model" )
+                    self setviewmodel( self.rogue_vm_default );
+
+                self.rogue_vm_tg_set = 0;
+                rogue_log_event( "tg_viewmodel", "stage=restore;vm=" + self.rogue_vm_default + ";cur=" + self getcurrentweapon() );
+            }
+        }
     }
 }
 
@@ -2867,6 +2941,10 @@ rogue_precache_thundergun_items()
 {
     if ( isdefined( level.rogue_tg_precached ) && level.rogue_tg_precached )
         return;
+
+    // Viewhands swap model used for the BO3 full-rig port.
+    if ( 0 != getdvarint( "rogue_tg_viewhands_enable" ) )
+        precachemodel( "rogue_tg_viewhands" );
 
     precacheitem( "thundergun_zm" );
     precacheitem( "thundergun_upgraded_zm" );

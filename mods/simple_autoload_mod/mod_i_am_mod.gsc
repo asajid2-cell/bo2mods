@@ -15,6 +15,8 @@ start_mod()
         return;
 
     level.simple_wonder_mod_started = 1;
+    rogue_log_event( "build", "id=2026-02-13-panzer-fullport-cscfix-v1" );
+    level thread rogue_bootstrap();
     level thread on_player_connect();
 }
 
@@ -23,8 +25,26 @@ on_player_connect()
     for (;;)
     {
         level waittill("connected", player);
+        player thread rogue_player_command_listener();
+        player thread rogue_send_join_chat_hint();
         player thread on_player_spawn();
     }
+}
+
+rogue_send_join_chat_hint()
+{
+    self endon("disconnect");
+
+    if ( isdefined( self.rogue_join_hint_sent ) && self.rogue_join_hint_sent )
+        return;
+
+    wait 1.0;
+
+    if ( !is_zombies_map() )
+        return;
+
+    self.rogue_join_hint_sent = 1;
+    self iprintln( "^1to start the gauntlet type start followed by your wager amount (^7example: /start 1000^1)" );
 }
 
 on_player_spawn()
@@ -52,6 +72,10 @@ on_player_spawn()
             self.mod_selected_loadout = 0;
 
         self apply_selected_loadout( self.mod_loadout_options[self.mod_selected_loadout] );
+        self rogue_apply_persistent_boon_effects();
+
+        if ( isdefined( level.rogue_bootstrapped ) && level.rogue_bootstrapped && ( !isdefined( level.rogue_started ) || !level.rogue_started ) )
+            self thread rogue_send_join_chat_hint();
     }
 }
 
@@ -276,6 +300,9 @@ filter_weapons_by_tags(pool, tags, avoid_a, avoid_b)
         if ( !isdefined( weapon ) || weapon == "" || weapon == "none" )
             continue;
 
+        if ( is_invalid_loadout_weapon_name( weapon ) )
+            continue;
+
         if ( isdefined( avoid_a ) && array_contains( avoid_a, weapon ) )
             continue;
 
@@ -301,6 +328,9 @@ filter_available_weapons(pool, avoid_a, avoid_b)
         weapon = pool[i];
 
         if ( !isdefined( weapon ) || weapon == "" || weapon == "none" )
+            continue;
+
+        if ( is_invalid_loadout_weapon_name( weapon ) )
             continue;
 
         if ( isdefined( avoid_a ) && array_contains( avoid_a, weapon ) )
@@ -346,10 +376,16 @@ build_weapon_pool()
         for ( i = 0; i < keys.size; i++ )
         {
             base_weapon = keys[i];
-            pool = add_unique( pool, base_weapon );
+            if ( !is_invalid_loadout_weapon_name( base_weapon ) )
+                pool = add_unique( pool, base_weapon );
 
             if ( isdefined( level.zombie_weapons[base_weapon] ) && isdefined( level.zombie_weapons[base_weapon].upgrade_name ) )
-                pool = add_unique( pool, level.zombie_weapons[base_weapon].upgrade_name );
+            {
+                upg = level.zombie_weapons[base_weapon].upgrade_name;
+
+                if ( !is_invalid_loadout_weapon_name( upg ) )
+                    pool = add_unique( pool, upg );
+            }
         }
     }
 
@@ -361,12 +397,41 @@ build_weapon_pool()
         fallback[2] = "m1911_zm";
         fallback[3] = "ak74u_zm";
         fallback[4] = "mp5k_zm";
+        fallback[5] = "m16a1_zm";
 
         for ( i = 0; i < fallback.size; i++ )
-            pool = add_unique( pool, fallback[i] );
+        {
+            if ( !is_invalid_loadout_weapon_name( fallback[i] ) )
+                pool = add_unique( pool, fallback[i] );
+        }
     }
 
     return pool;
+}
+
+is_invalid_loadout_weapon_name(weapon_name)
+{
+    if ( !isdefined( weapon_name ) || weapon_name == "" || weapon_name == "none" )
+        return true;
+
+    w = tolower( weapon_name );
+
+    if ( issubstr( w, "knife" ) || issubstr( w, "melee" ) || issubstr( w, "fists" ) )
+        return true;
+
+    if ( issubstr( w, "grenade" ) || issubstr( w, "claymore" ) || issubstr( w, "mine" ) || issubstr( w, "monkey" ) || issubstr( w, "tactical" ) )
+        return true;
+
+    if ( issubstr( w, "equip" ) || issubstr( w, "buildable" ) || issubstr( w, "specialty_" ) || issubstr( w, "no_melee" ) )
+        return true;
+
+    if ( w == "zombie_fists_zm" )
+        return true;
+
+    if ( is_melee_candidate_supported( weapon_name ) )
+        return true;
+
+    return false;
 }
 
 build_melee_pool()
@@ -390,24 +455,15 @@ build_melee_pool()
             pool = add_unique( pool, melee_keys[i] );
     }
 
-    if ( isdefined( level.zombie_weapons ) )
-    {
-        weapon_keys = getarraykeys( level.zombie_weapons );
-
-        for ( i = 0; i < weapon_keys.size; i++ )
-        {
-            weapon_name = weapon_keys[i];
-
-            if ( issubstr( weapon_name, "knife" ) || issubstr( weapon_name, "sickle" ) || issubstr( weapon_name, "tazer" ) || issubstr( weapon_name, "galva" ) || issubstr( weapon_name, "melee" ) || issubstr( weapon_name, "shovel" ) || issubstr( weapon_name, "tomahawk" ) )
-                pool = add_unique( pool, weapon_name );
-        }
-    }
-
     filtered = [];
 
     for ( i = 0; i < pool.size; i++ )
     {
         if ( !isdefined( pool[i] ) || pool[i] == "" || pool[i] == "none" || pool[i] == "zombie_fists_zm" )
+            continue;
+
+        // Filter out ballistic/placeholder entries that fail on several survival maps.
+        if ( issubstr( pool[i], "ballistic" ) || issubstr( pool[i], "no_melee" ) )
             continue;
 
         filtered = add_unique( filtered, pool[i] );
@@ -570,6 +626,7 @@ show_loadout_picker(loadouts)
     menu = self create_picker_hud();
     self.mod_picker_menu = menu;
     self thread picker_disconnect_cleanup( menu );
+    self thread animate_picker_hud( menu );
     self update_picker_hud( menu, loadouts, selected );
 
     start_time = gettime();
@@ -637,7 +694,7 @@ create_picker_hud()
     txt_scale = get_picker_text_scale();
     subtitle_scale = txt_scale;
     help_scale = txt_scale;
-    section_scale = txt_scale;
+    section_scale = txt_scale * 1.00;
 
     if ( !isdefined( self.mod_picker_instance_counter ) )
         self.mod_picker_instance_counter = 0;
@@ -645,37 +702,47 @@ create_picker_hud()
     self.mod_picker_instance_counter++;
     menu.instance_id = self.mod_picker_instance_counter;
 
-    menu.border = self create_picker_shader_elem( undefined, "CENTER", "CENTER", 0, 0, 584, 452, ( 0.05, 0.07, 0.12 ), 0.96, 10 );
-    menu.box = self create_picker_shader_elem( undefined, "CENTER", "CENTER", 0, 0, 572, 440, ( 0.09, 0.12, 0.20 ), 0.90, 11 );
-    menu.header = self create_picker_shader_elem( menu.box, "TOP", "TOP", 0, 22, 548, 44, ( 0.12, 0.20, 0.30 ), 0.96, 12 );
-    menu.accent_rail = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 0, 0, 10, 440, ( 0.25, 0.72, 1.00 ), 0.95, 12 );
-    menu.rule_a = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 22, 78, 530, 2, ( 0.25, 0.72, 1.00 ), 0.50, 12 );
-    menu.rule_b = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 22, 258, 530, 2, ( 0.25, 0.72, 1.00 ), 0.50, 12 );
-    menu.rule_c = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 22, 334, 530, 2, ( 0.25, 0.72, 1.00 ), 0.50, 12 );
+    menu.border = self create_picker_shader_elem( undefined, "CENTER", "CENTER", 0, 0, 642, 470, ( 0.04, 0.05, 0.10 ), 0.98, 10 );
+    menu.box = self create_picker_shader_elem( undefined, "CENTER", "CENTER", 0, 0, 626, 454, ( 0.09, 0.12, 0.20 ), 0.92, 11 );
+    menu.header = self create_picker_shader_elem( menu.box, "TOP", "TOP", 0, 24, 594, 48, ( 0.12, 0.20, 0.30 ), 0.96, 12 );
+    menu.footer_plate = self create_picker_shader_elem( menu.box, "BOTTOM", "BOTTOM", 0, -14, 594, 28, ( 0.10, 0.14, 0.22 ), 0.82, 12 );
+    menu.accent_rail = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 0, 0, 12, 454, ( 0.25, 0.72, 1.00 ), 0.95, 12 );
 
-    menu.line_title = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 8, "objective", txt_scale + 0.20, ( 0.25, 0.72, 1 ), 13 );
-    menu.line_subtitle = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 42, "small", subtitle_scale, ( 0.82, 0.82, 0.82 ), 13 );
+    // Keep shader count low to avoid BO2 HUD element-limit dropouts.
+    menu.theme_dot_0 = self create_picker_shader_elem( menu.box, "TOPRIGHT", "TOPRIGHT", -150, 26, 8, 8, ( 0.25, 0.72, 1.00 ), 0.70, 13 );
+    menu.theme_dot_1 = self create_picker_shader_elem( menu.box, "TOPRIGHT", "TOPRIGHT", -134, 26, 8, 8, ( 0.25, 0.72, 1.00 ), 0.52, 13 );
+    menu.theme_dot_2 = self create_picker_shader_elem( menu.box, "TOPRIGHT", "TOPRIGHT", -118, 26, 8, 8, ( 0.25, 0.72, 1.00 ), 0.70, 13 );
+    menu.rule_a = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 92, 578, 2, ( 0.25, 0.72, 1.00 ), 0.52, 12 );
+    menu.rule_b = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 274, 578, 2, ( 0.25, 0.72, 1.00 ), 0.50, 12 );
+    menu.rule_c = self create_picker_shader_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 350, 578, 2, ( 0.25, 0.72, 1.00 ), 0.50, 12 );
 
-    menu.section_weapons = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 84, "default", section_scale, ( 0.25, 0.72, 1.00 ), 13 );
-    menu.line_weap_1a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 112, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
-    menu.line_weap_1b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 56, 136, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
-    menu.line_weap_2a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 162, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
-    menu.line_weap_2b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 56, 186, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
-    menu.line_weap_3a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 212, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
-    menu.line_weap_3b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 56, 236, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_title = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 8, "objective", txt_scale + 0.25, ( 0.25, 0.72, 1 ), 13 );
+    menu.line_subtitle = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 44, "small", subtitle_scale, ( 0.90, 0.90, 0.90 ), 13 );
 
-    menu.section_melee = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 264, "default", section_scale, ( 1.00, 0.52, 0.52 ), 13 );
-    menu.line_melee_a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 292, "small", txt_scale, ( 1, 0.52, 0.52 ), 13 );
-    menu.line_melee_b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 56, 316, "small", txt_scale, ( 1, 0.52, 0.52 ), 13 );
+    menu.section_weapons = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 28, 98, "small", section_scale, ( 0.25, 0.72, 1.00 ), 13 );
+    menu.line_weap_1a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 126, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_weap_1b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 48, 150, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_weap_2a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 176, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_weap_2b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 48, 200, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_weap_3a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 226, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
+    menu.line_weap_3b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 48, 250, "small", txt_scale, ( 0.60, 0.90, 1 ), 13 );
 
-    menu.section_perks = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 340, "default", section_scale, ( 0.86, 0.64, 1.00 ), 13 );
-    menu.line_perks_a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 368, "small", txt_scale, ( 0.86, 0.64, 1 ), 13 );
-    menu.line_perks_b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 56, 392, "small", txt_scale, ( 0.86, 0.64, 1 ), 13 );
+    menu.section_melee = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 28, 282, "small", section_scale, ( 1.00, 0.52, 0.52 ), 13 );
+    menu.line_melee_a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 310, "small", txt_scale, ( 1, 0.52, 0.52 ), 13 );
+    menu.line_melee_b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 48, 334, "small", txt_scale, ( 1, 0.52, 0.52 ), 13 );
 
-    menu.line_help = self create_picker_text_elem( menu.box, "BOTTOM", "BOTTOM", 0, -14, "small", help_scale, ( 0.82, 0.82, 0.82 ), 13 );
+    menu.section_perks = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 28, 362, "small", section_scale, ( 0.90, 0.72, 1.00 ), 13 );
+    menu.line_perks_a = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 24, 390, "small", txt_scale, ( 0.90, 0.72, 1 ), 13 );
+    menu.line_perks_b = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 48, 414, "small", txt_scale, ( 0.90, 0.72, 1 ), 13 );
+
+    menu.line_help = self create_picker_text_elem( menu.box, "BOTTOM", "BOTTOM", 0, -18, "small", help_scale, ( 0.88, 0.88, 0.88 ), 13 );
 
     menu.all_elems[menu.all_elems.size] = menu.border;
     menu.all_elems[menu.all_elems.size] = menu.box;
+    menu.all_elems[menu.all_elems.size] = menu.footer_plate;
+    menu.all_elems[menu.all_elems.size] = menu.theme_dot_0;
+    menu.all_elems[menu.all_elems.size] = menu.theme_dot_1;
+    menu.all_elems[menu.all_elems.size] = menu.theme_dot_2;
     menu.all_elems[menu.all_elems.size] = menu.accent_rail;
     menu.all_elems[menu.all_elems.size] = menu.rule_a;
     menu.all_elems[menu.all_elems.size] = menu.rule_b;
@@ -716,11 +783,61 @@ create_picker_hud()
     return menu;
 }
 
+animate_picker_hud(menu)
+{
+    self endon( "picker_cleanup_done" );
+    self endon( "disconnect" );
+
+    if ( !isdefined( menu ) || !isdefined( menu.theme_dot_0 ) )
+        return;
+
+    pulse = 0;
+    for (;;)
+    {
+        if ( pulse % 3 == 0 )
+        {
+            menu.theme_dot_0 fadeovertime( 0.25 );
+            menu.theme_dot_0.alpha = 0.90;
+            menu.theme_dot_1 fadeovertime( 0.25 );
+            menu.theme_dot_1.alpha = 0.45;
+            menu.theme_dot_2 fadeovertime( 0.25 );
+            menu.theme_dot_2.alpha = 0.45;
+            menu.header fadeovertime( 0.25 );
+            menu.header.alpha = 0.96;
+        }
+        else if ( pulse % 3 == 1 )
+        {
+            menu.theme_dot_0 fadeovertime( 0.25 );
+            menu.theme_dot_0.alpha = 0.45;
+            menu.theme_dot_1 fadeovertime( 0.25 );
+            menu.theme_dot_1.alpha = 0.90;
+            menu.theme_dot_2 fadeovertime( 0.25 );
+            menu.theme_dot_2.alpha = 0.45;
+            menu.header fadeovertime( 0.25 );
+            menu.header.alpha = 0.90;
+        }
+        else
+        {
+            menu.theme_dot_0 fadeovertime( 0.25 );
+            menu.theme_dot_0.alpha = 0.45;
+            menu.theme_dot_1 fadeovertime( 0.25 );
+            menu.theme_dot_1.alpha = 0.45;
+            menu.theme_dot_2 fadeovertime( 0.25 );
+            menu.theme_dot_2.alpha = 0.90;
+            menu.header fadeovertime( 0.25 );
+            menu.header.alpha = 0.93;
+        }
+
+        pulse++;
+        wait 0.30;
+    }
+}
+
 get_picker_text_scale()
 {
     scale = getdvarfloat( "mod_picker_text_scale" );
 
-    // BO2 HUD fontscale behaves reliably at >=1.0 for custom HUD text.
+    // BO2 HUD fontscale behaves reliably at >=1.0 for this picker path.
     if ( !isdefined( scale ) || scale < 1.00 || scale > 1.60 )
         scale = 1.00;
 
@@ -776,37 +893,42 @@ update_picker_hud(menu, loadouts, selected)
         selected = 0;
 
     loadout = loadouts[selected];
+    loadout = normalize_loadout( loadout );
+    loadouts[selected] = loadout;
     class_theme = build_default_class_theme();
 
     if ( isdefined( loadout.class_theme ) )
         class_theme = loadout.class_theme;
 
-    if ( !isdefined( loadout.weapons ) )
-        loadout.weapons = [];
-
-    if ( !isdefined( loadout.perks ) )
-        loadout.perks = [];
+    class_theme.accent_color = ensure_ui_color_visible( class_theme.accent_color, 0.44 );
+    class_theme.weapons_color = ensure_ui_color_visible( class_theme.weapons_color, 0.52 );
+    class_theme.melee_color = ensure_ui_color_visible( class_theme.melee_color, 0.52 );
+    class_theme.perks_color = ensure_ui_color_visible( class_theme.perks_color, 0.56 );
 
     weapon_0 = get_weapon_slot_name( loadout.weapons, 0, 48 );
     weapon_1 = get_weapon_slot_name( loadout.weapons, 1, 48 );
     weapon_2 = get_weapon_slot_name( loadout.weapons, 2, 48 );
 
-    weapon_lines_0 = build_slot_lines( "1.", weapon_0, 18, 22 );
-    weapon_lines_1 = build_slot_lines( "2.", weapon_1, 18, 22 );
-    weapon_lines_2 = build_slot_lines( "3.", weapon_2, 18, 22 );
+    weapon_lines_0 = build_slot_lines( "1.", weapon_0, 14, 16 );
+    weapon_lines_1 = build_slot_lines( "2.", weapon_1, 14, 16 );
+    weapon_lines_2 = build_slot_lines( "3.", weapon_2, 14, 16 );
 
     if ( isdefined( loadout.melee ) )
-        melee_pair = split_two_lines( sanitize_weapon_name( loadout.melee ), 22, 24 );
+        melee_pair = split_two_lines( sanitize_weapon_name( loadout.melee ), 16, 18 );
     else
-        melee_pair = split_two_lines( "-", 22, 24 );
+        melee_pair = split_two_lines( "-", 16, 18 );
 
-    perk_lines = build_perk_lines( loadout.perks, 30 );
+    perk_lines = build_perk_lines( loadout.perks, 20 );
 
     menu.border.color = ( 0.04, 0.06, 0.10 );
     menu.box.color = class_theme.bg_color;
     menu.box.alpha = 0.90;
     menu.header.color = class_theme.header_color;
+    menu.footer_plate.color = class_theme.header_color;
     menu.accent_rail.color = class_theme.accent_color;
+    menu.theme_dot_0.color = class_theme.accent_color;
+    menu.theme_dot_1.color = class_theme.accent_color;
+    menu.theme_dot_2.color = class_theme.accent_color;
     menu.rule_a.color = class_theme.accent_color;
     menu.rule_b.color = class_theme.accent_color;
     menu.rule_c.color = class_theme.accent_color;
@@ -815,7 +937,7 @@ update_picker_hud(menu, loadouts, selected)
     menu.line_subtitle.color = ( 0.88, 0.88, 0.88 );
     menu.section_weapons.color = class_theme.accent_color;
     menu.section_melee.color = class_theme.accent_color;
-    menu.section_perks.color = class_theme.accent_color;
+    menu.section_perks.color = class_theme.perks_color;
 
     menu.line_weap_1a.color = class_theme.weapons_color;
     menu.line_weap_1b.color = class_theme.weapons_color;
@@ -828,6 +950,8 @@ update_picker_hud(menu, loadouts, selected)
     menu.line_melee_b.color = class_theme.melee_color;
     menu.line_perks_a.color = class_theme.perks_color;
     menu.line_perks_b.color = class_theme.perks_color;
+    menu.line_perks_a.alpha = 1;
+    menu.line_perks_b.alpha = 1;
 
     title_text = class_theme.name + "  (" + ( selected + 1 ) + "/" + loadouts.size + ")";
 
@@ -835,7 +959,7 @@ update_picker_hud(menu, loadouts, selected)
         title_text += " [UI#" + menu.instance_id + "]";
 
     menu.line_title settext( title_text );
-    menu.line_subtitle settext( class_theme.subtitle );
+    menu.line_subtitle settext( fit_label( class_theme.subtitle, 42 ) );
     menu.section_weapons settext( "WEAPONS" );
     menu.section_melee settext( "MELEE" );
     menu.section_perks settext( "PERKS" );
@@ -859,6 +983,38 @@ update_picker_hud(menu, loadouts, selected)
         help_text += "  S=" + get_picker_text_scale();
 
     menu.line_help settext( help_text );
+}
+
+ensure_ui_color_visible(color, min_luma)
+{
+    if ( !isdefined( color ) )
+        return ( 0.85, 0.85, 0.85 );
+
+    r = color[0];
+    g = color[1];
+    b = color[2];
+
+    luma = r * 0.299 + g * 0.587 + b * 0.114;
+
+    if ( luma >= min_luma )
+        return ( r, g, b );
+
+    boost = min_luma / ( luma + 0.001 );
+    r = clamp_01( r * boost );
+    g = clamp_01( g * boost );
+    b = clamp_01( b * boost );
+    return ( r, g, b );
+}
+
+clamp_01(v)
+{
+    if ( v < 0.0 )
+        return 0.0;
+
+    if ( v > 1.0 )
+        return 1.0;
+
+    return v;
 }
 
 get_weapon_slot_name(weapons, slot_index, max_chars)
@@ -967,8 +1123,8 @@ destroy_picker_hud(menu)
 build_perk_lines(perks, max_chars)
 {
     lines = [];
-    lines[0] = "none";
-    lines[1] = "none";
+    lines[0] = "-";
+    lines[1] = "";
 
     if ( !isdefined( perks ) || perks.size == 0 )
         return lines;
@@ -1160,38 +1316,112 @@ wait_use_release()
     }
 }
 
+normalize_loadout(loadout)
+{
+    if ( !isdefined( loadout ) )
+        loadout = spawnstruct();
+
+    if ( !isdefined( loadout.weapons ) )
+        loadout.weapons = [];
+
+    if ( !isdefined( loadout.melee ) || loadout.melee == "" || loadout.melee == "none" )
+        loadout.melee = "knife_zm";
+
+    if ( !isdefined( loadout.perks ) )
+        loadout.perks = [];
+
+    weapon_pool = build_weapon_pool();
+    guard = 0;
+    while ( loadout.weapons.size < 3 && guard < 200 )
+    {
+        guard++;
+
+        fallback_pick = pick_random_unique( weapon_pool, 1 );
+        if ( fallback_pick.size < 1 )
+            break;
+
+        loadout.weapons = add_unique( loadout.weapons, fallback_pick[0] );
+    }
+
+    // Hard fallback in extremely restricted pools.
+    if ( loadout.weapons.size < 1 )
+        loadout.weapons = add_unique( loadout.weapons, "m1911_zm" );
+    if ( loadout.weapons.size < 2 )
+        loadout.weapons = add_unique( loadout.weapons, "ak74u_zm" );
+    if ( loadout.weapons.size < 3 )
+        loadout.weapons = add_unique( loadout.weapons, "mp5k_zm" );
+
+    perk_seed = build_random_perk_set( build_perk_pool() );
+    for ( i = 0; i < perk_seed.size && loadout.perks.size < 5; i++ )
+        loadout.perks = add_unique( loadout.perks, perk_seed[i] );
+
+    fallback_perks = [];
+    fallback_perks[0] = "specialty_armorvest";
+    fallback_perks[1] = "specialty_quickrevive";
+    fallback_perks[2] = "specialty_fastreload";
+    fallback_perks[3] = "specialty_rof";
+    fallback_perks[4] = "specialty_longersprint";
+    fallback_perks[5] = "specialty_deadshot";
+    fallback_perks[6] = "specialty_additionalprimaryweapon";
+    fallback_perks[7] = "specialty_scavenger";
+    fallback_perks[8] = "specialty_finalstand";
+    fallback_perks[9] = "specialty_flakjacket";
+    fallback_perks[10] = "specialty_grenadepulldeath";
+    fallback_perks[11] = "specialty_nomotionsensor";
+
+    attempts = 0;
+    while ( loadout.perks.size < 5 && attempts < 200 )
+    {
+        attempts++;
+        loadout.perks = add_unique( loadout.perks, fallback_perks[randomint( fallback_perks.size )] );
+    }
+
+    return loadout;
+}
+
 apply_selected_loadout(loadout)
 {
     if ( !isdefined( loadout ) )
         return;
 
-    // Keep startup points from the previous setup.
-    self.score = 10000;
+    loadout = normalize_loadout( loadout );
+
+    if ( !isdefined( self.mod_start_points_given ) || !self.mod_start_points_given )
+    {
+        self.score = 10000;
+        self.mod_start_points_given = 1;
+    }
 
     self takeAllWeapons();
 
-    gave_any_weapon = false;
+    if ( !isdefined( loadout.weapons ) )
+        loadout.weapons = [];
+
+    if ( loadout.weapons.size >= 3 && !self hasperk( "specialty_additionalprimaryweapon" ) )
+        self maps\mp\zombies\_zm_perks::give_perk( "specialty_additionalprimaryweapon", 0 );
+
+    given_weapons = [];
 
     for ( i = 0; i < loadout.weapons.size; i++ )
     {
         weapon = loadout.weapons[i];
-        self giveWeapon(weapon);
 
-        if ( self hasWeapon(weapon) )
-        {
-            self give_max_ammo(weapon);
-            gave_any_weapon = true;
-        }
+        if ( self try_give_loadout_weapon( weapon ) )
+            given_weapons = add_unique( given_weapons, weapon );
     }
 
-    if ( !gave_any_weapon )
+    if ( given_weapons.size < 1 )
     {
-        self giveWeapon( "ray_gun_zm" );
+        fallback_weapons = [];
+        fallback_weapons[0] = "ray_gun_zm";
+        fallback_weapons[1] = "m1911_zm";
+        fallback_weapons[2] = "ak74u_zm";
+        fallback_weapons[3] = "mp5k_zm";
 
-        if ( self hasWeapon( "ray_gun_zm" ) )
+        for ( i = 0; i < fallback_weapons.size && given_weapons.size < 2; i++ )
         {
-            self give_max_ammo( "ray_gun_zm" );
-            gave_any_weapon = true;
+            if ( self try_give_loadout_weapon( fallback_weapons[i] ) )
+                given_weapons = add_unique( given_weapons, fallback_weapons[i] );
         }
     }
 
@@ -1208,22 +1438,110 @@ apply_selected_loadout(loadout)
             self maps\mp\zombies\_zm_perks::give_perk( perk, 0 );
     }
 
-    for ( i = 0; i < loadout.weapons.size; i++ )
+    for ( i = 0; i < given_weapons.size; i++ )
     {
-        if ( self hasWeapon( loadout.weapons[i] ) )
+        if ( self hasWeapon( given_weapons[i] ) )
         {
-            self switchToWeapon( loadout.weapons[i] );
+            self switchToWeapon( given_weapons[i] );
             break;
         }
     }
 }
 
+try_give_loadout_weapon(weapon)
+{
+    if ( !isdefined( weapon ) || weapon == "" || weapon == "none" )
+        return false;
+
+    if ( is_invalid_loadout_weapon_name( weapon ) )
+        return false;
+
+    self maps\mp\zombies\_zm_weapons::weapon_give( weapon );
+    wait 0.05;
+
+    if ( self hasWeapon( weapon ) )
+    {
+        self give_max_ammo( weapon );
+        return true;
+    }
+
+    self giveWeapon( weapon );
+    wait 0.05;
+
+    if ( self hasWeapon( weapon ) )
+    {
+        self give_max_ammo( weapon );
+        return true;
+    }
+
+    return false;
+}
+
 give_selected_melee(melee_weapon)
 {
-    if ( !isdefined( melee_weapon ) || melee_weapon == "" || melee_weapon == "none" )
-        melee_weapon = "knife_zm";
+    candidates = [];
 
-    self maps\mp\zombies\_zm_weapons::weapon_give( melee_weapon, 0, 1, 1 );
+    if ( isdefined( melee_weapon ) && melee_weapon != "" && melee_weapon != "none" )
+        candidates[candidates.size] = melee_weapon;
+
+    if ( isdefined( level.zombie_melee_weapon_player_init ) && level.zombie_melee_weapon_player_init != "" )
+        candidates = add_unique( candidates, level.zombie_melee_weapon_player_init );
+
+    candidates = add_unique( candidates, "knife_zm" );
+    candidates = add_unique( candidates, "bowie_knife_zm" );
+    candidates = add_unique( candidates, "sickle_knife_zm" );
+    candidates = add_unique( candidates, "tazer_knuckles_zm" );
+
+    for ( i = 0; i < candidates.size; i++ )
+    {
+        candidate = candidates[i];
+
+        if ( !is_melee_candidate_supported( candidate ) )
+            continue;
+
+        self maps\mp\zombies\_zm_weapons::weapon_give( candidate, 0, 1, 1 );
+        wait 0.05;
+
+        if ( isdefined( self.current_melee_weapon ) && self.current_melee_weapon == candidate )
+            return;
+
+        if ( self hasweapon( candidate ) )
+            return;
+    }
+}
+
+is_melee_candidate_supported(candidate)
+{
+    if ( !isdefined( candidate ) || candidate == "" || candidate == "none" )
+        return false;
+
+    if ( issubstr( candidate, "ballistic" ) || issubstr( candidate, "no_melee" ) )
+        return false;
+
+    if ( isdefined( level._melee_weapons ) )
+    {
+        for ( i = 0; i < level._melee_weapons.size; i++ )
+        {
+            if ( isdefined( level._melee_weapons[i] ) && isdefined( level._melee_weapons[i].weapon_name ) && level._melee_weapons[i].weapon_name == candidate )
+                return true;
+        }
+    }
+
+    if ( isdefined( level.zombie_melee_weapon_list ) )
+    {
+        keys = getarraykeys( level.zombie_melee_weapon_list );
+
+        for ( i = 0; i < keys.size; i++ )
+        {
+            if ( keys[i] == candidate )
+                return true;
+        }
+    }
+
+    if ( candidate == "knife_zm" || candidate == "bowie_knife_zm" || candidate == "sickle_knife_zm" || candidate == "tazer_knuckles_zm" )
+        return true;
+
+    return false;
 }
 
 format_weapon_list(weapons)
@@ -1327,4 +1645,2455 @@ give_max_ammo(weapon)
 
     self setWeaponAmmoClip(weapon, weaponClipSize(weapon));
     self setWeaponAmmoStock(weapon, weaponMaxAmmo(weapon));
+}
+
+rogue_bootstrap()
+{
+    // On some loads this script starts before level.zombiemode is initialized.
+    // Wait briefly so chat listeners are always registered on ZM maps.
+    wait_frames = 0;
+    while ( !is_zombies_map() && wait_frames < 400 )
+    {
+        wait 0.05;
+        wait_frames++;
+    }
+
+    if ( !is_zombies_map() )
+    {
+        map_name = tolower( getdvar( "mapname" ) );
+
+        if ( !isdefined( map_name ) || map_name.size < 3 )
+            return;
+
+        if ( getsubstr( map_name, 0, 3 ) != "zm_" && getsubstr( map_name, 0, 3 ) != "so_" )
+            return;
+    }
+
+    if ( isdefined( level.rogue_bootstrapped ) && level.rogue_bootstrapped )
+        return;
+
+    level.rogue_bootstrapped = 1;
+    level.rogue_started = 0;
+    level.rogue_completed = 0;
+    level.rogue_round_goal = 10;
+    level.rogue_target_round = 1;
+    level.rogue_entry_fee = 0;
+    level.rogue_boon_in_progress = 0;
+    level.rogue_last_round_started = undefined;
+    level thread rogue_level_command_listener( "say" );
+    level thread rogue_level_command_listener( "sayall" );
+    level thread rogue_level_command_listener( "sayteam" );
+    level thread rogue_round_end_monitor();
+    level thread rogue_prepare_idle_state();
+    if ( getdvarint( "rogue_town_debug_spawn" ) == 1 )
+        level thread rogue_town_panzer_debug_spawn_once();
+}
+
+rogue_prepare_idle_state()
+{
+    while ( !isdefined( level.round_spawn_func ) )
+        wait 0.1;
+
+    if ( isdefined( level.round_start_custom_func ) && level.round_start_custom_func != ::rogue_round_start_custom )
+        level.rogue_prev_round_start_custom = level.round_start_custom_func;
+
+    level.round_start_custom_func = ::rogue_round_start_custom;
+    rogue_pause_zombie_spawns();
+    rogue_broadcast( "^3Rogue Gauntlet:^7 type ^2.start 1000^7 in chat to begin." );
+}
+
+rogue_pause_zombie_spawns()
+{
+    common_scripts\utility::flag_clear( "spawn_zombies" );
+    level.rogue_spawns_paused = 1;
+    if ( isdefined( level.mechz_left_to_spawn ) )
+        level.mechz_left_to_spawn = 0;
+
+    if ( isdefined( level.rogue_panzer_mode ) && level.rogue_panzer_mode )
+    {
+        rogue_kill_non_panzer_enemies();
+        return;
+    }
+
+    enemies = maps\mp\zombies\_zm_utility::get_round_enemy_array();
+
+    for ( i = 0; i < enemies.size; i++ )
+    {
+        if ( !isdefined( enemies[i] ) )
+            continue;
+
+        enemies[i] dodamage( enemies[i].health + 10000, enemies[i].origin );
+    }
+}
+
+rogue_resume_zombie_spawns()
+{
+    common_scripts\utility::flag_set( "spawn_zombies" );
+    level.rogue_spawns_paused = 0;
+}
+
+rogue_level_command_listener(event_name)
+{
+    for (;;)
+    {
+        level waittill( event_name, arg1, arg2, arg3, arg4 );
+
+        player = rogue_find_player_arg( arg1, arg2, arg3, arg4 );
+        rogue_try_handle_chat_arg( player, arg1, event_name );
+        rogue_try_handle_chat_arg( player, arg2, event_name );
+        rogue_try_handle_chat_arg( player, arg3, event_name );
+        rogue_try_handle_chat_arg( player, arg4, event_name );
+    }
+}
+
+rogue_find_player_arg(arg1, arg2, arg3, arg4)
+{
+    if ( isdefined( arg1 ) && isplayer( arg1 ) )
+        return arg1;
+
+    if ( isdefined( arg2 ) && isplayer( arg2 ) )
+        return arg2;
+
+    if ( isdefined( arg3 ) && isplayer( arg3 ) )
+        return arg3;
+
+    if ( isdefined( arg4 ) && isplayer( arg4 ) )
+        return arg4;
+
+    return undefined;
+}
+
+rogue_try_handle_chat_arg(player, arg, event_name)
+{
+    if ( !isdefined( arg ) || isplayer( arg ) )
+        return;
+
+    text = "" + arg;
+    text = rogue_normalize_chat_text( text );
+
+    if ( text == "" )
+        return;
+
+    if ( isdefined( player ) && isplayer( player ) && getdvarint( "rogue_chat_debug" ) == 1 )
+        player iprintln( "^3chat seen [" + event_name + "]:^7 " + text );
+
+    rogue_try_handle_chat_command( player, text );
+}
+
+rogue_normalize_chat_text(text)
+{
+    if ( !isdefined( text ) || text == "" )
+        return "";
+
+    t = tolower( text );
+
+    while ( t != "" && getsubstr( t, 0, 1 ) == " " )
+        t = getsubstr( t, 1, t.size );
+
+    if ( t == "" )
+        return "";
+
+    // Some builds prepend a random/broken first character.
+    if ( t[0] != "." && t[0] != "/" && t[0] != "s" )
+        t = getsubstr( t, 1, t.size );
+
+    return t;
+}
+
+rogue_player_command_listener()
+{
+    self endon( "disconnect" );
+    self thread rogue_player_say_listener( "say" );
+    self thread rogue_player_say_listener( "sayall" );
+    self thread rogue_player_say_listener( "sayteam" );
+    self thread rogue_player_custom_cmd_listener();
+}
+
+rogue_player_say_listener(event_name)
+{
+    self endon( "disconnect" );
+
+    for (;;)
+    {
+        self waittill( event_name, arg1, arg2, arg3, arg4 );
+        rogue_try_handle_chat_arg( self, arg1, event_name + "_self" );
+        rogue_try_handle_chat_arg( self, arg2, event_name + "_self" );
+        rogue_try_handle_chat_arg( self, arg3, event_name + "_self" );
+        rogue_try_handle_chat_arg( self, arg4, event_name + "_self" );
+    }
+}
+
+rogue_player_custom_cmd_listener()
+{
+    self endon( "disconnect" );
+
+    for (;;)
+    {
+        self waittill( "custom_cmd", cmd, arg0, arg1, arg2 );
+
+        text = "";
+
+        if ( isdefined( cmd ) && !isplayer( cmd ) )
+            text = "" + cmd;
+
+        if ( isdefined( arg0 ) && !isplayer( arg0 ) )
+            text += " " + arg0;
+
+        if ( isdefined( arg1 ) && !isplayer( arg1 ) )
+            text += " " + arg1;
+
+        if ( isdefined( arg2 ) && !isplayer( arg2 ) )
+            text += " " + arg2;
+
+        rogue_try_handle_chat_command( self, text );
+    }
+}
+
+rogue_try_handle_chat_command(source_player, raw_text)
+{
+    if ( !isdefined( raw_text ) || raw_text == "" )
+        return;
+
+    if ( isplayer( raw_text ) )
+        return;
+
+    text = "" + raw_text;
+    entry_fee = rogue_extract_start_entry( text );
+
+    if ( entry_fee < 0 )
+        return;
+
+    if ( !isdefined( source_player ) || !isplayer( source_player ) )
+    {
+        players = getplayers();
+
+        if ( isdefined( players ) && players.size == 1 && isdefined( players[0] ) )
+            source_player = players[0];
+        else
+            return;
+    }
+
+    source_player iprintlnbold( "^2Rogue command detected:^7 start " + entry_fee );
+
+    rogue_start_gauntlet( source_player, entry_fee );
+}
+
+rogue_extract_start_entry(raw_text)
+{
+    cmd_text = tolower( "" + raw_text );
+
+    if ( !issubstr( cmd_text, "start" ) )
+        return -1;
+
+    parts = strtok( cmd_text, " " );
+    if ( !isdefined( parts ) || parts.size < 1 )
+        return -1;
+
+    start_index = -1;
+    for ( i = 0; i < parts.size; i++ )
+    {
+        token = parts[i];
+
+        if ( !isdefined( token ) || token == "" )
+            continue;
+
+        if ( token == ".start" || token == "start" || token == "/start" )
+        {
+            start_index = i;
+            break;
+        }
+    }
+
+    if ( start_index < 0 )
+        return -1;
+
+    entry_fee = 1000;
+
+    if ( start_index + 1 < parts.size )
+        entry_fee = extract_first_int( parts[start_index + 1], 1000 );
+    else
+        entry_fee = extract_first_int( parts[start_index], 1000 );
+
+    if ( entry_fee < 0 )
+        entry_fee = 0;
+
+    if ( entry_fee > 250000 )
+        entry_fee = 250000;
+
+    return entry_fee;
+}
+
+extract_first_int(text, default_value)
+{
+    if ( !isdefined( text ) || text == "" )
+        return default_value;
+
+    digits = "";
+    seen_digit = 0;
+
+    for ( i = 0; i < text.size; i++ )
+    {
+        ch = getsubstr( text, i, i + 1 );
+
+        if ( is_digit_char( ch ) )
+        {
+            seen_digit = 1;
+            digits += ch;
+            continue;
+        }
+
+        if ( seen_digit )
+            break;
+    }
+
+    if ( digits == "" )
+        return default_value;
+
+    return int( digits );
+}
+
+is_digit_char(ch)
+{
+    if ( ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" )
+        return true;
+
+    return false;
+}
+
+rogue_start_gauntlet(player, entry_fee)
+{
+    if ( isdefined( level.rogue_started ) && level.rogue_started )
+    {
+        player iprintln( "^3Rogue Gauntlet is already running." );
+        return;
+    }
+
+    if ( !isdefined( player.score ) || player.score < entry_fee )
+    {
+        player iprintlnbold( "^1Need " + entry_fee + " points to start. You have " + player.score + "." );
+        return;
+    }
+
+    if ( entry_fee > 0 )
+        player.score = player.score - entry_fee;
+
+    level.rogue_entry_fee = entry_fee;
+    level.rogue_started = 1;
+    level.rogue_completed = 0;
+    level.rogue_target_round = 1;
+    level.rogue_last_round_started = undefined;
+    level.rogue_panzer_mode = 1;
+    level.rogue_loop_running = 0;
+    level.rogue_wave_spawning = 0;
+    rogue_wait_for_base_spawners( 2.0 );
+    pool = rogue_get_panzer_spawner_pool();
+    rogue_log_event( "gauntlet_start_try", "entry=" + entry_fee + ";pool=" + pool.size + ";zsp=" + rogue_get_spawner_count_text() );
+
+    if ( !isdefined( pool ) || pool.size < 1 )
+    {
+        rogue_log_event( "gauntlet_start_blocked", "reason=no_spawner_pool;entry=" + entry_fee + ";zsp=" + rogue_get_spawner_count_text() );
+        player iprintlnbold( "^1No panzer/zombie spawners ready on this map variant. Panzer-only mode cannot start." );
+        level.rogue_started = 0;
+        level.rogue_panzer_mode = 0;
+        return;
+    }
+
+    rogue_broadcast( "^2Panzer runtime ready:^7 " + pool.size + " mech spawners detected." );
+    rogue_broadcast( "^2Rogue Gauntlet started^7 by " + player.name + " (entry " + entry_fee + ")." );
+    rogue_pause_zombie_spawns();
+    level thread rogue_panzer_spawn_lockdown();
+    level thread rogue_panzer_gauntlet_loop( player );
+}
+
+rogue_broadcast(text)
+{
+    players = getplayers();
+
+    for ( i = 0; i < players.size; i++ )
+    {
+        if ( isdefined( players[i] ) )
+            players[i] iprintlnbold( text );
+    }
+}
+
+rogue_round_start_custom()
+{
+    if ( isdefined( level.rogue_prev_round_start_custom ) && level.rogue_prev_round_start_custom != ::rogue_round_start_custom )
+        [[ level.rogue_prev_round_start_custom ]]();
+
+    if ( !isdefined( level.rogue_started ) || !level.rogue_started )
+    {
+        rogue_pause_zombie_spawns();
+        return;
+    }
+
+    if ( isdefined( level.rogue_completed ) && level.rogue_completed )
+    {
+        rogue_pause_zombie_spawns();
+        return;
+    }
+
+    if ( level.rogue_target_round > level.rogue_round_goal )
+    {
+        level.rogue_started = 0;
+        level.rogue_completed = 1;
+        rogue_pause_zombie_spawns();
+        return;
+    }
+    // Panzer gauntlet manages spawns itself; keep normal zombie rounds disabled.
+    rogue_pause_zombie_spawns();
+}
+
+rogue_round_end_monitor()
+{
+    for (;;)
+    {
+        level waittill( "end_of_round" );
+
+        if ( isdefined( level.rogue_panzer_mode ) && level.rogue_panzer_mode )
+            continue;
+
+        if ( !isdefined( level.rogue_started ) || !level.rogue_started )
+            continue;
+
+        cleared_round = level.rogue_target_round;
+
+        if ( cleared_round >= level.rogue_round_goal )
+        {
+            level.rogue_started = 0;
+            level.rogue_completed = 1;
+            rogue_pause_zombie_spawns();
+            rogue_broadcast( "^2Gauntlet clear!^7 You survived 10 rounds." );
+            continue;
+        }
+
+        rogue_pause_zombie_spawns();
+        level.rogue_target_round = cleared_round + 1;
+        level.rogue_last_round_started = undefined;
+        level thread rogue_begin_between_round_boon_phase( cleared_round );
+    }
+}
+
+rogue_begin_between_round_boon_phase(cleared_round)
+{
+    if ( isdefined( level.rogue_boon_in_progress ) && level.rogue_boon_in_progress )
+        return;
+
+    level.rogue_boon_in_progress = 1;
+    players = getplayers();
+
+    for ( i = 0; i < players.size; i++ )
+    {
+        if ( !isdefined( players[i] ) || !isalive( players[i] ) )
+            continue;
+
+        players[i].rogue_boon_pick_done_round = undefined;
+        players[i] thread rogue_player_pick_boon( cleared_round );
+    }
+
+    end_time = gettime() + 25000;
+
+    for (;;)
+    {
+        all_done = 1;
+        players = getplayers();
+
+        for ( i = 0; i < players.size; i++ )
+        {
+            if ( !isdefined( players[i] ) || !isalive( players[i] ) )
+                continue;
+
+            if ( !isdefined( players[i].rogue_boon_pick_done_round ) || players[i].rogue_boon_pick_done_round != cleared_round )
+            {
+                all_done = 0;
+                break;
+            }
+        }
+
+        if ( all_done || gettime() >= end_time )
+            break;
+
+        wait 0.05;
+    }
+
+    level.rogue_boon_in_progress = 0;
+
+    if ( isdefined( level.rogue_started ) && level.rogue_started && !( isdefined( level.rogue_completed ) && level.rogue_completed ) && !( isdefined( level.rogue_panzer_mode ) && level.rogue_panzer_mode ) )
+        rogue_resume_zombie_spawns();
+}
+
+rogue_panzer_gauntlet_loop(owner_player)
+{
+    if ( isdefined( level.rogue_loop_running ) && level.rogue_loop_running )
+        return;
+
+    level.rogue_loop_running = 1;
+    round_num = 1;
+    rogue_pause_zombie_spawns();
+
+    while ( isdefined( level.rogue_started ) && level.rogue_started && round_num <= level.rogue_round_goal )
+    {
+        level.rogue_target_round = round_num;
+        level.round_number = round_num;
+        rogue_apply_round_scaling( round_num );
+        rogue_pause_zombie_spawns();
+
+        players = getplayers();
+        for ( i = 0; i < players.size; i++ )
+        {
+            if ( !isdefined( players[i] ) || !isalive( players[i] ) )
+                continue;
+
+            players[i] rogue_apply_round_start_boons();
+        }
+
+        spawn_count = rogue_get_panzer_spawn_count( round_num );
+        rogue_broadcast( "^3Gauntlet Round " + round_num + "^7: spawning ^1" + spawn_count + "^7 panzers." );
+
+        spawned = rogue_spawn_panzer_wave( round_num, spawn_count );
+        if ( spawned.size < 1 )
+        {
+            pool_size = 0;
+            failed_count = 0;
+            fail_reason = "unknown";
+            fail_path = "unknown";
+
+            if ( isdefined( level.rogue_last_panzer_pool_size ) )
+                pool_size = level.rogue_last_panzer_pool_size;
+
+            if ( isdefined( level.rogue_last_panzer_failed_spawns ) )
+                failed_count = level.rogue_last_panzer_failed_spawns;
+
+            if ( isdefined( level.rogue_last_panzer_fail_reason ) )
+                fail_reason = level.rogue_last_panzer_fail_reason;
+
+            if ( isdefined( level.rogue_last_panzer_spawn_path ) )
+                fail_path = level.rogue_last_panzer_spawn_path;
+
+            if ( fail_reason == "spawn_failed" )
+                rogue_broadcast( "^1Panzer spawn failed on this map^7 (pool " + pool_size + ", failed " + failed_count + ", path " + fail_path + ")." );
+            else
+                rogue_broadcast( "^1No Panzer-compatible spawners found on this map^7 (pool " + pool_size + ")." );
+
+            level.rogue_started = 0;
+            level.rogue_completed = 0;
+            break;
+        }
+
+        rogue_wait_for_panzer_wave_clear( spawned, round_num );
+
+        if ( !isdefined( level.rogue_started ) || !level.rogue_started )
+            break;
+
+        if ( round_num >= level.rogue_round_goal )
+        {
+            level.rogue_started = 0;
+            level.rogue_completed = 1;
+            rogue_pause_zombie_spawns();
+            rogue_broadcast( "^2Gauntlet clear!^7 You survived 10 rounds." );
+            break;
+        }
+
+        rogue_pause_zombie_spawns();
+        level thread rogue_begin_between_round_boon_phase( round_num );
+
+        while ( isdefined( level.rogue_boon_in_progress ) && level.rogue_boon_in_progress )
+            wait 0.05;
+
+        round_num++;
+        wait 0.5;
+    }
+
+    rogue_pause_zombie_spawns();
+    level.rogue_loop_running = 0;
+}
+
+rogue_get_panzer_spawn_count(round_num)
+{
+    if ( round_num < 1 )
+        round_num = 1;
+
+    base_count = 1 + int( ( round_num - 1 ) / 3 );
+    random_count = randomintrange( 0, 3 );
+
+    if ( round_num >= 6 )
+        random_count = random_count + randomintrange( 0, 2 );
+
+    total = base_count + random_count;
+
+    if ( total < 1 )
+        total = 1;
+
+    if ( total > 9 )
+        total = 9;
+
+    return total;
+}
+
+rogue_is_town_variant_map()
+{
+    map_name = tolower( getdvar( "mapname" ) );
+
+    if ( !isdefined( map_name ) || map_name == "" )
+        return false;
+
+    if ( map_name == "so_zsurvival_zm_transit" )
+        return true;
+
+    if ( map_name == "so_zclassic_zm_transit" )
+        return true;
+
+    if ( map_name == "zm_transit" )
+        return true;
+
+    if ( map_name == "zm_nuked" )
+        return true;
+
+    return false;
+}
+
+rogue_get_spawn_center_origin()
+{
+    locs = getstructarray( "zombie_location", "script_noteworthy" );
+
+    if ( !isdefined( locs ) || locs.size < 1 )
+        locs = getstructarray( "spawn_location", "script_noteworthy" );
+
+    if ( !isdefined( locs ) || locs.size < 1 )
+        return undefined;
+
+    sx = 0.0;
+    sy = 0.0;
+    sz = 0.0;
+    c = 0;
+
+    for ( i = 0; i < locs.size; i++ )
+    {
+        if ( !isdefined( locs[i] ) || !isdefined( locs[i].origin ) )
+            continue;
+
+        sx = sx + locs[i].origin[0];
+        sy = sy + locs[i].origin[1];
+        sz = sz + locs[i].origin[2];
+        c++;
+    }
+
+    if ( c < 1 )
+        return undefined;
+
+    return ( sx / c, sy / c, ( sz / c ) + 36.0 );
+}
+
+rogue_pick_nearest_spawner(pool, target_origin)
+{
+    if ( !isdefined( pool ) || pool.size < 1 )
+        return undefined;
+
+    if ( !isdefined( target_origin ) )
+        return pool[0];
+
+    best = undefined;
+    best_dist_sq = 999999999.0;
+
+    for ( i = 0; i < pool.size; i++ )
+    {
+        if ( !isdefined( pool[i] ) || !isdefined( pool[i].spawner ) || !isdefined( pool[i].spawner.origin ) )
+            continue;
+
+        dx = pool[i].spawner.origin[0] - target_origin[0];
+        dy = pool[i].spawner.origin[1] - target_origin[1];
+        dz = pool[i].spawner.origin[2] - target_origin[2];
+        dist_sq = dx * dx + dy * dy + dz * dz;
+
+        if ( !isdefined( best ) || dist_sq < best_dist_sq )
+        {
+            best = pool[i];
+            best_dist_sq = dist_sq;
+        }
+    }
+
+    if ( !isdefined( best ) )
+        return pool[0];
+
+    return best;
+}
+
+rogue_town_panzer_debug_spawn_once()
+{
+    if ( getdvarint( "rogue_town_debug_spawn" ) != 1 )
+        return;
+
+    if ( !rogue_is_town_variant_map() )
+        return;
+
+    wait 1.0;
+
+    tries = 0;
+    while ( getplayers().size < 1 && tries < 300 )
+    {
+        wait 0.05;
+        tries++;
+    }
+
+    wait 2.0;
+
+    center = rogue_get_spawn_center_origin();
+
+    if ( !rogue_init_mechz_runtime_for_all_maps() )
+    {
+        reason = "unknown";
+
+        if ( isdefined( level.rogue_mechz_runtime_fail_reason ) && level.rogue_mechz_runtime_fail_reason != "" )
+            reason = level.rogue_mechz_runtime_fail_reason;
+
+        rogue_broadcast( "^1Town Panzer debug:^7 mech runtime init failed (" + reason + "), trying direct actor spawn..." );
+        ai = rogue_spawn_direct_mech_actor( center, 1 );
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+        {
+            rogue_broadcast( "^1Town Panzer debug:^7 direct actor spawn failed, trying proxy spawner..." );
+            ai = rogue_spawn_proxy_mech_actor( center, 1 );
+
+            if ( !isdefined( ai ) || !isalive( ai ) )
+            {
+                rogue_broadcast( "^1Town Panzer debug:^7 proxy spawner mech spawn failed." );
+                return;
+            }
+
+            if ( !rogue_is_mech_actor_class( ai ) )
+            {
+                rogue_broadcast( "^1Town Panzer debug:^7 proxy spawned non-mech actor: " + rogue_safe_str( ai.classname ) );
+                return;
+            }
+
+            ai.rogue_is_panzer = 1;
+            ai.rogue_panzer_type = "mechz";
+            ai.rogue_round_spawned = 1;
+            rogue_tune_panzer_actor( ai, 1, "mechz" );
+            rogue_broadcast( "^2Town Panzer debug:^7 proxy mech spawn success (" + rogue_safe_str( ai.classname ) + ")." );
+            return;
+        }
+
+        if ( !rogue_is_mech_actor_class( ai ) )
+        {
+            rogue_broadcast( "^1Town Panzer debug:^7 direct spawn returned non-mech actor: " + rogue_safe_str( ai.classname ) );
+            return;
+        }
+
+        ai.rogue_is_panzer = 1;
+        ai.rogue_panzer_type = "mechz";
+        ai.rogue_round_spawned = 1;
+        rogue_tune_panzer_actor( ai, 1, "mechz" );
+        rogue_broadcast( "^2Town Panzer debug:^7 direct mech spawn success (" + rogue_safe_str( ai.classname ) + ")." );
+        return;
+    }
+
+    pool = rogue_get_panzer_spawner_pool();
+    if ( !isdefined( pool ) || pool.size < 1 )
+    {
+        rogue_broadcast( "^1Town Panzer debug:^7 no mechz_spawner found (zombie_spawners=" + rogue_get_spawner_count_text() + "), trying direct actor spawn..." );
+        ai = rogue_spawn_direct_mech_actor( center, 1 );
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+        {
+            rogue_broadcast( "^1Town Panzer debug:^7 direct actor spawn failed, trying proxy spawner..." );
+            ai = rogue_spawn_proxy_mech_actor( center, 1 );
+
+            if ( !isdefined( ai ) || !isalive( ai ) )
+            {
+                rogue_broadcast( "^1Town Panzer debug:^7 proxy spawner mech spawn failed." );
+                return;
+            }
+
+            if ( !rogue_is_mech_actor_class( ai ) )
+            {
+                rogue_broadcast( "^1Town Panzer debug:^7 proxy spawned non-mech actor: " + rogue_safe_str( ai.classname ) );
+                return;
+            }
+
+            ai.rogue_is_panzer = 1;
+            ai.rogue_panzer_type = "mechz";
+            ai.rogue_round_spawned = 1;
+            rogue_tune_panzer_actor( ai, 1, "mechz" );
+            rogue_broadcast( "^2Town Panzer debug:^7 proxy mech spawn success (" + rogue_safe_str( ai.classname ) + ")." );
+            return;
+        }
+
+        if ( !rogue_is_mech_actor_class( ai ) )
+        {
+            rogue_broadcast( "^1Town Panzer debug:^7 direct spawn returned non-mech actor: " + rogue_safe_str( ai.classname ) );
+            return;
+        }
+
+        ai.rogue_is_panzer = 1;
+        ai.rogue_panzer_type = "mechz";
+        ai.rogue_round_spawned = 1;
+        rogue_tune_panzer_actor( ai, 1, "mechz" );
+        rogue_broadcast( "^2Town Panzer debug:^7 direct mech spawn success (" + rogue_safe_str( ai.classname ) + ")." );
+        return;
+    }
+
+    pick = rogue_pick_nearest_spawner( pool, center );
+
+    if ( !isdefined( pick ) || !isdefined( pick.spawner ) )
+    {
+        rogue_broadcast( "^1Town Panzer debug:^7 failed to pick spawner." );
+        return;
+    }
+
+    ai = rogue_try_spawn_mech_via_utility( pick.spawner, 1 );
+
+    if ( ( !isdefined( ai ) || !isalive( ai ) || !rogue_is_mech_actor_class( ai ) ) && isdefined( center ) )
+        ai = rogue_spawn_direct_mech_actor( center, 1 );
+
+    if ( ( !isdefined( ai ) || !isalive( ai ) || !rogue_is_mech_actor_class( ai ) ) && isdefined( center ) )
+        ai = rogue_spawn_proxy_mech_actor( center, 1 );
+
+    if ( !isdefined( ai ) || !isalive( ai ) )
+    {
+        rogue_broadcast( "^1Town Panzer debug:^7 spawnactor failed (undefined AI)." );
+        return;
+    }
+
+    if ( isdefined( center ) )
+        ai forceteleport( center );
+
+    if ( !rogue_is_mech_actor_class( ai ) )
+    {
+        rogue_broadcast( "^1Town Panzer debug:^7 fallback actor spawned: " + rogue_safe_str( ai.classname ) );
+        return;
+    }
+
+    ai.rogue_is_panzer = 1;
+    ai.rogue_panzer_type = "mechz";
+    ai.rogue_round_spawned = 1;
+    rogue_tune_panzer_actor( ai, 1, "mechz" );
+    rogue_broadcast( "^2Town Panzer debug:^7 mech spawn success (" + rogue_safe_str( ai.classname ) + ")." );
+}
+
+rogue_get_spawner_count_text()
+{
+    if ( isdefined( level.zombie_spawners ) )
+        return "" + level.zombie_spawners.size;
+
+    return "undef";
+}
+
+rogue_spawn_direct_mech_actor(spawn_origin, round_num)
+{
+    if ( !isdefined( spawn_origin ) )
+        spawn_origin = ( 0, 0, 0 );
+
+    rogue_log_event( "direct_try", "round=" + round_num + ";origin=" + rogue_safe_str( spawn_origin ) );
+
+    while ( getfreeactorcount() < 1 )
+        wait 0.05;
+
+    ai = spawn( "actor_zm_tomb_mech_zombie", spawn_origin );
+
+    if ( !isdefined( ai ) )
+    {
+        rogue_log_event( "direct_fail", "round=" + round_num + ";origin=" + rogue_safe_str( spawn_origin ) );
+        return undefined;
+    }
+
+    // Panzer mech actor does not provide a standard j_head aim tag.
+    // Forcing aim assist on this class causes AimTarget_GetTagPos crashes.
+    ai disableaimassist();
+
+    if ( isdefined( round_num ) )
+        ai._starting_round_number = round_num;
+
+    ai.aiteam = level.zombie_team;
+    ai clearentityowner();
+    ai forceteleport( spawn_origin );
+    ai show();
+    rogue_log_event( "direct_ok", "round=" + round_num + ";class=" + rogue_safe_str( ai.classname ) + ";origin=" + rogue_safe_str( spawn_origin ) );
+    return ai;
+}
+
+rogue_spawn_proxy_mech_actor(spawn_origin, round_num)
+{
+    if ( !isdefined( level.zombie_spawners ) || level.zombie_spawners.size < 1 )
+        return undefined;
+
+    pick = rogue_pick_nearest_zombie_spawner( spawn_origin );
+
+    if ( !isdefined( pick ) )
+        return undefined;
+
+    ai = rogue_try_spawn_mech_via_utility( pick, round_num );
+
+    if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+        return ai;
+
+    if ( isdefined( pick.origin ) )
+    {
+        ai = rogue_spawn_direct_mech_actor( pick.origin, round_num );
+
+        if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+            return ai;
+    }
+
+    return undefined;
+}
+
+rogue_pick_nearest_zombie_spawner(target_origin)
+{
+    if ( !isdefined( level.zombie_spawners ) || level.zombie_spawners.size < 1 )
+        return undefined;
+
+    if ( !isdefined( target_origin ) )
+        return level.zombie_spawners[0];
+
+    best = undefined;
+    best_dist_sq = 999999999.0;
+
+    for ( i = 0; i < level.zombie_spawners.size; i++ )
+    {
+        s = level.zombie_spawners[i];
+        if ( !isdefined( s ) || !isdefined( s.origin ) )
+            continue;
+
+        dx = s.origin[0] - target_origin[0];
+        dy = s.origin[1] - target_origin[1];
+        dz = s.origin[2] - target_origin[2];
+        dist_sq = dx * dx + dy * dy + dz * dz;
+
+        if ( !isdefined( best ) || dist_sq < best_dist_sq )
+        {
+            best = s;
+            best_dist_sq = dist_sq;
+        }
+    }
+
+    if ( !isdefined( best ) )
+        return level.zombie_spawners[0];
+
+    return best;
+}
+
+rogue_get_panzer_spawner_pool()
+{
+    mech_pool = [];
+
+    // Strict Panzer mode: mech spawners only.
+    mech_spawners = rogue_get_mechz_spawners();
+    mech_actor_ents = getentarray( "actor_zm_tomb_mech_zombie", "classname" );
+    mech_locations = getentarray( "mechz_location", "script_noteworthy" );
+    rogue_log_event( "pool_scan", "mech_spawners=" + mech_spawners.size + ";mech_actor_ents=" + mech_actor_ents.size + ";mech_locations=" + mech_locations.size );
+
+    for ( i = 0; i < mech_spawners.size; i++ )
+    {
+        if ( !isdefined( mech_spawners[i] ) )
+            continue;
+
+        entry = spawnstruct();
+        entry.spawner = mech_spawners[i];
+        entry.type = "mechz";
+        mech_pool[mech_pool.size] = entry;
+    }
+
+    // Full-port fallback: spawn real mech actor at mechz/zombie locations if no map mech spawner entity exists.
+    if ( mech_pool.size < 1 )
+    {
+        if ( !isdefined( level.zombie_mechz_locations ) || level.zombie_mechz_locations.size < 1 )
+            rogue_prepare_mechz_runtime();
+
+        if ( isdefined( level.zombie_mechz_locations ) && level.zombie_mechz_locations.size > 0 )
+        {
+            for ( i = 0; i < level.zombie_mechz_locations.size; i++ )
+            {
+                if ( !isdefined( level.zombie_mechz_locations[i] ) || !isdefined( level.zombie_mechz_locations[i].origin ) )
+                    continue;
+
+                point = spawnstruct();
+                point.origin = level.zombie_mechz_locations[i].origin;
+                point.classname = "rogue_mechz_direct_point";
+                point.script_noteworthy = "mechz_location";
+
+                entry = spawnstruct();
+                entry.spawner = point;
+                entry.type = "mechz_direct_point";
+                mech_pool[mech_pool.size] = entry;
+            }
+        }
+
+        if ( mech_pool.size < 1 )
+        {
+            rogue_wait_for_base_spawners( 0.50 );
+
+            if ( isdefined( level.zombie_spawners ) && level.zombie_spawners.size > 0 )
+            {
+                for ( i = 0; i < level.zombie_spawners.size; i++ )
+                {
+                    if ( !isdefined( level.zombie_spawners[i] ) || !isdefined( level.zombie_spawners[i].origin ) )
+                        continue;
+
+                    point = spawnstruct();
+                    point.origin = level.zombie_spawners[i].origin;
+                    point.classname = "rogue_mechz_direct_point";
+                    point.script_noteworthy = "zombie_spawner";
+
+                    entry = spawnstruct();
+                    entry.spawner = point;
+                    entry.type = "mechz_direct_point";
+                    mech_pool[mech_pool.size] = entry;
+                }
+            }
+        }
+    }
+
+    return mech_pool;
+}
+
+rogue_wait_for_base_spawners(timeout_sec)
+{
+    if ( isdefined( level.zombie_spawners ) && level.zombie_spawners.size > 0 )
+        return true;
+
+    if ( !isdefined( timeout_sec ) || timeout_sec < 0.05 )
+        timeout_sec = 0.05;
+
+    end_time = gettime() + int( timeout_sec * 1000.0 );
+
+    for (;;)
+    {
+        level.zombie_spawners = getentarray( "zombie_spawner", "script_noteworthy" );
+        if ( isdefined( level.zombie_spawners ) && level.zombie_spawners.size > 0 )
+            return true;
+
+        if ( gettime() >= end_time )
+            break;
+
+        wait 0.05;
+    }
+
+    return false;
+}
+
+rogue_add_spawner_entries(pool, noteworthy, boss_type)
+{
+    spawners = getentarray( noteworthy, "script_noteworthy" );
+
+    for ( i = 0; i < spawners.size; i++ )
+    {
+        if ( !isdefined( spawners[i] ) )
+            continue;
+
+        entry = spawnstruct();
+        entry.spawner = spawners[i];
+        entry.type = boss_type;
+        pool[pool.size] = entry;
+    }
+
+    return pool;
+}
+
+rogue_pick_boss_spawner(pool, round_num)
+{
+    if ( !isdefined( pool ) || pool.size < 1 )
+        return undefined;
+
+    return pool[randomint( pool.size )];
+}
+
+rogue_spawn_panzer_wave(round_num, spawn_count)
+{
+    spawned = [];
+    level.rogue_last_panzer_pool_size = 0;
+    level.rogue_last_panzer_failed_spawns = 0;
+    level.rogue_last_panzer_fail_reason = "unknown";
+    if ( !rogue_init_mechz_runtime_for_all_maps() )
+    {
+        reason = "unknown";
+        if ( isdefined( level.rogue_mechz_runtime_fail_reason ) && level.rogue_mechz_runtime_fail_reason != "" )
+            reason = level.rogue_mechz_runtime_fail_reason;
+
+        rogue_log_event( "runtime_init_fail_wave", "round=" + round_num + ";reason=" + reason );
+    }
+
+    rogue_wait_for_base_spawners( 1.0 );
+    pool = rogue_get_panzer_spawner_pool();
+    failed_spawns = 0;
+    rogue_log_event( "wave_begin", "round=" + round_num + ";want=" + spawn_count + ";pool=" + pool.size + ";zsp=" + rogue_get_spawner_count_text() );
+
+    if ( !isdefined( pool ) || pool.size < 1 )
+    {
+        level.rogue_last_panzer_pool_size = 0;
+        level.rogue_last_panzer_failed_spawns = 0;
+        level.rogue_last_panzer_fail_reason = "pool_empty";
+        return spawned;
+    }
+
+    level.rogue_last_panzer_pool_size = pool.size;
+
+    level.rogue_wave_spawning = 1;
+
+    for ( i = 0; i < spawn_count; i++ )
+    {
+        pick = rogue_pick_boss_spawner( pool, round_num );
+
+        if ( !isdefined( pick ) || !isdefined( pick.spawner ) )
+        {
+            rogue_log_event( "spawn_pick_fail", "round=" + round_num + ";idx=" + i );
+            continue;
+        }
+
+        spawner = pick.spawner;
+
+        // Never call spawnactor() for panzer waves.
+        if ( pick.type == "mechz_direct_point" )
+        {
+            level.rogue_last_panzer_spawn_path = "direct_point";
+            ai = rogue_spawn_direct_mech_actor( spawner.origin, round_num );
+        }
+        else
+        {
+            level.rogue_last_panzer_spawn_path = "utility";
+            ai = rogue_try_spawn_mech_via_utility( spawner, round_num );
+        }
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+        {
+            rogue_log_event( "spawnactor_fail", "round=" + round_num + ";type=" + pick.type + ";class=" + rogue_safe_str( spawner.classname ) + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) + ";tn=" + rogue_safe_str( spawner.targetname ) );
+            if ( pick.type == "mechz_proxy_spawner" )
+                ai = rogue_try_spawn_mech_via_utility( spawner, round_num );
+            else if ( pick.type == "mechz_direct_point" )
+                ai = rogue_spawn_direct_mech_actor( spawner.origin, round_num );
+
+            if ( ( !isdefined( ai ) || !isalive( ai ) ) && ( pick.type == "mechz" || pick.type == "mechz_proxy_spawner" ) )
+            {
+                ai = rogue_spawn_direct_mech_actor( spawner.origin, round_num );
+                if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+                    level.rogue_last_panzer_spawn_path = "direct_fallback";
+            }
+
+            if ( !isdefined( ai ) || !isalive( ai ) )
+            {
+                rogue_log_event( "spawn_total_fail", "round=" + round_num + ";type=" + pick.type + ";path=" + rogue_safe_str( level.rogue_last_panzer_spawn_path ) );
+                failed_spawns++;
+                continue;
+            }
+        }
+
+        if ( pick.type == "mechz_proxy_spawner" && !rogue_is_mech_actor_class( ai ) )
+        {
+            rogue_log_event( "proxy_wrong_actor", "round=" + round_num + ";class=" + rogue_safe_str( ai.classname ) + ";retry=utility" );
+            ai dodamage( ai.health + 10000, ai.origin );
+            ai = rogue_try_spawn_mech_via_utility( spawner, round_num );
+
+            if ( !isdefined( ai ) || !isalive( ai ) )
+            {
+                ai = rogue_spawn_direct_mech_actor( spawner.origin, round_num );
+                if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+                    level.rogue_last_panzer_spawn_path = "direct_fallback_after_proxy";
+            }
+
+            if ( !isdefined( ai ) || !isalive( ai ) )
+            {
+                rogue_log_event( "proxy_utility_retry_fail", "round=" + round_num + ";type=" + pick.type );
+                failed_spawns++;
+                continue;
+            }
+        }
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+        {
+            failed_spawns++;
+            continue;
+        }
+
+        if ( ( pick.type == "mechz" || pick.type == "mechz_proxy_spawner" || pick.type == "mechz_direct_point" ) && !rogue_is_mech_actor_class( ai ) )
+        {
+            // Wrong actor type from a mech wave; reject to avoid regular-zombie substitution.
+            rogue_log_event( "reject_non_mech", "round=" + round_num + ";class=" + rogue_safe_str( ai.classname ) + ";type=" + pick.type );
+            ai dodamage( ai.health + 10000, ai.origin );
+            failed_spawns++;
+            continue;
+        }
+
+        boss_type = pick.type;
+        if ( boss_type == "panzer_proxy_spawner" )
+            boss_type = "proxy_panzer";
+
+        ai.rogue_is_panzer = 1;
+        ai.rogue_panzer_type = boss_type;
+        ai.rogue_round_spawned = round_num;
+        rogue_relocate_panzer_near_players( ai, round_num, boss_type );
+        rogue_debug_panzer( "panzer spawn ok: classname=" + rogue_safe_str( ai.classname ) + " target=" + rogue_safe_str( ai.targetname ) );
+        rogue_log_event( "spawn_ok", "round=" + round_num + ";type=" + boss_type + ";class=" + rogue_safe_str( ai.classname ) + ";tn=" + rogue_safe_str( ai.targetname ) );
+        rogue_tune_panzer_actor( ai, round_num, boss_type );
+        ai thread rogue_track_panzer_lifecycle( round_num, boss_type );
+        ai thread rogue_track_panzer_death( round_num, boss_type );
+        spawned[spawned.size] = ai;
+        wait 0.18;
+    }
+
+    level.rogue_wave_spawning = 0;
+    level.rogue_last_panzer_failed_spawns = failed_spawns;
+    if ( spawned.size < 1 )
+        level.rogue_last_panzer_fail_reason = "spawn_failed";
+    else
+        level.rogue_last_panzer_fail_reason = "ok";
+
+    rogue_debug_panzer( "spawned panzers: " + spawned.size + " / " + spawn_count + " (pool " + pool.size + ", failed " + failed_spawns + ")" );
+    rogue_log_event( "wave_end", "round=" + round_num + ";spawned=" + spawned.size + ";want=" + spawn_count + ";pool=" + pool.size + ";failed=" + failed_spawns + ";reason=" + level.rogue_last_panzer_fail_reason );
+    return spawned;
+}
+
+rogue_get_alive_player_origin()
+{
+    players = getplayers();
+
+    for ( i = 0; i < players.size; i++ )
+    {
+        if ( !isdefined( players[i] ) || !isalive( players[i] ) )
+            continue;
+
+        if ( isdefined( players[i].origin ) )
+            return players[i].origin;
+    }
+
+    for ( i = 0; i < players.size; i++ )
+    {
+        if ( !isdefined( players[i] ) )
+            continue;
+
+        if ( isdefined( players[i].origin ) )
+            return players[i].origin;
+    }
+
+    return undefined;
+}
+
+rogue_relocate_panzer_near_players(ai, round_num, boss_type)
+{
+    if ( !isdefined( ai ) || !isdefined( ai.origin ) )
+        return;
+
+    anchor = rogue_get_alive_player_origin();
+    if ( !isdefined( anchor ) )
+        return;
+
+    dx = ai.origin[0] - anchor[0];
+    dy = ai.origin[1] - anchor[1];
+    dz = ai.origin[2] - anchor[2];
+    dist_sq = dx * dx + dy * dy + dz * dz;
+
+    // On Transit variants, always relocate to guarantee visual spawn near players.
+    // On other maps, keep map-native spawns if already close.
+    if ( !rogue_is_town_variant_map() && dist_sq <= ( 1400 * 1400 ) )
+        return;
+
+    ox = randomfloatrange( -260.0, 260.0 );
+    oy = randomfloatrange( -260.0, 260.0 );
+    dest = ( anchor[0] + ox, anchor[1] + oy, anchor[2] + 56.0 );
+    from = ai.origin;
+    ai forceteleport( dest );
+    rogue_log_event( "spawn_relocate", "round=" + round_num + ";type=" + boss_type + ";class=" + rogue_safe_str( ai.classname ) + ";dist_sq=" + int( dist_sq ) + ";from=" + rogue_safe_str( from ) + ";to=" + rogue_safe_str( dest ) );
+}
+
+rogue_track_panzer_lifecycle(round_num, boss_type)
+{
+    if ( !isdefined( self ) )
+        return;
+
+    rogue_log_event( "spawn_life_begin", "round=" + round_num + ";type=" + boss_type + ";class=" + rogue_safe_str( self.classname ) + ";origin=" + rogue_safe_str( self.origin ) + ";hp=" + rogue_safe_str( self.health ) );
+
+    wait 0.5;
+    if ( !isdefined( self ) || !isalive( self ) )
+        return;
+
+    rogue_log_event( "spawn_life_0p5", "round=" + round_num + ";type=" + boss_type + ";origin=" + rogue_safe_str( self.origin ) + ";hp=" + rogue_safe_str( self.health ) );
+
+    wait 2.5;
+    if ( !isdefined( self ) || !isalive( self ) )
+        return;
+
+    rogue_log_event( "spawn_life_3p0", "round=" + round_num + ";type=" + boss_type + ";origin=" + rogue_safe_str( self.origin ) + ";hp=" + rogue_safe_str( self.health ) );
+}
+
+rogue_track_panzer_death(round_num, boss_type)
+{
+    if ( !isdefined( self ) )
+        return;
+
+    self waittill( "death" );
+    rogue_log_event( "spawn_life_death", "round=" + round_num + ";type=" + boss_type + ";class=" + rogue_safe_str( self.classname ) + ";origin=" + rogue_safe_str( self.origin ) );
+}
+
+rogue_try_spawn_mech_via_utility(spawner, round_num)
+{
+    if ( !isdefined( spawner ) )
+        return undefined;
+
+    target = "";
+    spawn_point = undefined;
+    if ( isdefined( spawner.targetname ) )
+        target = spawner.targetname;
+
+    if ( target == "" && isdefined( level.zombie_mechz_locations ) && level.zombie_mechz_locations.size > 0 )
+    {
+        loc = level.zombie_mechz_locations[randomint( level.zombie_mechz_locations.size )];
+        if ( isdefined( loc ) )
+        {
+            spawn_point = loc;
+            if ( isdefined( loc.targetname ) )
+                target = loc.targetname;
+        }
+    }
+
+    // Mirrors Origins mech setup before calling _zm_utility::spawn_zombie().
+    spawner.is_enabled = 1;
+    spawner.script_forcespawn = 1;
+
+    level.rogue_last_panzer_spawn_path = "utility";
+    rogue_log_event( "utility_try_begin", "round=" + round_num + ";tn=" + target + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) + ";class=" + rogue_safe_str( spawner.classname ) + ";sf=" + rogue_safe_str( spawner.script_forcespawn ) + ";ie=" + rogue_safe_str( spawner.is_enabled ) );
+
+    ai = maps\mp\zombies\_zm_utility::spawn_zombie( spawner, target, spawn_point, round_num );
+
+    if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+    {
+        level.rogue_last_panzer_spawn_path = "utility:ok";
+        return ai;
+    }
+
+    if ( isdefined( ai ) && isalive( ai ) )
+    {
+        rogue_log_event( "utility_try_nonmech", "round=" + round_num + ";variant=single;class=" + rogue_safe_str( ai.classname ) );
+        ai dodamage( ai.health + 10000, ai.origin );
+    }
+
+    if ( isdefined( spawner.origin ) )
+    {
+        ai = rogue_spawn_direct_mech_actor( spawner.origin, round_num );
+        if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+        {
+            level.rogue_last_panzer_spawn_path = "utility:direct";
+            return ai;
+        }
+    }
+
+    level.rogue_last_panzer_spawn_path = "utility:all_failed";
+    rogue_log_event( "utility_all_failed", "round=" + round_num + ";tn=" + target + ";class=" + rogue_safe_str( spawner.classname ) + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) );
+    return undefined;
+}
+
+rogue_try_spawn_proxy_via_utility(spawner, round_num)
+{
+    if ( !isdefined( spawner ) )
+        return undefined;
+
+    target = "";
+    spawn_point = undefined;
+
+    if ( isdefined( spawner.targetname ) )
+        target = spawner.targetname;
+
+    // Bias toward player area to keep proxy panzer visible in Town.
+    spawn_point = rogue_get_alive_player_origin();
+
+    spawner.is_enabled = 1;
+    spawner.script_forcespawn = 1;
+    level.rogue_last_panzer_spawn_path = "proxy_utility";
+    rogue_log_event( "proxy_utility_try_begin", "round=" + round_num + ";tn=" + target + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) + ";class=" + rogue_safe_str( spawner.classname ) );
+
+    ai = maps\mp\zombies\_zm_utility::spawn_zombie( spawner, target, spawn_point, round_num );
+    if ( isdefined( ai ) && isalive( ai ) )
+    {
+        level.rogue_last_panzer_spawn_path = "proxy_utility:ok";
+        return ai;
+    }
+
+    level.rogue_last_panzer_spawn_path = "proxy_utility:fail";
+    rogue_log_event( "proxy_utility_all_failed", "round=" + round_num + ";tn=" + target + ";class=" + rogue_safe_str( spawner.classname ) + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) );
+    return undefined;
+}
+
+rogue_spawn_raw_actor(spawner, round_num, forced_type)
+{
+    if ( !isdefined( spawner ) )
+        return undefined;
+
+    if ( !isdefined( spawner.classname ) )
+    {
+        rogue_log_event( "spawnactor_skip", "round=" + round_num + ";reason=no_classname;forced=" + rogue_safe_str( forced_type ) );
+        return undefined;
+    }
+
+    cname = tolower( spawner.classname );
+
+    // Safety: actor entities are not valid spawnactor() sources and can hard-crash.
+    if ( issubstr( cname, "actor_" ) || !issubstr( cname, "spawner" ) )
+    {
+        rogue_log_event( "spawnactor_skip", "round=" + round_num + ";reason=invalid_spawner_class;class=" + rogue_safe_str( spawner.classname ) + ";forced=" + rogue_safe_str( forced_type ) );
+        return undefined;
+    }
+
+    while ( getfreeactorcount() < 1 )
+        wait 0.05;
+
+    ai = spawner spawnactor();
+
+    if ( !isdefined( ai ) )
+    {
+        level.rogue_last_panzer_spawn_path = "spawnactor:undefined";
+        rogue_log_event( "spawnactor_undefined", "round=" + round_num + ";forced=" + rogue_safe_str( forced_type ) + ";class=" + rogue_safe_str( spawner.classname ) + ";sn=" + rogue_safe_str( spawner.script_noteworthy ) + ";tn=" + rogue_safe_str( spawner.targetname ) );
+        return undefined;
+    }
+
+    if ( rogue_is_mech_actor_class( ai ) )
+        ai disableaimassist();
+    else
+        ai enableaimassist();
+
+    if ( isdefined( round_num ) )
+        ai._starting_round_number = round_num;
+
+    ai.aiteam = level.zombie_team;
+    ai clearentityowner();
+    ai forceteleport( spawner.origin );
+    ai show();
+    return ai;
+}
+
+rogue_is_origins_map()
+{
+    map_name = tolower( getdvar( "mapname" ) );
+
+    if ( !isdefined( map_name ) || map_name == "" )
+        return false;
+
+    return map_name == "zm_tomb";
+}
+
+rogue_prepare_mechz_runtime()
+{
+    // Seed mechz locations from explicit markers first, then fall back to stock map spawn points.
+    if ( isdefined( level.zombie_mechz_locations ) && level.zombie_mechz_locations.size > 0 )
+    {
+        rogue_prepare_mechz_spawners();
+        return;
+    }
+
+    level.zombie_mechz_locations = [];
+    rogue_append_structs_by_noteworthy( "mechz_location" );
+
+    if ( level.zombie_mechz_locations.size < 1 )
+        rogue_append_structs_by_noteworthy( "zombie_location" );
+
+    if ( level.zombie_mechz_locations.size < 1 )
+        rogue_append_structs_by_noteworthy( "spawn_location" );
+
+    if ( level.zombie_mechz_locations.size < 1 )
+        rogue_append_structs_by_noteworthy( "riser_location" );
+
+    rogue_prepare_mechz_spawners();
+}
+
+rogue_prepare_mechz_spawners()
+{
+    if ( !isdefined( level.mechz_spawners ) || level.mechz_spawners.size < 1 )
+        level.mechz_spawners = rogue_get_mechz_spawners();
+
+    if ( !isdefined( level.mechz_spawners ) || level.mechz_spawners.size < 1 )
+        return;
+
+    for ( i = 0; i < level.mechz_spawners.size; i++ )
+    {
+        s = level.mechz_spawners[i];
+        if ( !isdefined( s ) )
+            continue;
+
+        s.is_enabled = 1;
+        s.script_forcespawn = 1;
+    }
+}
+
+rogue_append_structs_by_noteworthy(noteworthy)
+{
+    locs = getstructarray( noteworthy, "script_noteworthy" );
+
+    for ( i = 0; i < locs.size; i++ )
+    {
+        if ( !isdefined( locs[i] ) )
+            continue;
+
+        level.zombie_mechz_locations[level.zombie_mechz_locations.size] = locs[i];
+    }
+}
+
+rogue_get_mechz_spawners()
+{
+    spawners = getentarray( "mechz_spawner", "script_noteworthy" );
+
+    // Some map patches may preserve classname but lose script_noteworthy.
+    actor_spawners = getentarray( "actor_zm_tomb_mech_zombie", "classname" );
+    for ( i = 0; i < actor_spawners.size; i++ )
+    {
+        if ( !isdefined( actor_spawners[i] ) )
+            continue;
+
+        if ( !rogue_array_has_entity( spawners, actor_spawners[i] ) )
+            spawners[spawners.size] = actor_spawners[i];
+    }
+
+    return spawners;
+}
+
+rogue_array_has_entity(arr, ent)
+{
+    if ( !isdefined( arr ) || !isdefined( ent ) )
+        return false;
+
+    for ( i = 0; i < arr.size; i++ )
+    {
+        if ( !isdefined( arr[i] ) )
+            continue;
+
+        if ( arr[i] == ent )
+            return true;
+    }
+
+    return false;
+}
+
+rogue_mechz_spawning_logic_override()
+{
+    level endon( "intermission" );
+
+    for (;;)
+        wait 5.0;
+}
+
+rogue_init_mechz_runtime_for_all_maps()
+{
+    if ( isdefined( level.rogue_mechz_runtime_ready ) && level.rogue_mechz_runtime_ready )
+        return true;
+
+    if ( isdefined( level.rogue_mechz_runtime_failed ) && level.rogue_mechz_runtime_failed )
+        return false;
+
+    level.rogue_mechz_runtime_fail_reason = "";
+    rogue_prepare_mechz_runtime();
+
+    if ( !isdefined( level.zombie_mechz_locations ) || level.zombie_mechz_locations.size < 1 )
+    {
+        level.rogue_mechz_runtime_fail_reason = "no mechz/zombie spawn locations";
+        level.rogue_mechz_runtime_failed = 1;
+        return false;
+    }
+
+    wait 0.10;
+
+    if ( !isdefined( level.mechz_spawners ) || level.mechz_spawners.size < 1 )
+        level.mechz_spawners = rogue_get_mechz_spawners();
+
+    if ( !isdefined( level.mechz_spawners ) || level.mechz_spawners.size < 1 )
+    {
+        level.rogue_mechz_runtime_fail_reason = "no mechz spawners in map ents";
+        level.rogue_mechz_runtime_failed = 1;
+        return false;
+    }
+
+    level.rogue_mechz_runtime_ready = 1;
+    level.rogue_mechz_runtime_failed = 0;
+    level.rogue_mechz_runtime_fail_reason = "";
+    return true;
+}
+
+rogue_get_alive_mechz_count()
+{
+    count = 0;
+    zombies = getaispeciesarray( level.zombie_team, "all" );
+
+    for ( i = 0; i < zombies.size; i++ )
+    {
+        ai = zombies[i];
+
+        if ( isdefined( ai ) && isalive( ai ) && isdefined( ai.is_mechz ) && ai.is_mechz )
+            count++;
+    }
+
+    return count;
+}
+
+rogue_tune_panzer_actor(ai, round_num, type)
+{
+    if ( !isdefined( ai ) )
+        return;
+
+    round_mult = rogue_get_round_multiplier( round_num );
+    base_hp = 9000;
+    base_melee = 50;
+
+    if ( isdefined( type ) && type == "mechz" )
+    {
+        base_hp = 14000;
+        base_melee = 70;
+    }
+    else if ( isdefined( type ) && ( type == "brutus" || type == "sloth" ) )
+    {
+        base_hp = 12000;
+        base_melee = 62;
+    }
+    else if ( isdefined( type ) && ( type == "avogadro" || type == "screecher" || type == "leaper" ) )
+    {
+        base_hp = 10500;
+        base_melee = 56;
+    }
+    else if ( isdefined( type ) && type == "proxy_panzer" )
+    {
+        base_hp = 9500;
+        base_melee = 54;
+    }
+
+    scaled_hp = int( base_hp * round_mult * randomfloatrange( 0.92, 1.18 ) );
+
+    if ( scaled_hp < 3500 )
+        scaled_hp = 3500;
+
+    ai.maxhealth = scaled_hp;
+    ai.health = ai.maxhealth;
+    ai.rogue_boss_class = type;
+    ai.rogue_enrage_stacks = 0;
+    ai.rogue_boss_round = round_num;
+
+    if ( isdefined( ai.meleedamage ) )
+        ai.meleedamage = base_melee + int( round_num * 3 );
+
+    // Must be counted by round logic; otherwise rounds insta-end.
+    ai.ignore_enemy_count = 0;
+
+    // Safety net: keep Panzer-like actors out of aim-assist head-tag queries.
+    ai disableaimassist();
+
+    ai thread rogue_boss_regen_think();
+    ai thread rogue_boss_jump_think();
+    ai thread rogue_boss_enrage_think();
+}
+
+rogue_debug_panzer(text)
+{
+    rogue_log_event( "panzer_dbg", text );
+
+    if ( getdvarint( "rogue_panzer_debug" ) != 1 )
+        return;
+
+    rogue_broadcast( "^5[panzer dbg]^7 " + text );
+}
+
+rogue_log_event(event_name, msg)
+{
+    map_name = tolower( getdvar( "mapname" ) );
+    if ( !isdefined( map_name ) || map_name == "" )
+        map_name = "unknown";
+
+    if ( !isdefined( event_name ) || event_name == "" )
+        event_name = "event";
+
+    if ( !isdefined( msg ) )
+        msg = "";
+
+    line = "[ROGUE] event=" + event_name + ";map=" + map_name + ";msg=" + msg;
+    logprint( line + "\n" );
+
+    // Some Pluto builds don't flush games_mp.log reliably mid-match.
+    // Always mirror to server console so failures are visible in console_zm.log.
+    println( line );
+}
+
+rogue_safe_str(v)
+{
+    if ( !isdefined( v ) )
+        return "<undef>";
+
+    return "" + v;
+}
+
+rogue_is_mech_actor_class(ai)
+{
+    if ( !isdefined( ai ) || !isdefined( ai.classname ) )
+        return false;
+
+    name = tolower( ai.classname );
+    return issubstr( name, "mech" );
+}
+
+rogue_get_alive_players()
+{
+    alive = [];
+    players = getplayers();
+
+    for ( i = 0; i < players.size; i++ )
+    {
+        if ( !isdefined( players[i] ) || !isalive( players[i] ) )
+            continue;
+
+        alive[alive.size] = players[i];
+    }
+
+    return alive;
+}
+
+rogue_pick_boss_target()
+{
+    alive = rogue_get_alive_players();
+
+    if ( alive.size < 1 )
+        return undefined;
+
+    return alive[randomint( alive.size )];
+}
+
+rogue_boss_regen_think()
+{
+    self endon( "death" );
+
+    for (;;)
+    {
+        wait randomfloatrange( 3.6, 5.8 );
+
+        if ( !isdefined( self ) || !isalive( self ) )
+            break;
+
+        if ( !isdefined( self.maxhealth ) || self.maxhealth <= 1 )
+            continue;
+
+        if ( !isdefined( self.health ) || self.health >= self.maxhealth )
+            continue;
+
+        heal = int( self.maxhealth * 0.05 );
+        self.health = self.health + heal;
+
+        if ( self.health > self.maxhealth )
+            self.health = self.maxhealth;
+    }
+}
+
+rogue_boss_jump_think()
+{
+    self endon( "death" );
+
+    for (;;)
+    {
+        wait randomfloatrange( 6.0, 9.2 );
+
+        if ( !isdefined( self ) || !isalive( self ) )
+            break;
+
+        target = rogue_pick_boss_target();
+
+        if ( !isdefined( target ) || !isalive( target ) )
+            continue;
+
+        if ( distance2dsquared( self.origin, target.origin ) < 90000 )
+            continue;
+
+        jump_pos = target.origin + ( randomfloatrange( -90, 90 ), randomfloatrange( -90, 90 ), 0 );
+        self forceteleport( jump_pos );
+    }
+}
+
+rogue_boss_enrage_think()
+{
+    self endon( "death" );
+
+    for (;;)
+    {
+        wait randomfloatrange( 7.5, 11.0 );
+
+        if ( !isdefined( self ) || !isalive( self ) )
+            break;
+
+        self.rogue_enrage_stacks++;
+
+        if ( isdefined( self.meleedamage ) )
+            self.meleedamage = self.meleedamage + 4;
+
+        if ( isdefined( self.maxhealth ) && self.maxhealth > 0 )
+        {
+            bonus_hp = int( self.maxhealth * 0.02 );
+            self.health = self.health + bonus_hp;
+
+            if ( self.health > self.maxhealth )
+                self.health = self.maxhealth;
+        }
+    }
+}
+
+rogue_panzer_spawn_lockdown()
+{
+    while ( isdefined( level.rogue_started ) && level.rogue_started && isdefined( level.rogue_panzer_mode ) && level.rogue_panzer_mode )
+    {
+        common_scripts\utility::flag_clear( "spawn_zombies" );
+
+        if ( isdefined( level.zombie_total ) && level.zombie_total > 0 )
+            level.zombie_total = 0;
+
+        if ( !isdefined( level.rogue_wave_spawning ) || !level.rogue_wave_spawning )
+            rogue_kill_non_panzer_enemies();
+        wait 0.15;
+    }
+}
+
+rogue_kill_non_panzer_enemies()
+{
+    enemies = getaispeciesarray( level.zombie_team, "all" );
+
+    for ( i = 0; i < enemies.size; i++ )
+    {
+        ai = enemies[i];
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+            continue;
+
+        if ( rogue_is_panzer_actor( ai ) )
+            continue;
+
+        ai dodamage( ai.health + 10000, ai.origin );
+    }
+}
+
+rogue_is_panzer_actor(ai)
+{
+    if ( !isdefined( ai ) )
+        return false;
+
+    if ( isdefined( ai.rogue_is_panzer ) && ai.rogue_is_panzer )
+        return true;
+
+    if ( isdefined( ai.is_mechz ) && ai.is_mechz )
+        return true;
+
+    if ( isdefined( ai.is_brutus ) && ai.is_brutus )
+        return true;
+
+    if ( isdefined( ai.is_sloth ) && ai.is_sloth )
+        return true;
+
+    if ( isdefined( ai.is_avogadro ) && ai.is_avogadro )
+        return true;
+
+    if ( isdefined( ai.is_screecher ) && ai.is_screecher )
+        return true;
+
+    if ( isdefined( ai.is_leaper ) && ai.is_leaper )
+        return true;
+
+    if ( isdefined( ai.targetname ) )
+    {
+        if ( issubstr( ai.targetname, "mechz" ) || issubstr( ai.targetname, "brutus" ) || issubstr( ai.targetname, "sloth" ) || issubstr( ai.targetname, "avogadro" ) || issubstr( ai.targetname, "screecher" ) || issubstr( ai.targetname, "leaper" ) )
+            return true;
+    }
+
+    return false;
+}
+
+rogue_wait_for_panzer_wave_clear(spawned, round_num)
+{
+    if ( !isdefined( spawned ) )
+        return;
+
+    end_time = gettime() + 900000; // 15 minute safety timeout.
+    recover_deadline = gettime() + 9000;
+    recover_attempts = 0;
+
+    for (;;)
+    {
+        alive_count = 0;
+
+        for ( i = 0; i < spawned.size; i++ )
+        {
+            if ( isdefined( spawned[i] ) && isalive( spawned[i] ) )
+                alive_count++;
+        }
+
+        if ( alive_count < 1 )
+            alive_count = rogue_count_alive_round_bosses( round_num );
+
+        if ( alive_count < 1 )
+        {
+            if ( gettime() < recover_deadline && recover_attempts < 3 )
+            {
+                replacement = rogue_try_recover_panzer_for_round( round_num );
+                recover_attempts++;
+
+                if ( isdefined( replacement ) && isalive( replacement ) )
+                {
+                    spawned[spawned.size] = replacement;
+                    rogue_log_event( "wave_recover_ok", "round=" + round_num + ";attempt=" + recover_attempts + ";class=" + rogue_safe_str( replacement.classname ) );
+                    wait 0.20;
+                    continue;
+                }
+
+                rogue_log_event( "wave_recover_fail", "round=" + round_num + ";attempt=" + recover_attempts );
+                wait 0.20;
+                continue;
+            }
+
+            break;
+        }
+
+        if ( gettime() >= end_time )
+            break;
+
+        wait 0.20;
+    }
+
+    rogue_broadcast( "^2Round " + round_num + " clear.^7 Prepare your boon." );
+}
+
+rogue_try_recover_panzer_for_round(round_num)
+{
+    spawn_origin = rogue_get_alive_player_origin();
+    if ( !isdefined( spawn_origin ) )
+        spawn_origin = rogue_get_spawn_center_origin();
+
+    ai = undefined;
+    if ( isdefined( spawn_origin ) )
+        ai = rogue_spawn_direct_mech_actor( spawn_origin, round_num );
+
+    if ( !isdefined( ai ) || !isalive( ai ) || !rogue_is_mech_actor_class( ai ) )
+    {
+        if ( isdefined( spawn_origin ) )
+            ai = rogue_spawn_proxy_mech_actor( spawn_origin, round_num );
+    }
+
+    if ( !isdefined( ai ) || !isalive( ai ) || !rogue_is_mech_actor_class( ai ) )
+    {
+        pool = rogue_get_panzer_spawner_pool();
+        for ( i = 0; i < pool.size; i++ )
+        {
+            if ( !isdefined( pool[i] ) || !isdefined( pool[i].spawner ) )
+                continue;
+
+            if ( pool[i].type == "mechz_direct_point" )
+                ai = rogue_spawn_direct_mech_actor( pool[i].spawner.origin, round_num );
+            else
+                ai = rogue_try_spawn_mech_via_utility( pool[i].spawner, round_num );
+
+            if ( isdefined( ai ) && isalive( ai ) && rogue_is_mech_actor_class( ai ) )
+                break;
+        }
+    }
+
+    if ( !isdefined( ai ) || !isalive( ai ) || !rogue_is_mech_actor_class( ai ) )
+        return undefined;
+
+    ai.rogue_is_panzer = 1;
+    ai.rogue_panzer_type = "mechz";
+    ai.rogue_round_spawned = round_num;
+    rogue_relocate_panzer_near_players( ai, round_num, "mechz_recover" );
+    rogue_tune_panzer_actor( ai, round_num, "mechz" );
+    ai thread rogue_track_panzer_lifecycle( round_num, "mechz_recover" );
+    ai thread rogue_track_panzer_death( round_num, "mechz_recover" );
+    return ai;
+}
+
+rogue_count_alive_round_bosses(round_num)
+{
+    count = 0;
+    enemies = getaispeciesarray( level.zombie_team, "all" );
+
+    for ( i = 0; i < enemies.size; i++ )
+    {
+        ai = enemies[i];
+
+        if ( !isdefined( ai ) || !isalive( ai ) )
+            continue;
+
+        if ( !rogue_is_panzer_actor( ai ) )
+            continue;
+
+        if ( isdefined( ai.rogue_round_spawned ) && ai.rogue_round_spawned == round_num )
+            count++;
+    }
+
+    return count;
+}
+
+rogue_player_pick_boon(cleared_round)
+{
+    self endon( "disconnect" );
+
+    options = rogue_pick_boon_options( 3 );
+
+    if ( options.size < 1 )
+    {
+        self.rogue_boon_pick_done_round = cleared_round;
+        return;
+    }
+
+    selected = 0;
+    menu = self create_rogue_boon_hud();
+    self update_rogue_boon_hud( menu, options, selected, cleared_round );
+    start_time = gettime();
+    timeout_ms = 20000;
+
+    for (;;)
+    {
+        if ( !isalive( self ) )
+            break;
+
+        if ( self attackbuttonpressed() )
+        {
+            selected++;
+
+            if ( selected >= options.size )
+                selected = 0;
+
+            self wait_attack_release();
+            self update_rogue_boon_hud( menu, options, selected, cleared_round );
+            continue;
+        }
+
+        if ( self adsbuttonpressed() )
+        {
+            selected--;
+
+            if ( selected < 0 )
+                selected = options.size - 1;
+
+            self wait_ads_release();
+            self update_rogue_boon_hud( menu, options, selected, cleared_round );
+            continue;
+        }
+
+        if ( self usebuttonpressed() )
+        {
+            self wait_use_release();
+            break;
+        }
+
+        if ( gettime() - start_time > timeout_ms )
+            break;
+
+        wait 0.05;
+    }
+
+    self destroy_rogue_boon_hud( menu );
+
+    if ( selected < 0 || selected >= options.size )
+        selected = 0;
+
+    self rogue_apply_selected_boon( options[selected] );
+    self iprintlnbold( "^2Zombie Chicken Chit:^7 " + options[selected].name );
+    self.rogue_boon_pick_done_round = cleared_round;
+}
+
+create_rogue_boon_hud()
+{
+    menu = spawnstruct();
+    menu.all_elems = [];
+    s = get_picker_text_scale();
+
+    menu.box = self create_picker_shader_elem( undefined, "CENTER", "CENTER", 0, 0, 760, 250, ( 0.06, 0.08, 0.14 ), 0.90, 40 );
+    menu.head = self create_picker_shader_elem( menu.box, "TOP", "TOP", 0, 20, 724, 38, ( 0.14, 0.22, 0.32 ), 0.95, 41 );
+    menu.title = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 6, "objective", s + 0.02, ( 1.00, 0.82, 0.36 ), 42 );
+    menu.sub = self create_picker_text_elem( menu.box, "TOP", "TOP", 0, 30, "objective", s, ( 0.90, 0.90, 0.90 ), 42 );
+
+    menu.opt_0 = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 26, 72, "objective", s, ( 0.70, 0.88, 1.00 ), 42 );
+    menu.opt_1 = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 26, 108, "objective", s, ( 0.70, 0.88, 1.00 ), 42 );
+    menu.opt_2 = self create_picker_text_elem( menu.box, "TOPLEFT", "TOPLEFT", 26, 144, "objective", s, ( 0.70, 0.88, 1.00 ), 42 );
+
+    menu.desc = self create_picker_text_elem( menu.box, "BOTTOMLEFT", "BOTTOMLEFT", 26, -34, "objective", s, ( 1.00, 0.70, 0.70 ), 42 );
+    menu.help = self create_picker_text_elem( menu.box, "BOTTOM", "BOTTOM", 0, -12, "objective", s, ( 0.90, 0.90, 0.90 ), 42 );
+
+    menu.all_elems[menu.all_elems.size] = menu.box;
+    menu.all_elems[menu.all_elems.size] = menu.head;
+    menu.all_elems[menu.all_elems.size] = menu.title;
+    menu.all_elems[menu.all_elems.size] = menu.sub;
+    menu.all_elems[menu.all_elems.size] = menu.opt_0;
+    menu.all_elems[menu.all_elems.size] = menu.opt_1;
+    menu.all_elems[menu.all_elems.size] = menu.opt_2;
+    menu.all_elems[menu.all_elems.size] = menu.desc;
+    menu.all_elems[menu.all_elems.size] = menu.help;
+    return menu;
+}
+
+update_rogue_boon_hud(menu, options, selected, cleared_round)
+{
+    if ( !isdefined( menu ) || !isdefined( options ) || options.size < 1 )
+        return;
+
+    line_0 = "  " + fit_label( options[0].name, 64 );
+    line_1 = "  " + fit_label( options[1].name, 64 );
+    line_2 = "  " + fit_label( options[2].name, 64 );
+
+    if ( selected == 0 )
+        line_0 = "^2>^7 " + fit_label( options[0].name, 64 );
+
+    if ( selected == 1 )
+        line_1 = "^2>^7 " + fit_label( options[1].name, 64 );
+
+    if ( selected == 2 )
+        line_2 = "^2>^7 " + fit_label( options[2].name, 64 );
+
+    menu.title settext( "ZOMBIE CHICKEN CHITS" );
+    menu.sub settext( "Round " + cleared_round + " clear - choose one boon" );
+    menu.opt_0 settext( line_0 );
+    menu.opt_1 settext( line_1 );
+    menu.opt_2 settext( line_2 );
+    menu.desc settext( fit_label( options[selected].desc, 78 ) );
+    menu.help settext( "ADS: prev  ATTACK: next  USE: select" );
+}
+
+destroy_rogue_boon_hud(menu)
+{
+    if ( !isdefined( menu ) || !isdefined( menu.all_elems ) )
+        return;
+
+    for ( i = 0; i < menu.all_elems.size; i++ )
+    {
+        if ( isdefined( menu.all_elems[i] ) )
+            menu.all_elems[i] destroy();
+    }
+}
+
+rogue_pick_boon_options(count)
+{
+    catalog = rogue_build_boon_catalog();
+    picks = [];
+    used = [];
+
+    if ( !isdefined( catalog ) || catalog.size == 0 )
+        return picks;
+
+    attempts = 0;
+    while ( picks.size < count && attempts < 300 )
+    {
+        attempts++;
+        idx = randomint( catalog.size );
+
+        if ( array_contains( used, idx ) )
+            continue;
+
+        used[used.size] = idx;
+        picks[picks.size] = catalog[idx];
+    }
+
+    while ( picks.size < count )
+        picks[picks.size] = catalog[picks.size % catalog.size];
+
+    return picks;
+}
+
+rogue_build_boon_catalog()
+{
+    if ( isdefined( level.rogue_boon_catalog ) && level.rogue_boon_catalog.size > 0 )
+        return level.rogue_boon_catalog;
+
+    catalog = [];
+    catalog[catalog.size] = rogue_make_boon( "titan_heart", "Hammer of Titans", "+35 max health and full heal." );
+    catalog[catalog.size] = rogue_make_boon( "swift_steps", "Hammer of Haste", "+6% movement speed." );
+    catalog[catalog.size] = rogue_make_boon( "war_chest", "Hammer of Wealth", "+1500 now and +500 each round." );
+    catalog[catalog.size] = rogue_make_boon( "ammo_printer", "Hammer of Ammunition", "Refill ammo now and at each round start." );
+    catalog[catalog.size] = rogue_make_boon( "perk_infusion", "Hammer of Infusion", "Gain one perk now and one random perk each round." );
+    catalog[catalog.size] = rogue_make_boon( "arsenal_drop", "Hammer of Arsenal", "Gain one random bonus weapon." );
+    catalog[catalog.size] = rogue_make_boon( "jug_forge", "Hammer of Juggernaut", "Guarantee Juggernog and +20 max health." );
+    catalog[catalog.size] = rogue_make_boon( "melee_mastery", "Hammer of Knuckles", "Upgrade melee and gain +10 max health." );
+    catalog[catalog.size] = rogue_make_boon( "scavenger_core", "Hammer of Scavenger", "+300 round income and ammo printer." );
+    catalog[catalog.size] = rogue_make_boon( "phoenix_skin", "Hammer of Phoenix", "+25 max health and +750 points." );
+    catalog[catalog.size] = rogue_make_boon( "mystery_spark", "Hammer of Chaos", "Randomly triggers another boon effect." );
+    catalog[catalog.size] = rogue_make_boon( "wunder_pull", "Hammer of Wonder", "High chance to gain a wonder weapon." );
+    level.rogue_boon_catalog = catalog;
+    return level.rogue_boon_catalog;
+}
+
+rogue_make_boon(id, name, desc)
+{
+    b = spawnstruct();
+    b.id = id;
+    b.name = name;
+    b.desc = desc;
+    return b;
+}
+
+rogue_apply_selected_boon(boon)
+{
+    if ( !isdefined( boon ) || !isdefined( boon.id ) )
+        return;
+
+    if ( !isdefined( self.rogue_bonus_health ) )
+        self.rogue_bonus_health = 0;
+
+    if ( !isdefined( self.rogue_move_speed_bonus ) )
+        self.rogue_move_speed_bonus = 0;
+
+    if ( !isdefined( self.rogue_round_points_bonus ) )
+        self.rogue_round_points_bonus = 0;
+
+    if ( !isdefined( self.rogue_round_perk_rolls ) )
+        self.rogue_round_perk_rolls = 0;
+
+    if ( !isdefined( self.rogue_round_ammo_refill ) )
+        self.rogue_round_ammo_refill = 0;
+
+    switch ( boon.id )
+    {
+        case "titan_heart":
+            self.rogue_bonus_health += 35;
+            self.health = self.maxhealth;
+            break;
+        case "swift_steps":
+            self.rogue_move_speed_bonus += 0.06;
+            break;
+        case "war_chest":
+            self.score += 1500;
+            self.rogue_round_points_bonus += 500;
+            break;
+        case "ammo_printer":
+            self.rogue_round_ammo_refill = 1;
+            self rogue_refill_all_weapons();
+            break;
+        case "perk_infusion":
+            self.rogue_round_perk_rolls++;
+            self rogue_give_random_missing_perk();
+            break;
+        case "arsenal_drop":
+            self rogue_give_random_bonus_weapon();
+            break;
+        case "jug_forge":
+            if ( !self hasperk( "specialty_armorvest" ) )
+                self maps\mp\zombies\_zm_perks::give_perk( "specialty_armorvest", 0 );
+
+            self.rogue_bonus_health += 20;
+            break;
+        case "melee_mastery":
+            self give_selected_melee( "tazer_knuckles_zm" );
+            self.rogue_bonus_health += 10;
+            break;
+        case "scavenger_core":
+            self.rogue_round_points_bonus += 300;
+            self.rogue_round_ammo_refill = 1;
+            break;
+        case "phoenix_skin":
+            self.rogue_bonus_health += 25;
+            self.score += 750;
+            break;
+        case "wunder_pull":
+            self rogue_give_random_bonus_weapon();
+            self rogue_give_random_bonus_weapon();
+            break;
+        case "mystery_spark":
+            roll = randomint( 4 );
+
+            if ( roll == 0 )
+                self.rogue_bonus_health += 20;
+            else if ( roll == 1 )
+                self.rogue_round_points_bonus += 400;
+            else if ( roll == 2 )
+                self.rogue_round_perk_rolls++;
+            else
+                self.rogue_round_ammo_refill = 1;
+            break;
+        default:
+            break;
+    }
+
+    self rogue_apply_persistent_boon_effects();
+}
+
+rogue_give_random_missing_perk()
+{
+    pool = build_perk_pool();
+    candidates = [];
+
+    for ( i = 0; i < pool.size; i++ )
+    {
+        if ( self hasperk( pool[i] ) )
+            continue;
+
+        candidates[candidates.size] = pool[i];
+    }
+
+    if ( candidates.size < 1 )
+        return;
+
+    pick = candidates[randomint( candidates.size )];
+    self maps\mp\zombies\_zm_perks::give_perk( pick, 0 );
+}
+
+rogue_give_random_bonus_weapon()
+{
+    weapon_pool = build_weapon_pool();
+
+    if ( weapon_pool.size < 1 )
+        return;
+
+    attempts = 0;
+    while ( attempts < 120 )
+    {
+        attempts++;
+        weapon = weapon_pool[randomint( weapon_pool.size )];
+
+        if ( !isdefined( weapon ) || weapon == "" || weapon == "none" )
+            continue;
+
+        if ( self hasweapon( weapon ) )
+            continue;
+
+        if ( self try_give_loadout_weapon( weapon ) )
+            return;
+    }
+}
+
+rogue_refill_all_weapons()
+{
+    all_weapons = self getweaponslist( 1 );
+
+    for ( i = 0; i < all_weapons.size; i++ )
+        self give_max_ammo( all_weapons[i] );
+}
+
+rogue_apply_round_start_boons()
+{
+    if ( isdefined( self.rogue_round_points_bonus ) && self.rogue_round_points_bonus > 0 )
+        self.score += self.rogue_round_points_bonus;
+
+    if ( isdefined( self.rogue_round_ammo_refill ) && self.rogue_round_ammo_refill )
+        self rogue_refill_all_weapons();
+
+    if ( isdefined( self.rogue_round_perk_rolls ) && self.rogue_round_perk_rolls > 0 )
+    {
+        rolls = self.rogue_round_perk_rolls;
+
+        if ( rolls > 3 )
+            rolls = 3;
+
+        for ( i = 0; i < rolls; i++ )
+            self rogue_give_random_missing_perk();
+    }
+
+    self rogue_apply_persistent_boon_effects();
+}
+
+rogue_apply_persistent_boon_effects()
+{
+    if ( !is_zombies_map() )
+        return;
+
+    if ( !isdefined( self.rogue_bonus_health ) )
+        self.rogue_bonus_health = 0;
+
+    if ( !isdefined( self.rogue_move_speed_bonus ) )
+        self.rogue_move_speed_bonus = 0;
+
+    if ( !isdefined( self.rogue_round_points_bonus ) )
+        self.rogue_round_points_bonus = 0;
+
+    if ( !isdefined( self.rogue_round_perk_rolls ) )
+        self.rogue_round_perk_rolls = 0;
+
+    max_hp = 100 + self.rogue_bonus_health;
+
+    if ( max_hp > 325 )
+        max_hp = 325;
+
+    if ( isalive( self ) )
+    {
+        self.maxhealth = max_hp;
+
+        if ( !isdefined( self.rogue_health_synced ) || !self.rogue_health_synced || self.health > self.maxhealth )
+            self.health = self.maxhealth;
+
+        self.rogue_health_synced = 1;
+    }
+
+    speed = 1.0 + self.rogue_move_speed_bonus;
+
+    if ( speed < 0.90 )
+        speed = 0.90;
+
+    if ( speed > 1.35 )
+        speed = 1.35;
+
+    self setmovespeedscale( speed );
+}
+
+rogue_get_round_multiplier(round_num)
+{
+    if ( round_num < 1 )
+        round_num = 1;
+
+    mult = 1.0;
+
+    for ( i = 1; i < round_num; i++ )
+        mult = mult * 1.23;
+
+    mult = mult + round_num * 0.12;
+    return mult;
+}
+
+rogue_apply_round_scaling(round_num)
+{
+    if ( !isdefined( level.zombie_vars ) )
+        return;
+
+    mult = rogue_get_round_multiplier( round_num );
+    base_health = maps\mp\zombies\_zm::ai_zombie_health( round_num );
+    zombie_health = int( base_health * mult );
+
+    if ( zombie_health < 180 )
+        zombie_health = 180;
+
+    level.zombie_health = zombie_health;
+    spawn_delay = 0.70 - round_num * 0.045;
+
+    if ( spawn_delay < 0.08 )
+        spawn_delay = 0.08;
+
+    level.zombie_vars["zombie_spawn_delay"] = spawn_delay;
+    level.zombie_ai_limit = 24 + int( mult * 4.0 );
+
+    if ( level.zombie_ai_limit > 70 )
+        level.zombie_ai_limit = 70;
+
+    level.zombie_actor_limit = level.zombie_ai_limit + 6;
+    level.zombie_vars["zombie_ai_per_player"] = 6 + int( round_num * 0.8 + mult * 0.6 );
+}
+
+rogue_spawn_round_obstacles(round_num)
+{
+    wait 1.2;
+
+    if ( !isdefined( level.rogue_started ) || !level.rogue_started )
+        return;
+
+    if ( !isdefined( level.zombie_spawners ) || level.zombie_spawners.size == 0 )
+        return;
+
+    extra_spawns = 1 + int( round_num / 2 );
+
+    if ( round_num == 1 )
+        extra_spawns = 3;
+    else if ( round_num >= 8 )
+        extra_spawns = extra_spawns + 2;
+
+    for ( i = 0; i < extra_spawns; i++ )
+    {
+        spawner = level.zombie_spawners[randomint( level.zombie_spawners.size )];
+        ai = maps\mp\zombies\_zm_utility::spawn_zombie( spawner, spawner.targetname, undefined, level.round_number );
+
+        if ( isdefined( ai ) )
+        {
+            hp_boost = rogue_get_round_multiplier( round_num );
+
+            if ( i == 0 && round_num == 1 )
+                hp_boost = hp_boost * 2.8;
+            else
+                hp_boost = hp_boost * 1.2;
+
+            ai.maxhealth = int( ai.maxhealth * hp_boost );
+            ai.health = ai.maxhealth;
+            ai.meleedamage = ai.meleedamage + int( round_num * 5 );
+        }
+
+        wait 0.10;
+    }
+
+    if ( isdefined( level.dog_spawners ) && level.dog_spawners.size > 0 && round_num >= 2 )
+        maps\mp\zombies\_zm_ai_dogs::special_dog_spawn( undefined, 1 + int( round_num / 4 ) );
 }

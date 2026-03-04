@@ -1,0 +1,114 @@
+# =========================================
+# Runtime / game install artifacts (untracked)
+# =========================================
+**/__pycache__/
+*.pyc
+zone/
+zone_dump/
+sound/
+video/
+redist/
+# Tools are mostly vendored/binary; keep pipeline source only
+tools/*
+!tools/asset_port_pipeline/
+!tools/asset_port_pipeline/**
+# But keep Python bytecode out of git
+tools/asset_port_pipeline/__pycache__/
+tools/asset_port_pipeline/__pycache__/**
+tools/asset_port_pipeline/**/*.pyc
+t6-scripts-official/
+compiled/
+decompiled/
+decompiled_scripts/
+parsed/
+localization_*.txt
+imgui.ini
+binkw32.dll
+codlogo.bmp
+
+# Plutonium/mod runtime lane folders
+mods/__disabled__*/
+mods/**/zone/**
+
+# =========================================
+# Build outputs / experiments
+# =========================================
+_build/__pycache__/
+_build/_tmp*/
+_build/_probe_ff*/
+_build/_unlink*/
+_build/runtime_reset/
+_build/reports/
+_build/rogue_logs/
+_build/panzer_work/output*/
+_build/panzer_work/unlinked/
+_build/panzer_work/**/output*/
+_build/panzer_work/**/tmp*/
+_build/panzer_work/**
+_build/asset_port_pipeline/**
+_build/donor_blobs/**
+_build/dds_previews/**
+_build/img_test/**
+_build/ff_backup/**
+_build/ff_baseline/**
+_build/ff_verify/**
+_build/zone_dump*/**
+_build/zone_out/**
+_build/zone_link_test/**
+_build/zone_check/**
+_build/verify_*/**
+_build/inspect_*/**
+_build/runtime_unlink_*/**
+_build/dump_*/**
+_build/tmp*/**
+_build/*.log
+_build/tmp_*.json
+_build/tmp_*.txt
+_build/tmp_*.md
+_build/bisect_xanim*/**
+_build/check_built_*/**
+_build/gsc_workdir_*/**
+_build/manual_panzer_*/**
+_build/panzer_*/**
+_build/probe_*/**
+_build/thunder_*/**
+_build/t6_asset_dump/**
+_build/tomb_scripts/**
+_build/so_town_raw/**
+_build/tools/**
+_build/xanim_*/**
+
+# One-off scratch scripts at repo root
+_tmp_*
+README.txt
+.claude/
+
+# =========================================
+# Binary / proprietary asset artifacts
+# =========================================
+*.ff
+*.ipak
+*.iwd
+*.iwi
+*.xpak
+*.pak
+*.bik
+*.dmp
+*.bin
+*.glb
+*.gltf
+*.dds
+*.tga
+*.png
+*.jpg
+*.jpeg
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.xanim_export
+*.NT_EXPORT
+*.xanim_bin
+*.xmodel_bin
+*.disabled_*
+*.bak_*
