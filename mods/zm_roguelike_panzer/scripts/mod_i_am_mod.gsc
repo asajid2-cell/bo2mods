@@ -496,6 +496,24 @@ rogue_dev_client_sanity()
     // This only applies when the mod is loaded (it cannot affect server joins when the mod is off).
     self setclientdvar( "cg_drawGun", 1 );
     self setclientdvar( "cg_thirdPerson", 0 );
+
+    // If a broken/AI viewhands model is active, *all* first-person weapons can appear invisible.
+    // Sanitize to a known-good low-bone visible hand model.
+    vm = self getviewmodel();
+    if ( !isdefined( vm ) )
+        vm = "undefined";
+
+    rogue_log_event(
+        "vm_sanitize",
+        "stage=spawn;vm=" + rogue_safe_str( vm ) + ";tg_viewhands_enable=" + getdvarint( "rogue_tg_viewhands_enable" )
+    );
+
+    if ( vm == "viewmodel_usa_no_model" || isSubStr( vm, "c_zom_" ) )
+    {
+        precachemodel( "viewmodel_usa_morphine" );
+        self setviewmodel( "viewmodel_usa_morphine" );
+        rogue_log_event( "vm_sanitize", "stage=force;from=" + rogue_safe_str( vm ) + ";to=viewmodel_usa_morphine" );
+    }
 }
 
 on_player_spawn()
