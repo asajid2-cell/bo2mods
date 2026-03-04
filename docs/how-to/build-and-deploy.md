@@ -8,6 +8,17 @@ From repo root:
 python _build/two_phase_build.py
 ```
 
+## One-command local test loop
+Run from repo root:
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/test_local.ps1"
+```
+
+This will:
+- reset runtime to a safe dev lane (single active mod)
+- rebuild + deploy with safe defaults (base deploy on, stub viewhands off)
+- print the next in-game steps
+
 ### Common environment knobs
 Deploy lanes:
 - `ROGUE_DEPLOY_TO_MOD=1` (default)
