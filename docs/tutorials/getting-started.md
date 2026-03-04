@@ -18,11 +18,13 @@ If you relocate the repo, update hard-coded paths in `_build/*.py` (search for `
 This project is strict about runtime lanes:
 - **clean lane**: baseline gameplay; no dev mods enabled
 - **dev lane**: exactly one mod enabled for controlled testing
+- **server lane**: explicit “I’m joining servers” alias for clean
 
 Use the lane tool:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
 ```
 
 ## 3) Run the build spine
@@ -57,4 +59,3 @@ When something fails, capture:
 - `docs/how-to/build-and-deploy.md`
 - `docs/how-to/debug-runtime.md`
 - `docs/how-to/debug-viewmodel-flip.md`
-

@@ -38,6 +38,8 @@ _build/_tmp*/
 _build/_probe_ff*/
 _build/_unlink*/
 _build/runtime_reset/
+_build/runtime_quarantine/
+_build/runtime_quarantine/**
 _build/reports/
 _build/rogue_logs/
 _build/panzer_work/output*/

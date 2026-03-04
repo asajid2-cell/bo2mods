@@ -1,7 +1,8 @@
 param(
-    [ValidateSet("audit", "clean", "dev")]
+    [ValidateSet("audit", "clean", "dev", "server")]
     [string]$Mode = "audit",
-    [string]$DevMod = "zm_roguelike_panzer"
+    [string]$DevMod = "zm_roguelike_panzer",
+    [switch]$ManageGameMods
 )
 
 Set-StrictMode -Version Latest
@@ -15,6 +16,11 @@ $ZoneAllRoot = Join-Path $GameRoot "zone\all"
 $StorageScriptsRoot = Join-Path $StorageRoot "scripts"
 $StorageImagesRoot = Join-Path $StorageRoot "images"
 $StorageRawRoot = Join-Path $StorageRoot "raw"
+
+# Where we put "disabled" mods so they do not appear in the in-game mod list.
+# Keep these quarantines on the same volume as the source (Move-Item is cheap on same volume).
+$GameModsQuarantineRoot = Join-Path $GameRoot "_build\\runtime_quarantine\\game_mods"
+$StorageModsQuarantineRoot = Join-Path $StorageRoot "_runtime_quarantine\\mods"
 
 $BaselineTransitHash = "1076303B8D35F33B7E680B477F40362C37D30DC071FD71322081BADA9C62D01E"
 
@@ -30,24 +36,30 @@ function Write-Log {
 }
 
 function Disable-AllMods {
-    param([string]$Root)
+    param(
+        [string]$Root,
+        [string]$QuarantineRoot
+    )
     if (-not (Test-Path $Root)) { return @() }
     $changed = @()
+
+    $batchRoot = Join-Path $QuarantineRoot $Stamp
+    $null = New-Item -ItemType Directory -Path $batchRoot -Force
+
     Get-ChildItem -Path $Root -Directory | ForEach-Object {
         $item = $_
-        if ($item.Name.StartsWith("__disabled__")) { return }
-        $dst = Join-Path $Root ("__disabled__" + $item.Name)
-        if (Test-Path $dst) {
-            $dst = Join-Path $Root ("__disabled__" + $item.Name + "_" + $Stamp)
-        }
+        if ($item.Name -in @("_runtime_quarantine", "runtime_quarantine", "_build")) { return }
+
+        $dst = Join-Path $batchRoot $item.Name
+        if (Test-Path $dst) { $dst = Join-Path $batchRoot ($item.Name + "_" + $Stamp) }
         try {
             Move-Item -Path $item.FullName -Destination $dst -ErrorAction Stop
-            $changed += [PSCustomObject]@{ action = "disable_mod"; from = $item.FullName; to = $dst }
+            $changed += [PSCustomObject]@{ action = "quarantine_mod"; from = $item.FullName; to = $dst }
         }
         catch {
             $err = $_
-            $null = Write-Log ("WARN: failed to disable mod: " + $item.FullName + " -> " + $dst + " :: " + $err.Exception.Message)
-            $changed += [PSCustomObject]@{ action = "disable_mod_failed"; from = $item.FullName; to = $dst; error = $err.Exception.Message }
+            $null = Write-Log ("WARN: failed to quarantine mod: " + $item.FullName + " -> " + $dst + " :: " + $err.Exception.Message)
+            $changed += [PSCustomObject]@{ action = "quarantine_mod_failed"; from = $item.FullName; to = $dst; error = $err.Exception.Message }
         }
     }
     return $changed
@@ -56,43 +68,42 @@ function Disable-AllMods {
 function Enable-OnlyMod {
     param(
         [string]$Root,
-        [string]$ModName
+        [string]$ModName,
+        [string]$QuarantineRoot
     )
     if (-not (Test-Path $Root)) { return @() }
     $changed = @()
 
-    # First disable any currently-enabled mod except target.
-    Get-ChildItem -Path $Root -Directory | ForEach-Object {
-        $item = $_
-        if ($item.Name.StartsWith("__disabled__")) { return }
-        if ($item.Name -eq $ModName) { return }
-        $dst = Join-Path $Root ("__disabled__" + $item.Name)
-        if (Test-Path $dst) {
-            $dst = Join-Path $Root ("__disabled__" + $item.Name + "_" + $Stamp)
-        }
-        try {
-            Move-Item -Path $item.FullName -Destination $dst -ErrorAction Stop
-            $changed += [PSCustomObject]@{ action = "disable_mod"; from = $item.FullName; to = $dst }
-        }
-        catch {
-            $err = $_
-            $null = Write-Log ("WARN: failed to disable mod: " + $item.FullName + " -> " + $dst + " :: " + $err.Exception.Message)
-            $changed += [PSCustomObject]@{ action = "disable_mod_failed"; from = $item.FullName; to = $dst; error = $err.Exception.Message }
-        }
-    }
+    # Quarantine anything already in the mods root that isn't the dev mod (keeps mod list clean and server-safe).
+    $changed += Disable-AllMods -Root $Root -QuarantineRoot $QuarantineRoot
 
-    # Then enable target if it exists in disabled form.
-    $disabledTarget = Join-Path $Root ("__disabled__" + $ModName)
+    # Restore the dev mod if it was quarantined (or previously "__disabled__*").
     $enabledTarget = Join-Path $Root $ModName
-    if ((Test-Path $disabledTarget) -and -not (Test-Path $enabledTarget)) {
-        try {
-            Move-Item -Path $disabledTarget -Destination $enabledTarget -ErrorAction Stop
-            $changed += [PSCustomObject]@{ action = "enable_mod"; from = $disabledTarget; to = $enabledTarget }
+    if (-not (Test-Path $enabledTarget)) {
+        $candidates = @()
+        if (Test-Path $QuarantineRoot) {
+            $candidates += @(Get-ChildItem -Path $QuarantineRoot -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object {
+                ($_.Name -eq $ModName) -or ($_.Name -like ("__disabled__" + $ModName + "*"))
+            })
         }
-        catch {
-            $err = $_
-            $null = Write-Log ("WARN: failed to enable mod: " + $disabledTarget + " -> " + $enabledTarget + " :: " + $err.Exception.Message)
-            $changed += [PSCustomObject]@{ action = "enable_mod_failed"; from = $disabledTarget; to = $enabledTarget; error = $err.Exception.Message }
+
+        if ($candidates.Count -gt 0) {
+            $pick = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $src = $pick.FullName
+            $dst = $enabledTarget
+            if ($pick.Name -like ("__disabled__" + $ModName + "*")) {
+                # strip the "__disabled__<ModName>" prefix so it appears normally in the in-game mod list
+                $dst = Join-Path $Root $ModName
+            }
+            try {
+                Move-Item -Path $src -Destination $dst -ErrorAction Stop
+                $changed += [PSCustomObject]@{ action = "restore_mod"; from = $src; to = $dst }
+            }
+            catch {
+                $err = $_
+                $null = Write-Log ("WARN: failed to restore mod: " + $src + " -> " + $dst + " :: " + $err.Exception.Message)
+                $changed += [PSCustomObject]@{ action = "restore_mod_failed"; from = $src; to = $dst; error = $err.Exception.Message }
+            }
         }
     }
 
@@ -265,9 +276,16 @@ Write-Log "storage_root=$StorageRoot"
 $changes = @()
 
 if ($Mode -eq "clean") {
-    Write-Log "disabling all mods (game + storage)"
-    $changes += Disable-AllMods -Root $GameModsRoot
-    $changes += Disable-AllMods -Root $StorageModsRoot
+    if ($ManageGameMods) {
+        Write-Log "disabling all mods (game + storage)"
+        $changes += Disable-AllMods -Root $GameModsRoot -QuarantineRoot $GameModsQuarantineRoot
+    }
+    else {
+        Write-Log "skipping game mods quarantine (ManageGameMods=0)"
+    }
+
+    Write-Log "disabling all mods (storage)"
+    $changes += Disable-AllMods -Root $StorageModsRoot -QuarantineRoot $StorageModsQuarantineRoot
 
     Write-Log "restoring base transit survival ff to known baseline"
     $changes += Restore-TransitBaselineFF -Root $ZoneAllRoot
@@ -287,14 +305,44 @@ if ($Mode -eq "clean") {
         $changes += Move-IfExists -Path $rawPath -DestDir (Join-Path $RunRoot "storage_raw_quarantine") -ActionName "quarantine_storage_raw"
     }
 
-    Write-Log "quarantining reserved runtime ff names from game/storage mods zone/all"
-    $changes += Move-ReservedRuntimeFFs -ModsRoot $GameModsRoot -DestRoot (Join-Path $RunRoot "game_mod_zone_quarantine") -ActionName "quarantine_reserved_runtime_ff"
-    $changes += Move-ReservedRuntimeFFs -ModsRoot $StorageModsRoot -DestRoot (Join-Path $RunRoot "storage_mod_zone_quarantine") -ActionName "quarantine_reserved_runtime_ff"
+    # Note: we intentionally do NOT mutate per-mod zone/all contents here.
+    # If a mod is not loaded, its mod_load/mod_patch fastfiles do not affect server join.
+    # Quarantining the entire mod folder is safer and keeps the in-game mod list clean.
 }
 elseif ($Mode -eq "dev") {
     Write-Log "enabling dev mod only: $DevMod"
-    $changes += Enable-OnlyMod -Root $GameModsRoot -ModName $DevMod
-    $changes += Enable-OnlyMod -Root $StorageModsRoot -ModName $DevMod
+    $changes += Enable-OnlyMod -Root $StorageModsRoot -ModName $DevMod -QuarantineRoot $StorageModsQuarantineRoot
+
+    if ($ManageGameMods) {
+        $changes += Enable-OnlyMod -Root $GameModsRoot -ModName $DevMod -QuarantineRoot $GameModsQuarantineRoot
+    }
+    else {
+        Write-Log "skipping game mods restore/quarantine (ManageGameMods=0)"
+    }
+}
+elseif ($Mode -eq "server") {
+    # Alias for "clean" to make intent obvious.
+    Write-Log "server mode: ensuring no local mods or base overrides can affect server join"
+
+    if ($ManageGameMods) {
+        Write-Log "disabling all mods (game + storage)"
+        $changes += Disable-AllMods -Root $GameModsRoot -QuarantineRoot $GameModsQuarantineRoot
+    }
+    else {
+        Write-Log "skipping game mods quarantine (ManageGameMods=0)"
+    }
+
+    Write-Log "disabling all mods (storage)"
+    $changes += Disable-AllMods -Root $StorageModsRoot -QuarantineRoot $StorageModsQuarantineRoot
+
+    Write-Log "restoring base transit survival ff to known baseline"
+    $changes += Restore-TransitBaselineFF -Root $ZoneAllRoot
+
+    Write-Log "quarantining reserved runtime ff names from base zone/all"
+    $changes += Move-MatchingFiles -Root $ZoneAllRoot -Patterns @("mod.ff", "mod_load.ff", "mod_patch.ff", "thundergun_xanims.ff") -DestDir (Join-Path $RunRoot "zone_all_quarantine") -ActionName "quarantine_zone_file"
+
+    Write-Log "quarantining storage script autoload remnants"
+    $changes += Move-MatchingFiles -Root $StorageScriptsRoot -Patterns @("mod_i_am_mod.autoload*") -DestDir (Join-Path $RunRoot "storage_scripts_quarantine") -ActionName "quarantine_storage_script"
 }
 else {
     Write-Log "audit mode: no mutations performed"
@@ -330,6 +378,8 @@ $report = [PSCustomObject]@{
     reserved_runtime_ff_zone_all = $reservedRuntimeZoneAll
     reserved_runtime_ff_storage = $reservedRuntimeStorage
     reserved_runtime_ff_game = $reservedRuntimeGame
+    game_mods_quarantine_root = $GameModsQuarantineRoot
+    storage_mods_quarantine_root = $StorageModsQuarantineRoot
     changes = $changes
 }
 

@@ -13,6 +13,11 @@ Clean lane:
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
 ```
 
+Server-safe lane (explicit intent alias for clean):
+```powershell
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
+```
+
 Dev lane (one mod only):
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
@@ -31,6 +36,16 @@ Key fields to trust first:
 - active mods in game path and storage path
 - whether `so_zsurvival_zm_transit.ff` is baseline or modified
 - existence of “autoload remnants” in storage
+
+Note on mods:
+- `clean` / `server` **quarantines mod folders** (moves them out of the `mods/` directory) so they:
+  - do not appear in the in-game mod list
+  - cannot be accidentally loaded when you join servers
+- `dev` restores exactly one mod folder into `mods/` and quarantines the rest
+
+By default, quarantine is applied to the **Plutonium storage** mods directory.
+If you also have runtime mods living under the game install `mods/` directory and need to quarantine them too, pass:
+`-ManageGameMods`
 
 ## 3) Health check the lane
 ```powershell
@@ -59,4 +74,3 @@ If the game is loading `so_zsurvival_zm_transit` from base lane while you deploy
 xmodels and viewmodel rigs can be cached.
 If you are debugging viewmodel orientation or camera chains:
 - fully restart the game between tests
-
