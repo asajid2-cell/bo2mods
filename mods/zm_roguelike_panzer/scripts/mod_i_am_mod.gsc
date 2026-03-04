@@ -485,6 +485,19 @@ rogue_send_join_chat_hint()
     self iprintln( "^1to start the gauntlet type start followed by your wager amount (^7example: /start 1000^1)" );
 }
 
+rogue_dev_client_sanity()
+{
+    if ( isdefined( self.rogue_dev_client_sanity_done ) && self.rogue_dev_client_sanity_done )
+        return;
+    self.rogue_dev_client_sanity_done = 1;
+
+    // Keep local testing deterministic: if a previous session or config disabled gun rendering,
+    // it can look like "the port disappeared" while the weapon still fires and ammo decreases.
+    // This only applies when the mod is loaded (it cannot affect server joins when the mod is off).
+    self setclientdvar( "cg_drawGun", 1 );
+    self setclientdvar( "cg_thirdPerson", 0 );
+}
+
 on_player_spawn()
 {
     self endon("disconnect");
@@ -493,6 +506,7 @@ on_player_spawn()
     {
         self waittill("spawned_player");
         wait 0.8;
+        rogue_dev_client_sanity();
         rogue_sanitize_rampage_bookmark_player( self );
 
         if ( !is_zombies_map() )
@@ -2993,7 +3007,7 @@ rogue_thundergun_fire_watcher()
         if ( w == "thundergun_zm" || w == "thundergun_upgraded_zm" || is_proxy )
         {
             if ( is_proxy )
-                rogue_log_event( "tg_proxy_fire", "carrier=" + w + ";cur=" + self getcurrentweapon() );
+                rogue_log_event( "tg_proxy_fire", "carrier=" + w + ";cur=" + self getcurrentweapon() + ";vm=" + rogue_safe_str( self getviewmodel() ) );
             self thread rogue_thundergun_fired();
         }
     }
