@@ -2300,7 +2300,20 @@ def stage_stub_zm_viewhands_assets():
     forcing a non-viewhands xmodel via `setviewmodel()`).
     """
     if not STUB_ZM_VIEWHANDS:
-        print("Prep: stub ZM viewhands disabled.")
+        # Important: WORK_DIR is persistent across runs. If stub viewhands were generated
+        # during a previous experiment, leaving them in place will silently override the
+        # real stock viewhands (from --load fastfiles) and make *all* weapons invisible.
+        removed = 0
+        for name in STUB_ZM_VIEWHANDS_NAMES:
+            for rel in (os.path.join("xmodel", f"{name}.json"), os.path.join("model_export", f"{name}_lod0.glb")):
+                p = os.path.join(WORK_DIR, rel)
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        removed += 1
+                except Exception as ex:
+                    print(f"  WARNING: failed removing staged viewhands override {p}: {ex}")
+        print(f"Prep: stub ZM viewhands disabled (purged {removed} staged overrides).")
         return True
 
     tool = os.path.join(os.path.dirname(__file__), "rebuild_min_viewhands_glb.py")

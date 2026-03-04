@@ -98,6 +98,17 @@ If the game is loading `so_zsurvival_zm_transit` from base lane while you deploy
 - You exceeded the first-person DObj cap (gun + hands/viewhands).
 - Fix is architectural, not “try another giveweapon”.
 
+`all weapons invisible (no hands, no gun), but ammo decreases`
+- Most often: you accidentally shipped **stubbed viewhands** (a prior experiment wrote
+  `c_zom_*_viewhands` overrides into `_build/panzer_work/so_zsurvival_zm_transit/`).
+- Fix:
+  - rebuild with stub viewhands disabled (default):
+    ```powershell
+    $env:ROGUE_TG_STUB_ZM_VIEWHANDS="0"
+    python _build/two_phase_build.py
+    ```
+  - fully restart the game (xmodels can be cached).
+
 ## 6) Don’t trust hot reload for xmodels
 xmodels and viewmodel rigs can be cached.
 If you are debugging viewmodel orientation or camera chains:

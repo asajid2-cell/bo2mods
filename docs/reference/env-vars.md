@@ -41,6 +41,12 @@ Primary entrypoint:
   - `rogue_tg_viewhands_enable`
   - must be set to `1` in-game to actually swap via GSC
 
+## Stubbed stock viewhands (dangerous)
+- `ROGUE_TG_STUB_ZM_VIEWHANDS`
+  - when enabled, pipeline writes minimal `c_zom_*_viewhands` overrides into the work dir to avoid the 160-bone cap
+  - if you ship these overrides, *all* weapons can look invisible (hands/gun vanish)
+  - default: `0` (off). When off, the build purges any previously staged stub overrides.
+
 ## XAnim compile modes
 - `ROGUE_TG_XANIM_EMIT_MODE`
   - `static_pose` / `stub` / `donor_clone` / `bo3_frames`
@@ -59,4 +65,3 @@ Primary entrypoint:
 
 ## Notes
 Use `_build/reports/last_tg_build_manifest.json` as the source of truth for what a given run actually did.
-

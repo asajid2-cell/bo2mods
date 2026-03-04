@@ -499,6 +499,12 @@ rogue_dev_client_sanity()
 
     // If a broken/AI viewhands model is active, *all* first-person weapons can appear invisible.
     // Start a watchdog so anything that overrides viewhands later gets corrected.
+    if ( !isdefined( self.rogue_vm_default ) || self.rogue_vm_default == "" )
+    {
+        vm = self getviewmodel();
+        if ( isdefined( vm ) && vm != "" && vm != "viewmodel_usa_no_model" )
+            self.rogue_vm_default = vm;
+    }
     if ( !isdefined( self.rogue_vm_sanitize_watcher_started ) )
     {
         self.rogue_vm_sanitize_watcher_started = 1;
@@ -513,8 +519,6 @@ rogue_vm_is_bad(vm)
     if ( !isdefined( vm ) || vm == "" )
         return true;
     if ( vm == "viewmodel_usa_no_model" )
-        return true;
-    if ( isSubStr( vm, "c_zom_" ) )
         return true;
     return false;
 }
@@ -532,13 +536,14 @@ rogue_vm_sanitize_tick(stage)
 
     if ( rogue_vm_is_bad( vm ) && 0 == getdvarint( "rogue_tg_viewhands_enable" ) )
     {
-        precachemodel( "viewmodel_usa_morphine" );
-        self setviewmodel( "viewmodel_usa_morphine" );
-
-        // Prevent other restore logic from snapping back to a zombie viewhands later.
-        self.rogue_vm_default = "viewmodel_usa_morphine";
-
-        rogue_log_event( "vm_sanitize", "stage=force;from=" + rogue_safe_str( vm ) + ";to=viewmodel_usa_morphine" );
+        // When viewmodel becomes invalid (or no_model), restore to a known-good default.
+        // Do NOT force a weapon handModel (like viewmodel_usa_morphine) via setviewmodel();
+        // setviewmodel() expects a viewhands xmodel and can break first-person rendering.
+        if ( isdefined( self.rogue_vm_default ) && self.rogue_vm_default != "" && self.rogue_vm_default != "viewmodel_usa_no_model" )
+        {
+            self setviewmodel( self.rogue_vm_default );
+            rogue_log_event( "vm_sanitize", "stage=force;from=" + rogue_safe_str( vm ) + ";to=" + rogue_safe_str( self.rogue_vm_default ) );
+        }
     }
 }
 
