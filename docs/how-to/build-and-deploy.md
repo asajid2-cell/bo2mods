@@ -13,10 +13,29 @@ Deploy lanes:
 - `ROGUE_DEPLOY_TO_MOD=1` (default)
 - `ROGUE_DEPLOY_TO_BASE=0` (default; enable only when required)
 
+### When you *must* deploy to base lane
+Important T6 constraint: core map/survival fastfiles like `so_zsurvival_zm_transit.ff` are typically loaded from the **game install** `zone/all` path, not from the mod folder.
+
+So if your change is inside `so_zsurvival_zm_transit.ff` (weapons/xmodels/xanims in that zone), and you don’t deploy to base, you’ll see “reverted” behavior at runtime (stock weapons, stock hands, no patched assets).
+
 Typical “I need base lane too” run:
 ```powershell
 $env:ROGUE_DEPLOY_TO_BASE = "1"
 python _build/two_phase_build.py
+```
+
+### Server-safe workflow (recommended)
+To test locally, then safely join servers afterwards:
+```powershell
+# Enable mod (local dev)
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
+
+# Build + deploy (enable base lane only while testing)
+$env:ROGUE_DEPLOY_TO_BASE = "1"
+python _build/two_phase_build.py
+
+# When done testing and before joining servers
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
 ```
 
 ## What gets built
