@@ -498,21 +498,74 @@ rogue_dev_client_sanity()
     self setclientdvar( "cg_thirdPerson", 0 );
 
     // If a broken/AI viewhands model is active, *all* first-person weapons can appear invisible.
-    // Sanitize to a known-good low-bone visible hand model.
+    // Start a watchdog so anything that overrides viewhands later gets corrected.
+    if ( !isdefined( self.rogue_vm_sanitize_watcher_started ) )
+    {
+        self.rogue_vm_sanitize_watcher_started = 1;
+        self thread rogue_vm_sanitize_watcher();
+    }
+
+    rogue_vm_sanitize_tick( "spawn" );
+}
+
+rogue_vm_is_bad(vm)
+{
+    if ( !isdefined( vm ) || vm == "" )
+        return true;
+    if ( vm == "viewmodel_usa_no_model" )
+        return true;
+    if ( isSubStr( vm, "c_zom_" ) )
+        return true;
+    return false;
+}
+
+rogue_vm_sanitize_tick(stage)
+{
     vm = self getviewmodel();
     if ( !isdefined( vm ) )
         vm = "undefined";
 
     rogue_log_event(
         "vm_sanitize",
-        "stage=spawn;vm=" + rogue_safe_str( vm ) + ";tg_viewhands_enable=" + getdvarint( "rogue_tg_viewhands_enable" )
+        "stage=" + stage + ";vm=" + rogue_safe_str( vm ) + ";tg_viewhands_enable=" + getdvarint( "rogue_tg_viewhands_enable" )
     );
 
-    if ( vm == "viewmodel_usa_no_model" || isSubStr( vm, "c_zom_" ) )
+    if ( rogue_vm_is_bad( vm ) && 0 == getdvarint( "rogue_tg_viewhands_enable" ) )
     {
         precachemodel( "viewmodel_usa_morphine" );
         self setviewmodel( "viewmodel_usa_morphine" );
+
+        // Prevent other restore logic from snapping back to a zombie viewhands later.
+        self.rogue_vm_default = "viewmodel_usa_morphine";
+
         rogue_log_event( "vm_sanitize", "stage=force;from=" + rogue_safe_str( vm ) + ";to=viewmodel_usa_morphine" );
+    }
+}
+
+rogue_vm_sanitize_watcher()
+{
+    self endon( "disconnect" );
+
+    last = "";
+    for ( ;; )
+    {
+        wait 0.25;
+
+        if ( !is_zombies_map() )
+            continue;
+
+        vm = self getviewmodel();
+        if ( !isdefined( vm ) )
+            vm = "undefined";
+
+        if ( vm != last )
+        {
+            rogue_log_event( "vm_watch", "from=" + rogue_safe_str( last ) + ";to=" + rogue_safe_str( vm ) + ";cur=" + self getcurrentweapon() );
+            last = vm;
+        }
+
+        if ( rogue_vm_is_bad( vm ) )
+            rogue_vm_sanitize_tick( "watch" );
     }
 }
 
@@ -3025,7 +3078,14 @@ rogue_thundergun_fire_watcher()
         if ( w == "thundergun_zm" || w == "thundergun_upgraded_zm" || is_proxy )
         {
             if ( is_proxy )
-                rogue_log_event( "tg_proxy_fire", "carrier=" + w + ";cur=" + self getcurrentweapon() + ";vm=" + rogue_safe_str( self getviewmodel() ) );
+                rogue_log_event(
+                    "tg_proxy_fire",
+                    "carrier=" + w
+                    + ";cur=" + self getcurrentweapon()
+                    + ";vm=" + rogue_safe_str( self getviewmodel() )
+                    + ";vm_def=" + rogue_safe_str( self.rogue_vm_default )
+                    + ";tg_viewhands_enable=" + getdvarint( "rogue_tg_viewhands_enable" )
+                );
             self thread rogue_thundergun_fired();
         }
     }
