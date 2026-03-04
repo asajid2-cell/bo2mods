@@ -56,6 +56,7 @@ try {
   $env:ROGUE_TG_RUNTIME_XANIM_TO_BASE = $(if ($RuntimeXanimToBase) { "1" } else { "0" })
   $env:ROGUE_TG_STUB_ZM_VIEWHANDS = $(if ($StubZmViewhands) { "1" } else { "0" })
   $env:ROGUE_TG_VIEWHANDS_ENABLE = $(if ($BuildViewhandsSwap) { "1" } else { "0" })
+  $env:ROGUE_TG_XANIM_EMIT_MODE = "bo3_frames"
 
   python _build/two_phase_build.py
 

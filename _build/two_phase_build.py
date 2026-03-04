@@ -172,7 +172,8 @@ NEUTRALIZE_ROOT_BONES = ["tag_player", "tag_camera", "tag_origin"]
 CUSTOM_XANIM_CRYPTO_SEED = "thundergun_xanims"
 CUSTOM_XANIM_EMIT_MODE = os.environ.get(
     "ROGUE_TG_XANIM_EMIT_MODE",
-    ("donor_clone" if THUNDERGUN_WEAPON_PROFILE == "hybrid_core" else "static_pose"),
+    # hybrid_core is our "full port" track: prefer BO3 frame-driven encoding by default.
+    ("bo3_frames" if THUNDERGUN_WEAPON_PROFILE == "hybrid_core" else "static_pose"),
 )
 CUSTOM_XANIM_DONOR_FF = os.environ.get(
     "ROGUE_TG_XANIM_DONOR_FF",
@@ -182,9 +183,26 @@ CUSTOM_XANIM_DONOR_ZONE = os.environ.get("ROGUE_TG_XANIM_DONOR_ZONE", "zm_transi
 CUSTOM_XANIM_DONOR_ASSET = os.environ.get("ROGUE_TG_XANIM_DONOR_ASSET", "viewmodel_ak74u_t6_idle")
 CUSTOM_XANIM_DONOR_FALLBACK = os.environ.get("ROGUE_TG_XANIM_DONOR_FALLBACK", "1") not in ("0", "false", "False")
 CUSTOM_XANIM_REQUIRE_NO_FALLBACK = os.environ.get("ROGUE_TG_XANIM_REQUIRE_NO_FALLBACK", "1") not in ("0", "false", "False")
-CUSTOM_XANIM_BO3_TARGETS = [
-    s.strip() for s in os.environ.get("ROGUE_TG_XANIM_BO3_TARGETS", "vm_thunder_gun_idle").split(",") if s.strip()
-]
+_bo3_targets_env_raw = os.environ.get("ROGUE_TG_XANIM_BO3_TARGETS", "").strip()
+if _bo3_targets_env_raw:
+    CUSTOM_XANIM_BO3_TARGETS = [s.strip() for s in _bo3_targets_env_raw.split(",") if s.strip()]
+else:
+    # If a previous batch conversion run recorded a "known good" full target set,
+    # use it as the default so we don't silently fall back to idle-only coverage.
+    _bo3_targets_path = os.path.join(os.path.dirname(__file__), "reports", "bo3_frames_target_accumulator.json")
+    CUSTOM_XANIM_BO3_TARGETS = []
+    if os.path.exists(_bo3_targets_path):
+        try:
+            with open(_bo3_targets_path, "r", encoding="utf-8", errors="replace") as f:
+                _acc = json.load(f)
+            for t in _acc.get("targets", []):
+                t = str(t).strip()
+                if t:
+                    CUSTOM_XANIM_BO3_TARGETS.append(t)
+        except Exception:
+            CUSTOM_XANIM_BO3_TARGETS = []
+    if not CUSTOM_XANIM_BO3_TARGETS:
+        CUSTOM_XANIM_BO3_TARGETS = ["vm_thunder_gun_idle"]
 CUSTOM_XANIM_BO3_FALLBACK_MODE = os.environ.get("ROGUE_TG_XANIM_BO3_FALLBACK_MODE", "donor_clone")
 CUSTOM_XANIM_BO3_ROOT_BONES = [
     s.strip()

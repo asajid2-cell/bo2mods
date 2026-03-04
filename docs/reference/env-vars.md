@@ -50,8 +50,10 @@ Primary entrypoint:
 ## XAnim compile modes
 - `ROGUE_TG_XANIM_EMIT_MODE`
   - `static_pose` / `stub` / `donor_clone` / `bo3_frames`
+  - default (profile `hybrid_core`): `bo3_frames`
 - `ROGUE_TG_XANIM_BO3_TARGETS`
   - comma-separated animation names to emit via `bo3_frames`
+  - if unset, the build will use `_build/reports/bo3_frames_target_accumulator.json` when present
 - `ROGUE_TG_XANIM_BO3_FALLBACK_MODE`
   - fallback for non-target anims (`donor_clone` / `static_pose` / `stub`)
 - `ROGUE_TG_XANIM_BO3_ROOT_BONES`
