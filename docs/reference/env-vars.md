@@ -1,69 +1,139 @@
 # Reference: Environment Variables
 
-This is a consolidated reference of the environment variables used by the build spine.
+This is the current BO3 Rev env-var surface. The main entrypoint is:
+- `_build/build_bo3_rev_idg_probe.py`
 
-Primary entrypoint:
-- `_build/two_phase_build.py`
+In normal use, prefer the case wrapper:
+- `python _build/run_bo3_rev_probe_case.py <case>`
 
-## Deploy / runtime lanes
-- `ROGUE_DEPLOY_TO_MOD`
-  - `1` deploy to Plutonium storage mod zone directory
-  - default: `1`
-- `ROGUE_DEPLOY_TO_BASE`
-  - `1` deploy to game `zone/all`
-  - default: `0`
+## Donor shell and identity
 
-## Thundergun weapon build
-- `ROGUE_TG_PROFILE`
-  - weapon build profile (e.g. `hybrid_core`)
-- `ROGUE_TG_SEMANTICS`
-  - `minigun` or `thundergun` (which non-animation semantics to keep)
-- `ROGUE_TG_MODEL_MODE`
-  - `rogue` / `minigun` / `base`
-- `ROGUE_TG_HAND_MODEL`
-  - forced `handModel` for generated weapondefs (e.g. `viewmodel_usa_morphine`)
-- `ROGUE_TG_GUN_MODEL`
-  - forced `gunModel` override if needed
-- `ROGUE_TG_WORLD_MODEL`
-  - forced `worldModel` override if needed
+### `ROGUE_PROBE_SHELL`
+Engine-recognized BO2 donor shell.
 
-## Truth alias carrier (registration bypass)
-- `ROGUE_TG_TRUTH_ALIAS`
-  - default carrier weapon (commonly `ak74u_zm`)
-- `ROGUE_TG_TRUTH_ALIAS_UPG`
-  - upgraded carrier weapon (commonly `ak74u_upgraded_zm`)
+Examples:
+- `mg08_zm`
+- `m14_zm`
+- `ray_gun_zm`
 
-## Viewhands swap mode (experimental)
-- `ROGUE_TG_VIEWHANDS_ENABLE`
-  - when enabled, pipeline stages a `rogue_tg_viewhands` xmodel and forces `gunModel` to a no-visual carrier
-  - default: `0` (disabled; risky)
-- runtime dvar gate:
-  - `rogue_tg_viewhands_enable`
-  - must be set to `1` in-game to actually swap via GSC
+Default:
+- `mg08_zm`
 
-## Stubbed stock viewhands (dangerous)
-- `ROGUE_TG_STUB_ZM_VIEWHANDS`
-  - when enabled, pipeline writes minimal `c_zom_*_viewhands` overrides into the work dir to avoid the 160-bone cap
-  - if you ship these overrides, *all* weapons can look invisible (hands/gun vanish)
-  - default: `0` (off). When off, the build purges any previously staged stub overrides.
+### `ROGUE_STARTER_WEAPON`
+Weapon granted on spawn before the probe shell logic finishes.
 
-## XAnim compile modes
-- `ROGUE_TG_XANIM_EMIT_MODE`
-  - `static_pose` / `stub` / `donor_clone` / `bo3_frames`
-  - default (profile `hybrid_core`): `bo3_frames`
-- `ROGUE_TG_XANIM_BO3_TARGETS`
-  - comma-separated animation names to emit via `bo3_frames`
-  - if unset, the build will use `_build/reports/bo3_frames_target_accumulator.json` when present
-- `ROGUE_TG_XANIM_BO3_FALLBACK_MODE`
-  - fallback for non-target anims (`donor_clone` / `static_pose` / `stub`)
-- `ROGUE_TG_XANIM_BO3_ROOT_BONES`
-- `ROGUE_TG_XANIM_BO3_NONROOT_BONES`
+Default:
+- `m1911_zm` in the low-level builder
+- case-dependent in the wrapper
 
-## Rig validation safety gates
-- `ROGUE_TG_RIG_STRICT`
-  - hard-fail if rig mismatches animation export bones
-- `ROGUE_TG_RIG_AUTOFALLBACK_STUB`
-  - auto-fallback to stub payloads if rig mismatch detected (prevents misleading visuals)
+### `ROGUE_BUILD_TAG`
+Optional explicit build tag override.
+If unset, the builder generates one from the current config and UTC time.
 
-## Notes
-Use `_build/reports/last_tg_build_manifest.json` as the source of truth for what a given run actually did.
+## Model selection
+
+### `ROGUE_GUN_MODEL_MODE`
+How `gunModel` is resolved.
+
+Values:
+- `custom`
+- `literal`
+- `base`
+
+Default:
+- `custom`
+
+### `ROGUE_GUN_MODEL_LITERAL`
+Required when `ROGUE_GUN_MODEL_MODE=literal`.
+
+Example:
+- `viewmodel_usa_no_model`
+
+### `ROGUE_MODEL_ASSET_BASE`
+Base asset name for staged custom xmodels.
+
+Default:
+- `bo3_rev_v2_idg_view`
+
+### `ROGUE_IDG_VIEW_GLB`
+Optional override path for the input GLB used to stage the custom model.
+
+If unset, the builder uses the current weapon-only GLB under `_build/bo3_rev_idg_weapon_only/`.
+
+## Animation mode
+
+### `ROGUE_USE_BO3_IDG_ANIMS`
+When enabled, the builder stages BO3 animation assets instead of donor-animation aliases.
+
+Default:
+- `0`
+
+Important:
+- the current stable path keeps this off
+- the live build uses donor animation aliases
+
+## Deploy lanes
+
+### `ROGUE_DEPLOY_TO_MOD`
+Deploy outputs to the mod lane.
+
+Default:
+- `1`
+
+### `ROGUE_DEPLOY_TO_BASE`
+Deploy outputs to the game `zone/all` base lane.
+
+Default:
+- `0` in the low-level builder
+- enabled in the current working MG08 case
+
+## First-person safety toggles
+
+### `ROGUE_USE_CUSTOM_IDG_VIEWHANDS`
+Enables the custom-viewhands experiment.
+
+Default:
+- `0`
+
+Note:
+- this is not the current stable path
+
+### `ROGUE_FORCE_LOW_HANDMODEL`
+Forces a low/blank handModel path for specific acceptance experiments.
+
+Default:
+- `0`
+
+### `ROGUE_STUB_ZM_VIEWHANDS`
+Stages stub stock zombie viewhands.
+
+Default:
+- `0`
+
+This was an older experiment and is not part of the current stable path.
+
+## Zone/build safety
+
+### `ROGUE_ALLOW_STRIPPED_SURVIVAL_FF`
+Bypasses the safety check that rejects a stripped survival FF.
+
+Default:
+- `0`
+
+This should stay off for the normal working case.
+
+### `ROGUE_USE_FULL_ZONE_SOURCE`
+Use the full survival zone source instead of a tiny probe-only source.
+
+Default:
+- `1` when deploying to base
+- otherwise `0`
+
+## Current preferred wrapper case
+The stable documented case is:
+
+```powershell
+python _build/run_bo3_rev_probe_case.py mg08_v2_bo3_weapon_only
+```
+
+That is the recommended path instead of manually setting env vars for day-to-day work.

@@ -1,73 +1,114 @@
-# Status (Current Stage)
+# Status
 
-Last updated: 2026-03-04
+Last updated: 2026-03-12
 
 ## Goal
-Port BO3 Thundergun (T7) assets into BO2 (T6 / Plutonium) with **full-fidelity visuals and animation**, not donor “tape”.
+Port the BO3 Apothicon Servant into BO2/Plutonium in a way that is:
+- actually playable in BO2 zombies
+- reproducible to build and deploy
+- progressively closer to BO3 visuals, handling, and black-hole behavior
+
+The project is no longer in the "can we even load anything" stage. It is in the "make the donor-shell port look and behave more like BO3" stage.
+
+## Current live architecture
+- Mod: `mods/bo3_rev`
+- Current donor shell: `mg08_zm`
+- Current first-person model path: BO3-derived reduced weapon-only rig
+- Deployment path: patched `so_zsurvival_zm_transit.ff` + `.ipak` plus `mod_load.ff`
+- Preferred build entrypoint: `python _build/run_bo3_rev_probe_case.py mg08_v2_bo3_weapon_only`
 
 ## What currently works
-- **Reproducible build/deploy spine:** `python _build/two_phase_build.py`
-  - Builds and deploys:
-    - Patched map/survival fastfile: `so_zsurvival_zm_transit.ff`
-    - IPak bundle: `so_zsurvival_zm_transit.ipak`
-    - Runtime custom-xanim lane: `mod_load.ff` (custom xanim fastfile loaded at runtime)
-- **Runtime isolation lanes:**
-  - `clean` lane restores baseline fastfiles and disables mods.
-  - `dev` lane enables exactly one mod (`zm_roguelike_panzer`) for controlled tests.
-  - Tool: `_build/runtime_reset.ps1` (see `docs/how-to/debug-runtime.md`).
-- **Weapon grant path is stable:**
-  - The mod’s `.tg` logic can reliably “grant” a carrier weapon and drive the Thundergun behavior watcher.
-  - The pipeline uses a **truth alias carrier** to bypass `weapondef_unregistered` for new weapon names.
 
-### XAnim runtime coverage (current conversion milestone)
-- **All 28 `vm_thunder_gun_*` xanim aliases resolve to non-stub payloads at runtime** via the `mod_load.ff` lane.
-- The analyzer can verify frame parity against the deployed runtime `mod_load.ff`.
-- Important nuance:
-  - “REAL + frame parity” means the assets exist and load with the expected frame counts.
-  - It does **not** automatically guarantee perfect curve/bone transform fidelity (that’s the next fidelity stage).
+### Build and deploy
+- The BO3 Rev probe builder is reproducible:
+  - `_build/build_bo3_rev_idg_probe.py`
+  - `_build/run_bo3_rev_probe_case.py`
+- The build emits and deploys:
+  - `so_zsurvival_zm_transit.ff`
+  - `so_zsurvival_zm_transit.ipak`
+  - `mod_load.ff`
+- The pipeline now hard-fails if custom images are staged without a matching runtime IPAK.
 
-## What is currently broken (active blocker)
-### Viewmodel equip/camera orientation
-When switching to the Thundergun carrier weapon, the first-person camera can “flip” (appear to snap behind/up), which makes controls feel inverted.
+### Weapon shell and grant path
+- The project no longer depends on a fresh-name `apothicon_servant_zm` engine weapon.
+- The live shell is `mg08_zm`, and the override is proven by runtime clip/max logs.
+- The user spawns into the donor shell directly instead of receiving a second temporary donor weapon.
 
-Current hypothesis:
-- This is caused by **viewmodel rig contracts** in T6:
-  - `tag_view`, `tag_ads`, `tag_cambone`, `tag_camera` hierarchy + bind orientation
-  - Which bones are driven by XAnim state on equip/raise/sprint
-  - How the engine derives the camera basis from the viewmodel DObj
+### Viewmodel acceptance
+- The Servant model loads in BO2 without the old `>160 bones` crash.
+- The current path uses a reduced BO3-derived weapon-only rig instead of the earlier combined gun+hands attempt.
+- The current donor pose is close enough to iterate visually and record demos.
 
-Recent mitigation work:
-- GLB repair work in `_build/two_phase_build.py` attempts to normalize the camera chain to match stock T6 viewhands.
-- Still requires runtime verification (cache invalidation and “actual loaded asset” checks).
+### Gameplay logic
+- Custom Servant fire logic is live in GSC.
+- Firing the donor shell spawns a timed singularity at the trace point.
+- Zombies are pulled inward and killed inside the inner radius.
+- Only one active singularity per player is allowed at a time.
+- The active window is currently set to the BO3 `black_hole_bomb_zm` 4.0 second timing target.
 
-### First-person presentation is still unstable
-Depending on the current hand model strategy and build profile, you may see:
-- invisible or incorrect hands
-- weapon sitting off-screen / too high
-- state transitions (sprint/raise) that tilt or “fall” the camera
+### Demo/admin command layer
+The live script now supports:
+- `.p <amount>`
+- `.round <target>`
+- `.fast`
+- `.hits <count>`
+- `.debug`
 
-These are symptoms of **engine contract compliance** issues (rig/tag basis + which bones are driven per state), not a “missing asset” problem.
+### Demo survivability tuning
+- Fast-spawn demo mode can force `level.zombie_vars["zombie_spawn_delay"] = 0.08`.
+- Demo health can be raised to a chosen hits-to-down target.
+- Script-usage overlay is off by default and only shown through `.debug`.
 
-## Constraints (hard caps)
-- **T6 first-person DObj bone cap**: 160 bones (combined gun + hands/viewhands).
-  - Exceeding this crashes with `dobj ... has more than 160 bones`.
-- **Weapon registration barrier:**
-  - T6 can refuse to give weapons if their weapondef isn’t registered/included early enough.
-  - Current workaround is carrier alias + behavior proxy (intent is to later transition to true weapondefs once registration is proven).
+## What is proven
 
-## Where we are in the pipeline (layer model)
-This maps to the “layer stack” in `docs/explanation/porting-architecture.md`.
+### Fresh-name weapon identity is blocked in this normal mod lane
+The project proved that:
+- zombies registration can succeed
+- inclusion tables can succeed
+- donor surfaces can be valid
+- and the engine can still refuse to resolve a new name like `apothicon_servant_zm`
 
-- Layer A — Runtime isolation: **PASS**
-- Layer B — Structural conversion (models/materials/xanims compile): **PASS (for current dataset)**
-- Layer C — Semantic translation (weapon fields + state mapping): **PASS enough to exercise viewmodel states**
-- Layer D — Integration packaging: **PASS**
-- Layer E — Engine contract compliance (viewmodel camera/tags/bone budget): **IN PROGRESS (current blocker)**
+That is no longer a theory. It is a proven barrier for this workflow.
+
+### `ray_gun_zm` is a bad donor shell for this project
+The project also proved that `ray_gun_zm` still crashes with hidden first-person composition even when:
+- the gun model is tiny
+- the gun model is a stock BO2 model
+- or the gun model is effectively no-model
+
+So `ray_gun_zm` is no longer the active donor route.
+
+## What is still imperfect
+
+### Animation parity
+- Fire and reload are donor-animation approximations, not real BO3 Servant animation parity.
+- Current choices are tuned for feel, not final fidelity:
+  - staff-like fire
+  - PDW reload
+
+### Material fidelity
+- The model is no longer invisible or chrome, and the major surface holes are mostly fixed.
+- The remaining material problem is fidelity:
+  - some body colors are still muted compared to BO3
+  - some emissive/glow surfaces are still approximate, not authored-perfect
+
+### FX/presentation
+- The singularity has placeholder visible FX and lightning cues.
+- The logic works, but the presentation is still a BO2-safe approximation, not a BO3-authored black-hole package.
+
+## Active risk areas
+- Any change that touches the base survival FF or IPAK still requires a full game restart for trustworthy testing.
+- `mg08_zm` donor dependencies are noisier than a simpler shell, so image/material issues can still be harder to separate.
+- The current black-hole presentation is intentionally using stock T6 FX as a safe first pass.
+
+## Live tuning notes
+- Engine-side ammo is staged as `1/10` so the HUD reads `1/9` on this shell.
+- `.debug` is the supported way to enable script-usage and verbose state tracing.
 
 ## Next milestone
-Make equip/sprint/raise states stable (no camera flip) with:
-- correct camera/tag hierarchy
-- correct bind orientation
-- and a “known-good” state set we can regress-test automatically.
+Keep the current `mg08_zm` shell and improve:
+1. fire/reload/raise animation feel
+2. material fidelity, especially emissive surfaces
+3. black-hole presentation and polish
 
-See plan: `docs/roadmap.md`.
+See `docs/roadmap.md`.

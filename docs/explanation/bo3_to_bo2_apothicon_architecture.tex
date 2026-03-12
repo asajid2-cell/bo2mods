@@ -1,0 +1,579 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  pdftitle={Understanding the BO3 to BO2 Apothicon Servant Port Problem},
+  pdfauthor={Codex}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.3em,itemsep=0.3em}
+\setlist[enumerate]{topsep=0.3em,itemsep=0.3em}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{Understanding the BO3 to BO2 Apothicon Servant Port Problem\\\large Detailed architecture and failure analysis for \texttt{pluto\_t6\_full\_game}}
+\author{Prepared from the current repository state plus external modding references}
+\date{March 11, 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Purpose and the most important conclusion}
+
+This document explains what is actually happening in your current BO3-to-BO2 weapon port attempt, why the current Apothicon Servant probe is failing, and what architecture you need in your head if you want to stop guessing and start making deliberate progress.
+
+The most important conclusion is simple:
+
+\begin{enumerate}
+  \item You are hitting \textbf{two different failures}, not one.
+  \item The current GSC rewrite cannot solve the deeper problem because it is trying to fix an \textbf{init-time registration problem} at \textbf{player-spawn time}.
+  \item Even if registration were fixed, the current model and animation pairing is still structurally invalid because the BO3 IDG animations target a rig that the current BO2-side model does not have.
+\end{enumerate}
+
+That means this is \textbf{not} a case of ``one missing bone'' or ``one bad script call.'' It is an architecture mismatch between:
+
+\begin{itemize}
+  \item BO2/T6 zombies weapon registration lifecycle
+  \item BO2/T6 first-person rig limits and camera/tag contracts
+  \item BO3/T7 first-person weapon authoring assumptions
+  \item your current probe implementation, which mixes a fresh-name BO2 weapon experiment with a near-native BO3 animation experiment
+\end{itemize}
+
+\section{What you are trying to do, in plain language}
+
+Your stated goal is to emit a \emph{real} \path{apothicon_servant_zm} weapon on a BO2/Plutonium zombies runtime, using a donor weapon surface that behaves more like a ray-gun-family projectile weapon than like an assault rifle carrier. You also want the spawn logic reduced to only three responsibilities:
+
+\begin{enumerate}
+  \item register the weapon
+  \item grant \path{m1911_zm}
+  \item grant \path{apothicon_servant_zm}
+\end{enumerate}
+
+That goal is valid, but it contains several hidden assumptions:
+
+\begin{itemize}
+  \item that ``registering'' a zombies weapon table entry is the same thing as engine-level weapon registration
+  \item that if a weapon asset exists in a fastfile and a script table entry exists, \path{giveweapon()} should work
+  \item that if BO3 animations compile into T6 \path{xanim} assets, they are probably safe to play on the imported BO3 model
+  \item that a BO3 wonder weapon viewmodel can be made acceptable to BO2 by changing only a few weapondef fields
+\end{itemize}
+
+Those assumptions are the reason the work feels confusing. The engine is stricter than those mental models.
+
+\subsection{Useful terms}
+
+\textbf{Fresh-name weapon.} A truly new BO2/T6 weapon asset such as \path{apothicon_servant_zm}, not a renamed donor at the script level only.
+
+\textbf{Donor surface.} A known-good weapon envelope whose fields, asset references, or state-machine expectations are borrowed as a compatibility surface. In your current probe that donor is ray-gun-like.
+
+\textbf{Truth-alias carrier.} A stronger workaround than a donor surface. This means the engine still believes the weapon is a fully registered stock weapon, while you patch the model, anim, and behavior around it. Your repo previously used this idea for thundergun work.
+
+\textbf{Combined first-person rig.} A single first-person animated model that already contains the weapon bones, hands/arms, and important tags like camera and ADS anchors. In T6, this matters because many weapons use \path{viewmodel_hands_no_model}, which means the gun model itself must satisfy the first-person contract.
+
+\section{BO2/T6 and Plutonium architecture}
+
+\subsection{The BO2/T6 asset stack}
+
+At the asset level, BO2/T6 is not just ``a model plus a script.'' The important layers are:
+
+\begin{enumerate}
+  \item raw asset data on disk
+  \item linked fastfiles that package those assets
+  \item engine-side asset loading and registration
+  \item map- and mode-specific script tables that reference those assets
+  \item runtime grant, switch, and fire behavior
+\end{enumerate}
+
+OpenAssetTools documents that T6 zone files can emit not only \path{weapon}, but also \path{weapondef}, \path{weaponvariant}, and \path{weaponfull} assets.\footnote{\url{https://openassettools.dev/reference/zone-file.html}} That matters because it already tells you that ``weapon'' is only one part of a larger weapon-definition story.
+
+Your local T6 headers reinforce this. In \path{\_tmp\_T6\_Assets.h}, the important structs are:
+
+\begin{itemize}
+  \item \path{WeaponVariantDef}
+  \item \path{WeaponDef}
+  \item \path{WeaponFullDef}
+\end{itemize}
+
+And in \path{\_tmp\_ContentLoaderT6.cpp}, \path{ASSET_TYPE_WEAPON} is loaded as \path{WeaponVariantDef}. The practical implication is:
+
+\begin{quote}
+Seeing a weapon string in a fastfile, or even seeing a script table entry for that weapon, does \textbf{not} automatically mean the runtime has a fully usable weapon definition in the state required by \path{giveweapon()}.
+\end{quote}
+
+\subsection{Plutonium mod and script loading}
+
+Plutonium gives you mod-scoped fastfile loading and custom script loading, but those systems have their own ordering rules.
+
+Plutonium documents that T6 scripts can live under \path{\%localappdata\%\textbackslash Plutonium\textbackslash storage\textbackslash t6\textbackslash scripts}, and that custom T6 scripts need an \path{init()} or \path{main()} entry point.\footnote{\url{https://plutonium.pw/docs/modding/loading-mods/}} Plutonium also documents newer scripting features such as \path{replaceFunc()} and explains that custom-script \path{main()} runs before stock scripts, specifically so you can patch behavior before the stock code consumes it.\footnote{\url{https://plutonium.pw/docs/modding/gsc/new-scripting-features/}}
+
+This directly matters for your case. If a stock system reads weapon tables during early map initialization, then trying to modify those tables later on \path{spawned_player} is the wrong lifecycle point.
+
+Plutonium's changelog is also relevant here:
+
+\begin{itemize}
+  \item unsigned T6 fastfiles can be loaded when a mod is loaded and \path{fs\_game} is populated\footnote{\url{https://plutonium.pw/docs/changelog/}}
+  \item \path{weapon\_load\_order} exists so raw weapon assets can take precedence over fastfile-loaded ones\footnote{\url{https://plutonium.pw/docs/changelog/}}
+  \item \path{dump\_assets} can dump weapon and attachment assets for debugging\footnote{\url{https://plutonium.pw/docs/changelog/}}
+\end{itemize}
+
+So Plutonium is not the blocker by itself. It gives you useful tools. But those tools do not remove T6's internal expectations.
+
+\subsection{BO2 zombies weapon registration lifecycle}
+
+This is one of the most important pieces of the whole analysis.
+
+From the decompiled stock scripts in your repo:
+
+\begin{itemize}
+  \item \path{decompiled\_scripts/ZM/Core/maps/mp/zombies/\_zm\_weapons.gsc} calls \path{init\_weapons()} during its own \path{init()}
+  \item the map script, such as \path{decompiled\_scripts/ZM/Maps/Tranzit/maps/mp/zm\_transit.gsc}, sets up zombies-specific callbacks during \path{main()}
+  \item the normal player-spawn watcher in \path{\_zm\_weapons.gsc} is for player runtime behavior, not for base weapon registration
+\end{itemize}
+
+That means BO2 zombies weapon setup is front-loaded into the early map boot process. The stock architecture expects weapon inclusion and custom addition hooks to be defined \textbf{before} the weapon system completes its initialization pass.
+
+Your current mod script does this instead:
+
+\begin{itemize}
+  \item wait for \path{spawned\_player}
+  \item then call \path{include\_zombie\_weapon()}
+  \item then call \path{add\_zombie\_weapon()}
+  \item then clone donor metadata into \path{level.zombie\_weapons["apothicon\_servant\_zm"]}
+\end{itemize}
+
+This is almost certainly too late for the engine-side state that matters to \path{giveweapon()}.
+
+\subsection{Script awareness versus engine grantability}
+
+One of the easiest ways to get lost in T6 zombies modding is to blur these layers together:
+
+\begin{enumerate}
+  \item \textbf{Asset exists in fastfile.}
+  \item \textbf{Script knows the weapon name.}
+  \item \textbf{Zombies weapon tables contain the weapon entry.}
+  \item \textbf{Engine can resolve a valid weapondef/variant for grant and switch.}
+\end{enumerate}
+
+Those are not the same thing.
+
+Your repo history already found this with the older \path{weapondef\_unregistered} failures. A weapon can pass softer checks such as ``included'' or ``can use content'' while still failing the real grant path because the deeper engine-side weapon registration did not occur in the required way.
+
+\section{BO3/T7 first-person weapon authoring architecture}
+
+\subsection{What the BO3 IDG source bundle tells us}
+
+Your local BO3 source-side files are revealing:
+
+\begin{itemize}
+  \item \path{source\_data/\_midgetblaster/t7\_idgun.gdt}
+  \item \path{share/raw/zone\_source/idgun.zpkg}
+  \item \path{share/raw/zone\_source/t7\_idgun\_genesis.zpkg}
+  \item \path{xanim\_export/\_midgetblaster/black\_ops\_3/vm\_zod\_id\_gun\_*.xanim\_bin}
+  \item \path{model\_export/\_midgetblaster/weapons/t7/wpn\_t7\_zmb\_zod\_idg/wpn\_t7\_zmb\_zod\_idg\_view.xmodel\_bin}
+\end{itemize}
+
+From the GDT and bundle contents, the BO3 IDG is not just a model replacement. It comes with:
+
+\begin{itemize}
+  \item dedicated weapon definitions
+  \item dedicated scripts
+  \item dedicated first-person and third-person FX
+  \item a dedicated first-person animation set
+\end{itemize}
+
+That is the first reason a true Apothicon Servant port is much harder than a simple BO2 donor-surface swap.
+
+\subsection{What the BO3 weapon definition implies}
+
+The BO3 GDT shows several facts that matter:
+
+\begin{itemize}
+  \item \path{gunModel} is \path{wpn\_t7\_zmb\_zod\_idg\_view}
+  \item \path{viewmodelTag} is \path{tag\_weapon\_right}
+  \item \path{worldModelTagRight} is \path{tag\_weapon\_right}
+  \item \path{worldModelTagLeft} is \path{tag\_weapon\_left}
+  \item \path{handModel} is empty
+  \item it has dedicated muzzle, trail, and explosion FX
+  \item \path{parentWeaponName} is empty in the source weapon
+\end{itemize}
+
+I infer from these facts that BO3's first-person authoring contract is not the same as BO2's. In BO3, the IDG asset is authored with an explicit viewmodel tag convention and a richer camera-authoring environment. CoDMayaTools explicitly advertises full BO3 support, a camera animation toolkit, and BO3 camera export support.\footnote{\url{https://theenbywitch.github.io/CoDMayaTools/}}
+
+That strongly suggests the BO3 authoring pipeline assumes a richer first-person rig/camera contract than the older BO2/T6 runtime.
+
+\subsection{Why BO3 extraction pipelines matter}
+
+HydraX describes itself as an asset decompiler for BO3 Mod Tools intended to export asset types Treyarch did not fully provide with the mod tools.\footnote{\url{https://github.com/Scobalula/HydraX}} This matters because it explains why BO3 source-side workflows are often assembled from multiple export and reverse-engineering tools rather than from a single official, clean source format.
+
+That in turn means a BO3-to-BO2 port pipeline is often dealing with:
+
+\begin{itemize}
+  \item exported data
+  \item partially reconstructed source conventions
+  \item authoring assumptions that were valid in T7 but not in T6
+\end{itemize}
+
+\section{BO3 and BO2 compared directly}
+
+\begin{longtable}{p{0.24\textwidth}p{0.34\textwidth}p{0.34\textwidth}}
+\toprule
+\textbf{Topic} & \textbf{BO2/T6 reality} & \textbf{BO3/T7 reality} \\
+\midrule
+\endhead
+\textbf{Weapon registration} & Strongly tied to early map and mode initialization, especially in zombies. Script tables alone do not prove grantability. & Weapon assets and scripts are authored in a newer runtime with different assumptions; not directly portable by name. \\
+\textbf{First-person rig} & Tight first-person DObj constraints; practical hard cap around 160 bones for gun plus hands in the combined first-person object. & BO3 wonder-weapon rigs and anim sets can assume larger combined first-person skeletons and richer tag/camera setups. \\
+\textbf{Hand model contract} & Many weapons use \path{viewmodel\_hands\_no\_model}; when they do, the gun model must already satisfy the combined rig contract. & The IDG source weapon has empty \path{handModel}, which suggests a different authoring convention rather than BO2's exact combined-rig behavior. \\
+\textbf{Camera chain} & \path{tag\_view}, \path{tag\_ads}, \path{tag\_cambone}, and \path{tag\_camera} are structural, not cosmetic. Bad hierarchy or bind rotations can flip view basis. & BO3 tooling explicitly supports dedicated camera animation export. That points to a more explicit first-person camera authoring pipeline. \\
+\textbf{Animation compatibility} & T6 \path{XAnimParts} can compile and still fail semantically if the target rig is wrong, incomplete, or outside the expected channel set. & BO3 animations were authored against BO3 rig conventions and therefore need retargeting or rig reconstruction to behave in T6. \\
+\textbf{Packaging} & T6 via OAT can emit \path{weapon}, \path{weapondef}, \path{weaponvariant}, and \path{weaponfull}; fastfile presence alone is not the same as runtime acceptance. & BO3 source bundles often come through GDT, zone-source bundles, and extracted/exported assets with their own tooling ecosystem. \\
+\textbf{Gameplay parity} & Donor surfaces can get you acceptance, but they are not parity. & The real IDG has dedicated FX and scripts that go beyond a ray-gun-like surface. \\
+\bottomrule
+\end{longtable}
+
+\section{What your current repo is doing right now}
+
+\subsection{Current GSC behavior}
+
+The current script in \path{mods/bo3\_rev/scripts/mod\_i\_am\_mod.gsc} has the behavior you described, but with an important caveat:
+
+\begin{enumerate}
+  \item \path{init()} and \path{main()} both start the mod bootstrap
+  \item on player connect, the player gets a spawn watcher
+  \item on \path{spawned\_player}, after a short wait, the script:
+  \begin{itemize}
+    \item precaches \path{apothicon\_servant\_zm}
+    \item precaches \path{bo3\_rev\_idg\_view}
+    \item calls \path{include\_zombie\_weapon()}
+    \item calls \path{add\_zombie\_weapon()}
+    \item clones donor metadata into \path{level.zombie\_weapons}
+    \item grants \path{m1911\_zm}
+    \item grants \path{apothicon\_servant\_zm}
+    \item switches to \path{apothicon\_servant\_zm}
+  \end{itemize}
+\end{enumerate}
+
+So yes, the script has been simplified conceptually. But the simplification happened at the \emph{wrong lifecycle point}. It is still a spawn-time patch, not an early zombies-boot integration.
+
+\subsection{Current builder behavior}
+
+The probe builder in \path{\_build/build\_bo3\_rev\_idg\_probe.py} stages a fresh-name weapon, but it does so by cloning a BO2 ray gun surface and then swapping selected fields.
+
+The current staged weapon does all of the following:
+
+\begin{itemize}
+  \item \path{gunModel = bo3\_rev\_idg\_view}
+  \item \path{handModel = viewmodel\_hands\_no\_model}
+  \item \path{worldModel = weapon\_usa\_ray\_gun}
+  \item \path{ammoName = ray\_gun}
+  \item \path{clipName = ray\_gun}
+  \item \path{parentWeaponName = ray\_gun}
+  \item projectile and impact FX remain ray-gun-family
+  \item nearly every first-person animation field is pointed at \path{vm\_zod\_id\_gun\_*}
+\end{itemize}
+
+That means your current fresh-name weapon is not a pure IDG definition. It is a \textbf{ray-gun gameplay surface with an IDG model and IDG animation references}.
+
+\subsection{What the current fastfiles prove}
+
+The current build report shows that the mod fastfiles do successfully package:
+
+\begin{itemize}
+  \item the IDG viewmodel xmodel
+  \item the \path{vm\_zod\_id\_gun\_*} animation set
+  \item the fresh-name \path{apothicon\_servant\_zm} weapon asset
+\end{itemize}
+
+So the problem is not ``nothing is building.'' Things are building. The question is whether they satisfy T6's runtime contracts.
+
+\section{The hard evidence from the current asset set}
+
+\subsection{Current rig and animation counts}
+
+The strongest technical evidence in the repo is the actual mismatch between the staged model and the BO3 animation set:
+
+\begin{itemize}
+  \item \path{idg\_view.glb}: 143 nodes, 1 skin, 141 joints
+  \item union of \path{vm\_zod\_id\_gun\_*} animation bone references: 251 named bones
+  \item missing from the model relative to the animation union: 110 bones
+\end{itemize}
+
+Critical tags and anchors:
+
+\begin{itemize}
+  \item \path{tag\_weapon}: present in the model and referenced by the anims
+  \item \path{tag\_flash}: present in the model and referenced by the anims
+  \item \path{tag\_view}: missing from the model
+  \item \path{tag\_camera}: missing from the model
+  \item \path{tag\_cambone}: missing from the model
+  \item \path{tag\_torso}: missing from the model
+  \item \path{tag\_weapon\_left}: missing from the model
+  \item \path{tag\_weapon\_right}: missing from the model
+\end{itemize}
+
+This alone is enough to say the current model and animation set do not share the same skeleton contract.
+
+\subsection{Adding BO3 hands still does not save it}
+
+When the separate BO3 viewhands model is considered:
+
+\begin{itemize}
+  \item \path{bo3\_richtofen\_viewhands.glb}: 68 nodes, 1 skin, 66 joints
+  \item unique node union of IDG view plus BO3 hands: 211
+  \item overlap between the two skeleton name sets: 0
+  \item even after combining them, the animation union is still missing 45 bones
+\end{itemize}
+
+This is a devastating result for a literal port strategy, because:
+
+\begin{enumerate}
+  \item the combined BO3-side first-person skeleton still does not cover the full animation contract
+  \item 211 is already far beyond the practical T6 first-person bone budget
+\end{enumerate}
+
+\subsection{What the T6 bone budget means}
+
+Your own repo documentation already captured the practical wall: a T6 first-person DObj can only tolerate about 160 bones total for gun plus hands. That is why earlier experiments hit errors like:
+
+\begin{quote}
+\path{dobj for xmodel '<name>' has more than 160 bones}
+\end{quote}
+
+This has a brutal implication:
+
+\begin{quote}
+You cannot solve this by simply ``including all the BO3 bones.'' A literal BO3 combined first-person rig is not a valid T6 end state.
+\end{quote}
+
+\section{Why the current approach fails}
+
+\subsection{Failure A: wrong registration timing}
+
+The current script tries to perform zombies-weapon registration from inside the player-spawn loop. That is too late relative to how BO2 zombies initializes custom weapons.
+
+What your code is really doing is:
+
+\begin{itemize}
+  \item adding script-side metadata after the zombies weapon system has already gone through its normal init pass
+  \item hoping that later table mutation will retroactively create a fully valid engine-side weapon registration
+\end{itemize}
+
+That is not a safe assumption, and it matches the history of \path{weapondef\_unregistered} behavior already seen in the repo.
+
+\subsection{Failure B: mismatched rig contract}
+
+The current viewmodel uses \path{viewmodel\_hands\_no\_model}. In T6, that implies the gun model itself must satisfy the first-person skeleton, hands, and tag contract needed for animation playback and camera stability.
+
+But your current \path{bo3\_rev\_idg\_view} does not have:
+
+\begin{itemize}
+  \item the full arm and finger chain expected by the BO3 anims
+  \item the camera tag chain expected by T6
+  \item the left and right weapon tags expected by the BO3 source-side authoring
+\end{itemize}
+
+So the model is being asked to do a job it simply cannot do.
+
+\subsection{Failure C: literal BO3 animation import is not a valid endgame}
+
+Even if you fixed the tag omissions, the full BO3 animation contract still exceeds T6's first-person budget. This means the true solution is not ``import more of BO3.''
+
+The true solution is:
+
+\begin{quote}
+re-author or retarget the asset onto a BO2-compatible reduced rig that preserves the important behavior while staying under the T6 limit
+\end{quote}
+
+\subsection{Failure D: the current weapon is still semantically ray-gun-derived}
+
+The current fresh-name probe still inherits a ray-gun-family surface:
+
+\begin{itemize}
+  \item ray gun ammo pool
+  \item ray gun world model
+  \item ray gun projectile and explosion FX
+  \item ray gun ancestry in \path{parentWeaponName}
+\end{itemize}
+
+This is not wrong for a compatibility probe. In fact it is smart. But it means the probe should be treated as a \textbf{registration experiment}, not as proof that the real Apothicon Servant asset stack is almost working.
+
+\subsection{Failure E: not enough runtime proof for the current fresh-name path}
+
+One subtle but important point from the local logs: the older runtime evidence strongly supports the historical carrier and registration issues, but there is not yet strong fresh log evidence proving the current \path{apothicon\_servant\_zm} spawn-time path made it far enough to isolate the new failure cleanly.
+
+That means the current repo state already contains enough evidence to reject the architecture, but it does \textbf{not} yet give you a final, clean, single-run proof of the fresh-name path's exact failure point.
+
+\section{The correct mental model}
+
+\subsection{You are solving three separate gates}
+
+You should think of the weapon port as three gates, in order:
+
+\begin{enumerate}
+  \item \textbf{Registration gate:} can T6 zombies accept a fresh-name weapon early enough that \path{giveweapon()} sees it as valid?
+  \item \textbf{Rig gate:} can the first-person model satisfy T6's tag, camera, and bone-budget rules?
+  \item \textbf{Parity gate:} can the weapon then be made to behave and look like the BO3 IDG?
+\end{enumerate}
+
+The mistake in the current work is trying to push all three gates at once.
+
+\subsection{What donor surfaces are actually for}
+
+A donor surface is useful because it lets you isolate variables.
+
+If you borrow a ray gun surface, then a clean experiment is:
+
+\begin{itemize}
+  \item keep the donor animations
+  \item keep the donor rig expectations
+  \item change only the registration strategy
+\end{itemize}
+
+If that fails, the problem is registration.
+
+Then a second clean experiment is:
+
+\begin{itemize}
+  \item keep donor gameplay and donor animations
+  \item swap only the viewmodel mesh
+\end{itemize}
+
+If that fails, the problem is the model contract.
+
+Your current probe mixes in BO3 animations too early, so it muddies the result.
+
+\subsection{What \texttt{viewmodel\_hands\_no\_model} really implies}
+
+This field is not just a performance detail. In practice it says:
+
+\begin{quote}
+Do not attach a separate hand model; the viewmodel I am giving you already carries the hand-side contract.
+\end{quote}
+
+That is why it is dangerous to use \path{viewmodel\_hands\_no\_model} with a weapon-only or mostly-weapon-only imported model. The engine will accept the field, but the animation and camera assumptions become your responsibility.
+
+\section{What you are doing wrong today, stated bluntly}
+
+\begin{enumerate}
+  \item You are trying to solve an \textbf{init-time weapon-registration problem} from \textbf{spawn-time GSC}.
+  \item You are treating \path{level.zombie\_weapons["apothicon\_servant\_zm"]} as if it were equivalent to full engine registration.
+  \item You are feeding BO3 IDG animations to a model that is missing 110 bones from the animation union.
+  \item You are using \path{viewmodel\_hands\_no\_model} without providing a valid T6 combined first-person rig.
+  \item You are implicitly pursuing BO3 parity before proving BO2 acceptance.
+  \item You are still thinking of this as one bug, when it is at least two major incompatibility classes.
+\end{enumerate}
+
+\section{What the feasible path forward looks like}
+
+\subsection{Short-term experiment plan}
+
+\begin{tabularx}{\textwidth}{p{0.18\textwidth}p{0.28\textwidth}Yp{0.18\textwidth}}
+\toprule
+\textbf{Experiment} & \textbf{What changes} & \textbf{Why} & \textbf{Pass condition} \\
+\midrule
+E1: Fresh-name registration only & Register \path{apothicon\_servant\_zm} during early map init, but keep pure donor ray-gun model and donor ray-gun anims. & Isolates lifecycle and registration from art and animation. & \path{giveweapon()} and switch succeed with a pure donor surface. \\
+E2: Mesh acceptance only & Keep donor rig and donor anims; swap in an IDG-derived mesh that was explicitly rebuilt to satisfy the donor rig contract. & Tests whether the imported mesh is acceptable without mixing in BO3 animation semantics. & Weapon grants and switches, camera remains stable. \\
+E3: Reduced-rig animation path & Build a BO2-compatible reduced combined rig with required tags and under-budget bones; retarget essential IDG states onto it. & This is the real bridge between T7 source art and T6 runtime. & First-person animation plays without missing-bone or camera-basis failure. \\
+E4: Real behavior and FX & Replace donor projectile, trail, muzzle, and explosion behavior with IDG-specific equivalents as far as BO2 supports them. & Moves from acceptance to parity. & Visual and gameplay behavior approximate the real weapon. \\
+\bottomrule
+\end{tabularx}
+
+\subsection{What the final architecture should probably be}
+
+The most realistic end-state architecture is:
+
+\begin{enumerate}
+  \item \textbf{Early registration hook.} Use a custom script \path{main()} and, if needed, \path{replaceFunc()} or a full script-path override so that the zombies weapon addition happens before stock weapon initialization finishes.\footnote{\url{https://plutonium.pw/docs/modding/gsc/new-scripting-features/}}
+  \item \textbf{Reduced BO2-compatible combined rig.} Preserve only the essential first-person tags and the bones needed for the visible behavior.
+  \item \textbf{Retargeting, not literal import.} Retarget the IDG to that reduced rig. Do not try to play the native BO3 \path{vm\_zod\_id\_gun\_*} set on the current imported model.
+  \item \textbf{Parity phase after acceptance.} Once grant, switch, and stable first-person presentation work, then move on to projectile/FX/script parity.
+\end{enumerate}
+
+\subsection{Why your repo is already pointing in this direction}
+
+The existence of \path{\_build/rebuild\_viewmodel\_glb.py} is important. That script is conceptually much closer to the correct end-state because it is about synthesizing or repairing a BO2-style first-person skeleton with the right tags and camera chain.
+
+That is a better direction than the current probe path that simply copies \path{idg\_view.glb} and hopes the native BO3 animation set will line up.
+
+\section{Recommended implementation philosophy}
+
+If you want this project to become understandable instead of chaotic, keep these rules:
+
+\begin{enumerate}
+  \item Never test registration and animation changes in the same run unless registration is already proven.
+  \item Never interpret ``weapon asset exists in FF'' as proof that \path{giveweapon()} should work.
+  \item Never interpret ``animation compiled'' as proof that the model is valid for it.
+  \item Treat camera tags as hard structural requirements.
+  \item Treat bone budget as a design constraint, not as an error to be bypassed later.
+\end{enumerate}
+
+\section{Summary}
+
+You are not failing because you are missing some obscure single trick. You are failing because the current probe crosses incompatible contracts.
+
+The fresh-name BO2 zombies weapon problem needs to be solved at early init.
+
+The BO3 IDG first-person asset problem needs to be solved by retargeting or rebuilding onto a BO2-compatible reduced rig.
+
+Those are separate tasks. Once you separate them, the work becomes understandable:
+
+\begin{itemize}
+  \item registration first
+  \item rig acceptance second
+  \item BO3 parity third
+\end{itemize}
+
+That is the architecture you should carry forward.
+
+\appendix
+
+\section{Local repository evidence used for this analysis}
+
+\begin{longtable}{p{0.34\textwidth}p{0.58\textwidth}}
+\toprule
+\textbf{File} & \textbf{Why it matters} \\
+\midrule
+\endhead
+\path{mods/bo3_rev/scripts/mod_i_am_mod.gsc} & Shows that the current weapon registration attempt happens on \path{spawned_player}, not during early zombies weapon initialization. \\
+\path{_build/build_bo3_rev_idg_probe.py} & Shows that the fresh-name probe is a ray-gun-derived surface with IDG model and IDG animation references. \\
+\path{_build/bo3_rev_idg_probe/build_report.json} & Confirms what assets are actually being packaged into \path{mod.ff} and \path{mod_load.ff}. \\
+\path{_build/bo3_rev_idg_probe/weapons/apothicon_servant_zm} & Shows the actual staged weapondef-like raw data, including \path{handModel}, \path{parentWeaponName}, ray-gun ammo linkage, and BO3 animation references. \\
+\path{zone_dump/zone_raw/zm_tomb/weapons/ray_gun_zm} & Gives the stock BO2 donor reference used to understand what fields are inherited versus newly changed. \\
+\path{decompiled_scripts/ZM/Core/maps/mp/zombies/_zm_weapons.gsc} & Shows where zombies weapon initialization really happens in stock T6. \\
+\path{decompiled_scripts/ZM/Maps/Tranzit/maps/mp/zm_transit.gsc} & Shows how a map script wires custom weapon callbacks before stock weapon setup finishes. \\
+\path{docs/explanation/constraints-and-barriers.md} & Captures the T6 first-person bone budget and camera/tag contract findings. \\
+\path{docs/explanation/history-and-findings.md} & Captures the previous registration, lane, bone, and camera-failure history. \\
+\path{_tmp_T6_Assets.h} and \path{_tmp_ContentLoaderT6.cpp} & Show that T6 weapon loading and weapon-definition structure are deeper than a single string name or a single script table entry. \\
+\path{_build/rebuild_viewmodel_glb.py} & Indicates that the correct direction is BO2-compatible rig reconstruction or synthesis, not raw BO3 model reuse. \\
+\bottomrule
+\end{longtable}
+
+\section{External references}
+
+\begin{enumerate}
+  \item Plutonium docs, \emph{Loading Mods into Plutonium}: \url{https://plutonium.pw/docs/modding/loading-mods/}
+  \item Plutonium docs, \emph{New Scripting Features}: \url{https://plutonium.pw/docs/modding/gsc/new-scripting-features/}
+  \item Plutonium changelog: \url{https://plutonium.pw/docs/changelog/}
+  \item OpenAssetTools, \emph{What is OAT?}: \url{https://openassettools.dev/guide/what-is-oat.html}
+  \item OpenAssetTools, \emph{Zone Files}: \url{https://openassettools.dev/reference/zone-file.html}
+  \item CoDMayaTools project page: \url{https://theenbywitch.github.io/CoDMayaTools/}
+  \item HydraX project page: \url{https://github.com/Scobalula/HydraX}
+\end{enumerate}
+
+\end{document}

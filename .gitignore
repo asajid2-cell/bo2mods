@@ -79,11 +79,45 @@ _build/tomb_scripts/**
 _build/so_town_raw/**
 _build/tools/**
 _build/xanim_*/**
+_build/bo3_rev_idg_probe/output/**
+_build/bo3_rev_idg_probe/model_export/**
+_build/bo3_rev_idg_probe/materials/**
+_build/bo3_rev_idg_probe/images/**
+_build/bo3_rev_idg_probe/weapons/**
+_build/bo3_rev_idg_probe/xanim_export/**
+_build/bo3_rev_idg_probe/xmodel/**
+_build/bo3_rev_idg_probe/zone_source/**
+_build/bo3_rev_idg_probe/zone_raw/**
+_build/bo3_rev_idg_probe/unlinked_runtime/**
+_build/bo3_rev_idg_probe/idg_surface_bundle/**
+_build/bo3_rev_idg_probe/_tmp_idg_surface_project/**
+_build/bo3_rev_idg_probe/build_report.json
+_build/bo3_rev_idg_probe/_tmp_idg_source_contact.png
+_build/bo3_rev_idg_reduced/**
+_build/bo3_rev_idg_weapon_only/**
+_build/bo3_rev_idg_weapon_acceptance/**
+_build/bo3_rev_probe_cases/**
+_build/temp_disabled_mods/**
+_build/*.blend
+_build/tmp_blender_*.py
 
 # One-off scratch scripts at repo root
 _tmp_*
 README.txt
 .claude/
+
+# Native debug hook build artifacts
+native/**/bin/**
+native/**/*.obj
+native/**/*.exe
+native/**/*.dll
+native/**/*.log
+
+# LaTeX build byproducts
+docs/explanation/*.aux
+docs/explanation/*.log
+docs/explanation/*.out
+docs/explanation/*.toc
 
 # =========================================
 # Binary / proprietary asset artifacts

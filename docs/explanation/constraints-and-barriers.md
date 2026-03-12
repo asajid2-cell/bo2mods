@@ -1,68 +1,59 @@
-# Explanation: Constraints & Barriers (T7 → T6)
+# Constraints and Barriers
 
-This document explains the “invisible walls” you keep running into when trying to do a full BO3-quality port in BO2.
+This document explains the real constraints the BO3 Rev project hit.
 
-## 1) The T6 first-person bone cap (the 160-bone DObj limit)
-T6 has a hard limit on the number of bones in the first-person DObj:
-- gun model bones + hand model / viewhands bones must be ≤ 160
-- exceeding this fails with:
-  - `dobj for xmodel '<name>' has more than 160 bones`
+## 1. T6 first-person bone cap
+The T6 first-person DObj cap is still the hard wall:
+- combined first-person composition must stay under 160 bones
 
-Why this matters for a “full BO3” port:
-- The BO3 combined viewmodel rig can be ~133 bones by itself.
-- That leaves very little headroom for any additional viewhands/hand model bones.
+This is why the project moved away from:
+- full BO3 rig + separate hands
 
-Implication:
-- A literal “drop in BO3 rig + drop in BO3 hands” is usually impossible in T6 without **bone pruning / reweighting**.
+and toward:
+- reduced BO3-derived weapon-only rig
 
-## 2) Weapon registration / “weapondef_unregistered”
-T6 can refuse to grant weapons even when:
-- the weapon file exists
-- the zone contains the string name
+## 2. Fresh-name weapon identity barrier
+The project proved that the following can all be true at once:
+- registration code runs
+- inclusion tables show the weapon
+- the donor surface is valid
+- the engine still does not resolve a new weapon name
 
-Because:
-- weapondefs must be registered/included in the correct lifecycle window
-- “included” checks and “can use content” checks can still pass while the internal weapondef pointer is null-ish
+That is why `apothicon_servant_zm` is not the live shell today.
 
-This repo’s current workaround:
-- use a known registered carrier weapon (`ak74u_zm`) and patch its weaponfile fields to reference thundergun assets/anims.
-- drive “true thundergun behavior” via script watchers.
+## 3. Donor shell choice is not cosmetic
+The donor shell determines more than basic weapon stats.
 
-This is not “final port quality”; it is a **registration bypass** to unblock animation/model work.
+`ray_gun_zm` was proven to be structurally bad for this project because it still triggered first-person composition failures even when the visible gun model was tiny or stock.
 
-## 3) Viewmodel camera/tag contracts (why camera flips happen)
-T6 derives camera/view basis from a particular tag/bone hierarchy:
-- `tag_view`, `tag_ads`, `tag_cambone`, `tag_camera`
+That is why donor-shell selection is now treated as an architecture decision, not a cosmetic preference.
 
-If your imported rig:
-- has different parentage, or
-- uses different bind rotations, or
-- drives camera bones via torso motion during equip
+## 4. Material/IPAK contract matters
+Custom BO3-derived materials did not become stable until the build emitted and deployed a matching runtime IPAK.
 
-…then equipping the weapon can rotate the camera basis and feel like controls inverted.
+Before that, the project could:
+- compile
+- stage images
+- and still crash at runtime because the image package contract was incomplete
 
-This is a structural contract problem, not an “animation looks wrong” problem.
+## 5. BO3 authoring contracts are richer than BO2
+BO3 assets assume:
+- more bones
+- richer material/shader inputs
+- different first-person presentation assumptions
 
-See:
-- `docs/how-to/debug-viewmodel-flip.md`
+BO2 will accept parts of that contract, but not all of it unchanged.
 
-## 4) XAnimParts binary compatibility
-Even when you can “store” animation payloads in a fastfile, T6 is picky about:
-- pointer stream ordering
-- delta vs non-delta usage
-- quantization formats
+## 6. Client runtime introspection is risky on Plutonium
+There is native source in `native/dobj_probe/` for a shelved first-person DObj inspection hook.
 
-The repo keeps a format reference here:
-- `docs/reference/t6-xanimparts-format.md`
+The reason it is shelved:
+- client injection carries Plutonium anti-cheat risk outside safe local/LAN conditions
 
-## 5) What “full BO3-quality” realistically means here
-To get a true full port, you eventually need:
-- a correct per-bone curve encoder for T6 XAnimParts
-- a final rig architecture that respects:
-  - bone cap
-  - camera chain contracts
-  - weapon state machine expectations
-- stable packaging (no lane mismatch, no asset provenance ambiguity)
+So the default workflow remains:
+- GSC
+- FF/IPAK
+- build reports
+- runtime logs
 
-The current state is “pipeline can build and deploy” but “engine-level viewmodel contracts still being satisfied.”
-
+not client injection.

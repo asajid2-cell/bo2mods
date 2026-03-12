@@ -1,0 +1,56 @@
+{
+  "t6_bone_cap": 89,
+  "hands_keep_bones": [],
+  "required_bones": [
+    "tag_weapon",
+    "tag_flash"
+  ],
+  "optional_bones": [
+    "tag_view",
+    "tag_ads",
+    "tag_torso",
+    "tag_weapon_left",
+    "tag_cambone",
+    "tag_camera",
+    "tag_tube_back_left_animate",
+    "tag_tube_back_right_animate",
+    "tag_tube_front_left_animate",
+    "tag_tube_front_right_animate",
+    "tag_tube_mid_left_animate",
+    "tag_tube_mid_right_animate",
+    "tag_brass",
+    "tag_tentacle_tail_08_animate",
+    "tag_tentacle_tail_07_animate",
+    "tag_tentacle_tail_06_animate",
+    "tag_tentacle_tail_05_animate",
+    "tag_tentacle_tail_04_animate",
+    "tag_tentacle_tail_03_animate"
+  ],
+  "explicit_parent_overrides": {},
+  "explicit_weight_remap": {},
+  "fit_transform": {
+    "scale": [
+      0.72,
+      0.72,
+      0.72
+    ],
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "weapon_chain_limits": {
+    "tag_tentacle_back_left_": 4,
+    "tag_tentacle_back_right_": 4,
+    "tag_tentacle_front_left_": 4,
+    "tag_tentacle_front_right_": 4,
+    "tag_tentacle_top_left_": 4,
+    "tag_tentacle_top_right_": 4,
+    "tag_tentacle_bottom_left_": 4,
+    "tag_tentacle_bottom_right_": 4,
+    "tag_tentacle_mid_left_": 4,
+    "tag_tentacle_mid_right_": 4,
+    "tag_tentacle_tail_": 8
+  }
+}

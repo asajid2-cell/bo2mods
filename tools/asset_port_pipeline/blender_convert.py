@@ -33,6 +33,7 @@ def choose_blender_executable(configured: str) -> str:
     candidates = [configured]
     if configured.lower() == "blender":
         candidates += [
+            "C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe",
             "C:\\Program Files\\Blender Foundation\\Blender 4.1\\blender.exe",
             "C:\\Program Files\\Blender Foundation\\Blender 4.0\\blender.exe",
             "C:\\Program Files\\Blender Foundation\\Blender 3.6\\blender.exe",

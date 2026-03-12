@@ -1,40 +1,49 @@
-# BO3 → BO2 (T7 → T6) Asset Porting — Thundergun Pipeline
+# BO3 -> BO2 Asset Porting Workspace
 
-This repo tracks a *working, reproducible* porting pipeline to bring Black Ops 3 (T7) assets into Black Ops 2 (T6 / Plutonium), starting with the **Thundergun** and a target mod (**`zm_roguelike_panzer`**).
+This repo is a BO2/Plutonium modding workspace kept inside the game root so the tooling can build, unlink, relink, deploy, and validate fastfiles against the live runtime.
 
-It is intentionally set up as an **engineering notebook + build spine**:
-- `mods/*` contains gameplay scripts (GSC) that exercise the ported assets at runtime.
-- `_build/*` contains build/deploy/validation tooling (Python + PowerShell) that keeps experiments deterministic.
-- `docs/` contains in-depth documentation in **Diátaxis** structure (tutorials / how-to / reference / explanation).
+The current active lane is `mods/bo3_rev`: porting the BO3 Apothicon Servant into BO2 by combining:
+- an engine-recognized BO2 donor shell
+- a BO3-derived reduced first-person weapon rig
+- a BO3-to-BO2 material/IPAK translation path
+- BO3-inspired black-hole gameplay logic implemented in T6-safe GSC
 
-## What’s in scope
-- Porting *asset containers* (models, materials/images, xanims) into T6-fastfile shape.
-- Keeping runtime deterministic (base vs mod lanes, reset/audit tools).
-- Debugging the *engine contracts* that block “looks right” viewmodels (bone cap, camera/tag basis, registration barriers).
+## Current state
+- The live donor shell is `mg08_zm`.
+- The custom Servant viewmodel loads in-game without the old 160-bone crash.
+- The black-hole pull/kill logic works in BO2.
+- Demo/admin commands work:
+  - `.p`
+  - `.round`
+  - `.fast`
+  - `.hits`
+  - `.debug`
+- Remaining work is polish, not first proof:
+  - better animation parity
+  - better material/color fidelity
+  - better black-hole FX and presentation
 
-## What is not in this repo
-This repo does **not** include copyrighted game assets.
-You must provide your own dumps/extracts (T7 source + T6 baselines) and configure paths as described in `docs/`.
+## Repo role
+This repo is both:
+- a build/deploy spine
+- an engineering notebook of what was tried, what failed, and what was learned
 
-## Current status (high level)
-- The build pipeline can compile and deploy a patched `so_zsurvival_zm_transit.ff` + `.ipak`, and a runtime custom-xanim lane `mod_load.ff`.
-- Thundergun assets are present in-zone (materials/images/models) and weapondefs are patched via a “truth alias” carrier weapon (for T6 registration constraints).
-- **Active blocker:** first-person viewmodel behavior on equip (camera orientation / “flip behind you”) is still being debugged.
+Tracked source lives mainly in:
+- `mods/bo3_rev/`
+- `_build/`
+- `tools/asset_port_pipeline/`
+- `docs/`
+- `native/dobj_probe/` (source only; not part of the normal safe workflow)
 
-Details: `docs/status.md`.
+Generated FF/IPAK/GLB/output trees are intentionally ignored.
 
-## Quick start (dev lane)
-See the full, reproducible flow in `docs/tutorials/getting-started.md`.
+## Asset note
+This repo does not ship copyrighted BO2/BO3 game assets. You must provide your own extracted baselines and source dumps.
 
-Common commands:
-```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
-python _build/two_phase_build.py
-```
-
-## Documentation
-Start here: `docs/README.md`.
+## Start here
+- Docs index: `docs/README.md`
+- Current project status: `docs/status.md`
+- Build/deploy loop: `docs/how-to/build-and-deploy.md`
 
 ## Credits
-Docs structure uses the Diátaxis framework: see `docs/credit.md`.
-
+Docs structure uses the Diataxis framework: `docs/credit.md`

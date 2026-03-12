@@ -1,39 +1,70 @@
 # Reference: Repo Layout
 
-This repo is intentionally “inside the game root” because the toolchain expects to read/write:
-- fastfiles (`zone/all`)
-- Plutonium storage mods (`%LOCALAPPDATA%/Plutonium/storage/t6`)
-- OAT tooling paths
+This repo is intentionally inside the BO2 game root because the tooling reads and writes live fastfile paths, Plutonium storage paths, and extracted asset trees.
 
-Only a curated set of **source** files are tracked in Git. Everything else is runtime/build output.
+Only source and documentation should be tracked. Generated FF/IPAK/GLB/output trees should not.
 
-## Tracked directories/files (core)
-- `mods/`
-  - The mod(s) used to exercise runtime behavior.
-  - Source scripts and text assets only; built `.ff/.ipak` outputs are ignored.
-- `_build/`
-  - The “build spine” and debug tooling used for deterministic iteration:
-    - patch → preflight → compile → deploy → verify
-    - runtime reset/audit/health checks
-    - format probes / analyzers / validators
-  - Generated dumps/exports are ignored.
-- `tools/asset_port_pipeline/`
-  - The reusable pipeline library (more general than the `_build/` integration scripts).
-- `docs/`
-  - Documentation set (Diátaxis).
-- `README.md`
-  - Top-level project entry point.
-- `.gitignore`
-  - The guardrail that prevents committing proprietary/binary outputs.
+## Core tracked areas
 
-## High-churn / not meant for Git
-- `zone/`, `zone_dump/`, `sound/`, `video/` (game installs and dumps)
-- `_build/panzer_work/` outputs, `_build/asset_port_pipeline/` output trees, and most `_build/*` experiment/output dirs
-- `mods/**/zone/**` (built mod fastfiles/ipaks)
-- `mods/__disabled__*` folders created by runtime lane tools
+### `mods/bo3_rev/`
+Current active mod source.
 
-## Why we keep `_build/` scripts in-repo
-These scripts are the “brains” for reproducible iteration:
-- they validate fastfile integrity (avoid silent “it built but isn’t loaded” states)
-- they enforce lane policies (don’t accidentally poison base runtime)
-- they emit manifests that make failures debuggable
+Tracked here:
+- raw GSC source
+- GSC templates
+
+Ignored here:
+- built `zone/all` FF/IPAK outputs
+
+### `_build/`
+Current orchestration and build helpers.
+
+Important current source files:
+- `build_bo3_rev_idg_probe.py`
+- `run_bo3_rev_probe_case.py`
+- `build_bo3_rev_idg_reduced_rig.py`
+- `build_bo3_rev_idg_weapon_only_rig.py`
+- `build_bo3_rev_donor_pose_preview.py`
+
+Generated output trees under `_build/bo3_rev_*` are intentionally ignored.
+
+### `tools/asset_port_pipeline/`
+Reusable conversion and translation helpers.
+
+Important current additions:
+- `blender_idg_reduce_worker.py`
+- `blender_idg_preview_worker.py`
+- `blender_donor_pose_preview_worker.py`
+- `idg_reduced_rig_manifest.json`
+- `idg_weapon_only_rig_manifest.json`
+- `idg_weapon_acceptance_rig_manifest.json`
+
+### `native/dobj_probe/`
+Source for a shelved local runtime hook experiment used to inspect first-person DObj failures.
+
+Source is tracked.
+Built binaries, logs, and object files are ignored.
+
+### `docs/`
+Project documentation.
+
+This now documents the BO3 Rev Apothicon Servant path as the active lane.
+
+## High-churn generated areas
+These should not be committed:
+- `zone/`
+- `zone_dump/`
+- `_build/bo3_rev_idg_probe/` generated subtrees
+- `_build/bo3_rev_idg_reduced/`
+- `_build/bo3_rev_idg_weapon_only/`
+- `_build/bo3_rev_idg_weapon_acceptance/`
+- `_build/bo3_rev_probe_cases/`
+- `mods/**/zone/**`
+
+## Why `_build/` scripts stay in Git
+The `_build` scripts are not throwaway output. They are the reproducible logic that:
+- stages donor shells
+- translates materials/images
+- compiles runtime FF/IPAK outputs
+- deploys to the correct lane
+- writes reports that explain what each run actually did

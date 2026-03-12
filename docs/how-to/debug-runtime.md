@@ -1,115 +1,97 @@
-# How-to: Debug Runtime (Lanes, Mods, Provenance)
+# How-to: Debug Runtime Provenance
 
-Most “random” failures in this project were actually **runtime provenance** failures:
-- the game read a fastfile from a different lane than the one you built
-- multiple mods were enabled and fought over the same asset names
-- baseline fastfiles were overwritten and never restored
+Most "random" failures in this repo turned out to be provenance problems:
+- wrong mod lane
+- stale base FF/IPAK state
+- cached xmodels/materials
+- a build report that did not match the runtime actually under test
 
-This guide is the shortest path to proving what is loaded.
-
-## 1) Reset runtime lanes
-Run from repo root (`z:\\Games\\pluto_t6_full_game`):
+## 1. Reset runtime lanes
+From repo root:
 
 Clean lane:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
 ```
 
-Server-safe lane (explicit intent alias for clean):
+Server-safe lane:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
 ```
 
-Dev lane (one mod only):
+Dev lane:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "bo3_rev"
 ```
 
-Audit (no mutations):
+Audit lane:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode audit
 ```
 
-### Recommended loops
-Before joining public servers (guarantee nothing local can interfere):
-```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
-```
+## 2. Trust the build tag first
+The live script logs a build tag on startup.
 
-Before local testing (make the mod show up + be loadable):
-```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
-python _build/two_phase_build.py
-```
+Before drawing conclusions, verify:
+- the build tag in-game
+- the build tag in `_build/bo3_rev_idg_probe/build_report.json`
+- the rendered raw script at `mods/bo3_rev/scripts/mod_i_am_mod.gsc`
 
-After you’re done testing and want to go back to servers:
-```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
-```
+If those do not match, stop there. You are debugging the wrong build.
 
-## 2) Read the runtime_reset report
-Each run emits:
-- `_build/runtime_reset/<timestamp>/report.json`
+## 3. Know what a good live proof looks like
+For the current MG08 donor path, good proof means:
+- `probe=mg08_zm`
+- the override fields resolve to the staged values
+- the Servant model is visible
+- no `dobj ... has more than 160 bones` crash
 
-Key fields to trust first:
-- active mods in game path and storage path
-- whether `so_zsurvival_zm_transit.ff` is baseline or modified
-- existence of “autoload remnants” in storage
+## 4. Common failure signatures
 
-Note on mods:
-- `clean` / `server` **quarantines mod folders** (moves them out of the `mods/` directory) so they:
-  - do not appear in the in-game mod list
-  - cannot be accidentally loaded when you join servers
-- `dev` restores exactly one mod folder into `mods/` and quarantines the rest
+### `clip=<undef>` and `max=<undef>`
+This was the fresh-name weapon barrier.
 
-Where quarantine goes:
-- Storage mods quarantine:
-  - `%LOCALAPPDATA%\\Plutonium\\storage\\t6\\_runtime_quarantine\\mods\\<timestamp>\\`
-- Game install mods quarantine (only if enabled):
-  - `z:\\Games\\pluto_t6_full_game\\_build\\runtime_quarantine\\game_mods\\<timestamp>\\`
+Meaning:
+- zombies registration may have succeeded
+- but the engine still did not resolve the weapon identity into a real weapon handle
 
-By default, quarantine is applied to the **Plutonium storage** mods directory (this is the one that affects the in-game mod list).
-If you also have runtime mods living under the game install `mods/` directory and need to quarantine/restore them too, pass:
-```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server -ManageGameMods
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer" -ManageGameMods
-```
+Do not keep debugging materials or bones if you are still on this error.
 
-## 3) Health check the lane
-```powershell
-python _build/runtime_health_check.py
-python _build/runtime_health_check.py --require-tg
-```
+### `dobj for xmodel 'c_zom_*_viewhands' has more than 160 bones`
+This was the first-person composition/bone-budget failure.
 
-## 4) Prove which fastfiles the engine loaded
-In `console_zm.log`, look for:
-- `Loading fastfile mod`
-- `Loading fastfile mod_load`
-- `Loading fastfile so_zsurvival_zm_transit`
+Important history:
+- it was not just the BO3 mesh
+- `ray_gun_zm` still crashed even with tiny stock or no-model gun paths
 
-If the game is loading `so_zsurvival_zm_transit` from base lane while you deployed only to mod lane, you will not see your changes.
+This is why the project moved away from the Ray Gun donor.
 
-## 5) Common failure signatures
-`weapondef_unregistered`
-- Your weapon asset may exist in the FF, but T6 hasn’t registered it in time.
-- Workaround in this repo is the truth-alias carrier system.
+### Invisible weapon but valid give path
+Likely causes:
+- placeholder material path
+- missing or bad IPAK
+- bad transform/origin fit
 
-`dobj ... has more than 160 bones`
-- You exceeded the first-person DObj cap (gun + hands/viewhands).
-- Fix is architectural, not “try another giveweapon”.
+### Access violation after real BO3 materials were introduced
+This was the IPAK contract failure.
 
-`all weapons invisible (no hands, no gun), but ammo decreases`
-- Most often: you accidentally shipped **stubbed viewhands** (a prior experiment wrote
-  `c_zom_*_viewhands` overrides into `_build/panzer_work/so_zsurvival_zm_transit/`).
-- Fix:
-  - rebuild with stub viewhands disabled (default):
-    ```powershell
-    $env:ROGUE_TG_STUB_ZM_VIEWHANDS="0"
-    python _build/two_phase_build.py
-    ```
-  - fully restart the game (xmodels can be cached).
+The current builder now emits and verifies the runtime IPAK on purpose to prevent this exact class of crash.
 
-## 6) Don’t trust hot reload for xmodels
-xmodels and viewmodel rigs can be cached.
-If you are debugging viewmodel orientation or camera chains:
-- fully restart the game between tests
+### `Couldn't find animtree 'mechz_claw'`
+That was old contaminated survival-zone content from a prior lane. It is not a normal BO3 Rev error and usually means the runtime source/deploy lane was polluted.
+
+### `Unresolved external: wait_network_frame`
+That was a raw-script external mismatch in `mod_i_am_mod.gsc`. The fix was to remove the unsupported call and use safe waits.
+
+## 5. Full restart vs map restart
+Use a full game restart for:
+- xmodel changes
+- material/image changes
+- base-lane FF/IPAK changes
+
+Only use map restart for narrow raw-script-only tests when you are sure nothing else changed.
+
+## 6. Avoid client injection in the normal loop
+There is native source under `native/dobj_probe/`, but it is intentionally not part of the default workflow because Plutonium anti-cheat/client-injection risk is real.
+
+Treat the native hook as shelved R&D, not normal runtime debugging.

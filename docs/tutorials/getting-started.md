@@ -1,67 +1,80 @@
-# Tutorial: Getting Started (Dev Loop)
+# Tutorial: Getting Started (Current BO3 Rev Loop)
 
-This tutorial gets you from a fresh clone to a deterministic “build → deploy → test” loop, without contaminating base runtime.
+This is the shortest path from clone to a working local BO3 Rev test loop.
 
-## 0) Legal / asset note
-This repo does **not** ship copyrighted assets. The pipeline assumes you have:
-- A T6/BO2 runtime (Plutonium) installed
-- Your own T6 baseline zone dumps / extracted assets
-- Your own T7/BO3 dumps for the assets you want to port
+## 0. Requirements
+You need:
+- the repo located at `z:\Games\pluto_t6_full_game`
+- BO2/Plutonium installed locally
+- your own BO2 baseline dumps and BO3 source dumps
+- Blender installed for rig/model conversion steps
 
-## 1) Clone location and path expectations
-Many scripts currently assume the repo is located at:
-`z:\Games\pluto_t6_full_game`
+This repo does not ship copyrighted BO2/BO3 assets.
 
-If you relocate the repo, update hard-coded paths in `_build/*.py` (search for `z:\\Games\\pluto_t6_full_game`).
+## 1. Start from a clean runtime lane
+From repo root:
 
-## 2) Choose your “lane”
-This project is strict about runtime lanes:
-- **clean lane**: baseline gameplay; no dev mods enabled
-- **dev lane**: exactly one mod enabled for controlled testing
-- **server lane**: explicit “I’m joining servers” alias for clean
-
-Use the lane tool:
 ```powershell
-# From repo root: z:\Games\pluto_t6_full_game
 powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode clean
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer"
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode server
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "bo3_rev"
 ```
 
-If you keep runtime mods under the game install `mods/` directory (less common) and want them quarantined too:
+If you also keep live mods under the game-install `mods/` folder and want them quarantined:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "zm_roguelike_panzer" -ManageGameMods
+powershell -ExecutionPolicy Bypass -File "_build/runtime_reset.ps1" -Mode dev -DevMod "bo3_rev" -ManageGameMods
 ```
 
-## 3) Run the build spine
-Run the build/deploy pipeline:
+## 2. Build the current working Servant case
+The active case is the MG08 donor path:
+
 ```powershell
-python _build/two_phase_build.py
+python _build/run_bo3_rev_probe_case.py mg08_v2_bo3_weapon_only
 ```
 
-What it does (high-level):
-- Resets/validates runtime state
-- Builds weapondefs for the truth-alias carrier + thundergun entries
-- Ensures the viewmodel GLB is structurally valid
-- Stages xanim exports and compiles a runtime custom-xanim fastfile
-- Builds patched `so_zsurvival_zm_transit.ff` + `.ipak`
-- Deploys to mod lane (and optionally base lane)
+What this does:
+- builds the donor-shell Servant weapon
+- stages the reduced BO3-derived weapon model
+- stages translated materials/images
+- compiles and deploys `so_zsurvival_zm_transit.ff`
+- compiles and deploys `so_zsurvival_zm_transit.ipak`
+- compiles and deploys `mod_load.ff`
+- renders the raw script from `mods/bo3_rev/scripts/mod_i_am_mod.gsc.in`
 
-## 4) Launch and reproduce
-1. Launch Plutonium T6.
-2. Load the mod and map.
-3. Use the mod’s `.tg` path (or whichever debug path you’re currently using) to equip the thundergun carrier.
+## 3. Restart the game fully
+Because the current working path touches the base survival FF and IPAK, a full game restart is the safe default after rebuilding.
 
-## 5) Collect the right log evidence
-When something fails, capture:
-- `console_zm.log` lines around the failure
-- `[ROGUE]` event lines (these are designed to be “gate traces”)
-- The build manifest:
-  - `_build/reports/last_tg_build_manifest.json`
-  - `_build/reports/preflight_so_zsurvival_zm_transit_*.json`
+Do not rely on `map_restart` for:
+- xmodel changes
+- material/IPAK changes
+- base-lane survival FF changes
 
-## 6) Next docs to read
-- `docs/status.md` (what is currently blocked and why)
-- `docs/how-to/build-and-deploy.md`
+## 4. Verify the loaded build
+On first load, check the BO3 Rev log line in console:
+- build tag
+- weapon shell
+- current model asset
+
+You want the `bo3_rev` script output to match the build you just ran.
+
+## 5. Test the current command layer
+Useful commands:
+- `.p 10000`
+- `.round 15`
+- `.fast`
+- `.hits 50`
+- `.debug`
+
+## 6. What success looks like
+The current good baseline is:
+- you spawn with `mg08_zm`
+- the model is the Servant, not a stock MG08
+- the weapon fires the custom singularity logic
+- zombies get pulled inward and die
+- there is no `dobj ... has more than 160 bones` crash
+
+## 7. If something goes wrong
+Go here next:
 - `docs/how-to/debug-runtime.md`
 - `docs/how-to/debug-viewmodel-flip.md`
+- `docs/explanation/history-and-findings.md`
