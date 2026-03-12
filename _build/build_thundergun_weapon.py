@@ -67,7 +67,12 @@ FORCE_CLEAR = set()
 def get_force_set(model_mode, gun_model_override=None, world_model_override=None):
     force = {}
     if model_mode == "base":
-        # Keep donor weapon fields untouched for pure donor-clone probing.
+        # Keep donor weapon fields untouched for pure donor-clone probing,
+        # unless an explicit CLI override was provided.
+        if gun_model_override is not None and gun_model_override != "":
+            force["gunModel"] = gun_model_override
+        if world_model_override is not None and world_model_override != "":
+            force["worldModel"] = world_model_override
         return force
 
     force["displayName"] = "WEAPON_THUNDERGUN"
@@ -86,7 +91,7 @@ def get_force_set(model_mode, gun_model_override=None, world_model_override=None
         force["worldModel"] = world_model_override
     return force
 
-SAFE_ANIMS = {
+DEFAULT_SAFE_ANIMS = {
     "idle": "viewmodel_minigun_t6_idle",
     "fire": "viewmodel_minigun_t6_fire",
     "pullout": "viewmodel_minigun_t6_pullout",
@@ -141,6 +146,58 @@ IDLE_BO3_FIELDS = {
     "idleAnim": "vm_thunder_gun_idle",
     "emptyIdleAnim": "vm_thunder_gun_idle",
 }
+
+
+def _bo3_anim_for_field(field_name):
+    f = (field_name or "").lower()
+    if f in ("idleanim", "emptyidleanim", "flourishanim", "detonateanim", "rechamberanim"):
+        return "vm_thunder_gun_idle"
+    if "fire" in f or "shot" in f:
+        if "ads" in f:
+            return "vm_thunder_gun_fire_ads"
+        return "vm_thunder_gun_fire"
+    if "reload" in f:
+        return "vm_thunder_gun_reload_empty"
+    if f in ("raiseanim", "altraiseanim", "emptyraiseanim"):
+        return "vm_thunder_gun_pullout"
+    if f in ("dropanim", "altdropanim", "emptydropanim"):
+        return "vm_thunder_gun_putaway"
+    if f == "firstraiseanim":
+        return "vm_thunder_gun_first_raise"
+    if f == "quickraiseanim":
+        return "vm_thunder_gun_pullout_quick"
+    if f == "quickdropanim":
+        return "vm_thunder_gun_putaway_quick"
+    if f == "sprintinanim":
+        return "vm_thunder_gun_sprint_in"
+    if f == "sprintloopanim":
+        return "vm_thunder_gun_sprint_loop"
+    if f == "sprintoutanim":
+        return "vm_thunder_gun_sprint_out"
+    if f in ("crawlinanim",):
+        return "vm_thunder_gun_crawl_in"
+    if f in ("crawlforwardanim",):
+        return "vm_thunder_gun_crawl_f"
+    if f in ("crawlbackanim",):
+        return "vm_thunder_gun_crawl_b"
+    if f in ("crawlrightanim",):
+        return "vm_thunder_gun_crawl_r"
+    if f in ("crawlleftanim",):
+        return "vm_thunder_gun_crawl_l"
+    if f in ("crawloutanim",):
+        return "vm_thunder_gun_crawl_out"
+    if f in ("dtp_in", "slide_in"):
+        return "vm_thunder_gun_slide_in"
+    if f in ("dtp_loop",):
+        return "vm_thunder_gun_slide_loop"
+    if f in ("dtp_out",):
+        return "vm_thunder_gun_slide_out"
+    if f in ("adsupanim", "adsupotherscopeanim"):
+        return "vm_thunder_gun_ads_base_up"
+    if f in ("adsdownanim",):
+        return "vm_thunder_gun_ads_base_down"
+    # Conservative fallback for remaining state slots: keep BO3 namespace.
+    return "vm_thunder_gun_idle"
 
 
 def parse_weapon(path):
@@ -218,83 +275,122 @@ def _is_safe_weapon_alias(alias):
     return bool(re.match(r"^[A-Za-z0-9_]+$", alias or ""))
 
 
-def _pick_safe_anim(field_name):
+def _pairs_to_map(pairs):
+    out = {}
+    for k, v in pairs:
+        out[k] = v
+    return out
+
+
+def build_safe_anims(base_pairs):
+    """Derive safe fallback anim refs from the chosen base weapon."""
+    base = _pairs_to_map(base_pairs)
+    safe = dict(DEFAULT_SAFE_ANIMS)
+
+    def choose(*keys):
+        for key in keys:
+            val = base.get(key, "")
+            if val:
+                return val
+        return ""
+
+    resolved = {
+        "idle": choose("idleAnim", "emptyIdleAnim", "raiseAnim"),
+        "fire": choose("fireAnim", "lastShotAnim", "adsFireAnim"),
+        "pullout": choose("raiseAnim", "firstRaiseAnim", "quickRaiseAnim"),
+        "putaway": choose("dropAnim", "quickDropAnim"),
+        "pullout_quick": choose("quickRaiseAnim", "raiseAnim"),
+        "putaway_quick": choose("quickDropAnim", "dropAnim"),
+        "sprint_in": choose("sprintInAnim", "raiseAnim"),
+        "sprint_loop": choose("sprintLoopAnim", "idleAnim"),
+        "sprint_out": choose("sprintOutAnim", "dropAnim", "idleAnim"),
+        "ads_up": choose("adsUpAnim", "raiseAnim"),
+        "ads_down": choose("adsDownAnim", "dropAnim"),
+    }
+
+    for key, value in resolved.items():
+        if value:
+            safe[key] = value
+    return safe
+
+
+def _pick_safe_anim(field_name, safe_anims):
     f = field_name.lower()
     if "sprintin" in f:
-        return SAFE_ANIMS["sprint_in"]
+        return safe_anims["sprint_in"]
     if "sprintloop" in f:
-        return SAFE_ANIMS["sprint_loop"]
+        return safe_anims["sprint_loop"]
     if "sprintout" in f:
-        return SAFE_ANIMS["sprint_out"]
+        return safe_anims["sprint_out"]
     if "adsup" in f:
-        return SAFE_ANIMS["ads_up"]
+        return safe_anims["ads_up"]
     if "adsdown" in f:
-        return SAFE_ANIMS["ads_down"]
+        return safe_anims["ads_down"]
     if "quickraise" in f:
-        return SAFE_ANIMS["pullout_quick"]
+        return safe_anims["pullout_quick"]
     if "quickdrop" in f:
-        return SAFE_ANIMS["putaway_quick"]
+        return safe_anims["putaway_quick"]
     if "raise" in f:
-        return SAFE_ANIMS["pullout"]
+        return safe_anims["pullout"]
     if "drop" in f:
-        return SAFE_ANIMS["putaway"]
+        return safe_anims["putaway"]
     if "fire" in f:
-        return SAFE_ANIMS["fire"]
+        return safe_anims["fire"]
     if "lastshot" in f:
-        return SAFE_ANIMS["fire"]
+        return safe_anims["fire"]
     # Everything else should stay safe and non-null.
-    return SAFE_ANIMS["idle"]
+    return safe_anims["idle"]
 
 
-def fill_empty_anim_fields(pairs):
-    """Force-fill empty anim fields with safe existing minigun anim refs."""
+def fill_empty_anim_fields(pairs, safe_anims):
+    """Force-fill empty anim fields with safe existing base-weapon anim refs."""
     out = []
     filled = 0
     for k, v in pairs:
         if k in ANIM_FIELDS and not v:
-            out.append((k, _pick_safe_anim(k)))
+            out.append((k, _pick_safe_anim(k, safe_anims)))
             filled += 1
         else:
             out.append((k, v))
     return out, filled
 
 
-def apply_probe_profile(pairs):
-    """Map states to visibly distinct but safe minigun clips for state-path probing."""
+def apply_probe_profile(pairs, safe_anims):
+    """Map states to visibly distinct but safe base-weapon clips for state-path probing."""
     out = []
     changed = 0
 
     def probe_for(k):
         f = k.lower()
         if "adsup" in f:
-            return SAFE_ANIMS["ads_up"]
+            return safe_anims["ads_up"]
         if "adsdown" in f:
-            return SAFE_ANIMS["ads_down"]
+            return safe_anims["ads_down"]
         if "ads" in f and "fire" in f:
-            return SAFE_ANIMS["fire"]
+            return safe_anims["fire"]
         if "sprintin" in f:
-            return SAFE_ANIMS["sprint_in"]
+            return safe_anims["sprint_in"]
         if "sprintloop" in f:
-            return SAFE_ANIMS["sprint_loop"]
+            return safe_anims["sprint_loop"]
         if "sprintout" in f:
-            return SAFE_ANIMS["sprint_out"]
+            return safe_anims["sprint_out"]
         if "crawl" in f:
-            return SAFE_ANIMS["sprint_loop"]
+            return safe_anims["sprint_loop"]
         if "slide" in f or "dtp" in f or "mantle" in f:
-            return SAFE_ANIMS["pullout_quick"]
+            return safe_anims["pullout_quick"]
         if "reload" in f:
-            return SAFE_ANIMS["putaway"]
+            return safe_anims["putaway"]
         if "raise" in f:
-            return SAFE_ANIMS["pullout"]
+            return safe_anims["pullout"]
         if "drop" in f or "putaway" in f:
-            return SAFE_ANIMS["putaway"]
+            return safe_anims["putaway"]
         if "quickraise" in f:
-            return SAFE_ANIMS["pullout_quick"]
+            return safe_anims["pullout_quick"]
         if "quickdrop" in f:
-            return SAFE_ANIMS["putaway_quick"]
+            return safe_anims["putaway_quick"]
         if "fire" in f or "shot" in f:
-            return SAFE_ANIMS["fire"]
-        return SAFE_ANIMS["idle"]
+            return safe_anims["fire"]
+        return safe_anims["idle"]
 
     for k, v in pairs:
         if k in ANIM_FIELDS:
@@ -337,6 +433,33 @@ def apply_hybrid_idle_profile(pairs):
     return out, changed
 
 
+def apply_bo3_full_profile(pairs):
+    """Map all animation fields into vm_thunder_gun_* namespace (no donor anim refs)."""
+    out = []
+    changed = 0
+    for k, v in pairs:
+        if k in ANIM_FIELDS:
+            nv = _bo3_anim_for_field(k)
+            if nv != v:
+                changed += 1
+            out.append((k, nv))
+        else:
+            out.append((k, v))
+    return out, changed
+
+
+def validate_no_donor_anim_refs(pairs):
+    """Return list of donor/non-BO3 anim refs still present in animation fields."""
+    bad = []
+    for k, v in pairs:
+        if k not in ANIM_FIELDS or not v:
+            continue
+        if v.startswith("vm_thunder_gun_"):
+            continue
+        bad.append((k, v))
+    return bad
+
+
 def apply_optional_field_overrides(
     pairs,
     ammo_name=None,
@@ -344,12 +467,21 @@ def apply_optional_field_overrides(
     hud_icon=None,
     kill_icon=None,
     hand_model=None,
+    parent_weapon=None,
     clear_camo=False,
+    field_overrides=None,
 ):
     out = []
     changed = 0
+    if field_overrides is None:
+        field_overrides = {}
     for k, v in pairs:
-        if k == "ammoName" and ammo_name is not None:
+        if k in field_overrides:
+            nv = field_overrides[k]
+            if v != nv:
+                changed += 1
+            out.append((k, nv))
+        elif k == "ammoName" and ammo_name is not None:
             if v != ammo_name:
                 changed += 1
             out.append((k, ammo_name))
@@ -373,6 +505,10 @@ def apply_optional_field_overrides(
             if v != hand_model:
                 changed += 1
             out.append((k, hand_model))
+        elif k == "parentWeaponName" and parent_weapon is not None:
+            if v != parent_weapon:
+                changed += 1
+            out.append((k, parent_weapon))
         elif k == "camo" and clear_camo:
             if v != "":
                 changed += 1
@@ -386,13 +522,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--profile",
-        choices=["stable", "probe", "hybrid_core", "hybrid_idle"],
+        choices=["stable", "probe", "hybrid_core", "hybrid_idle", "bo3_full"],
         default="stable",
         help=(
-            "stable: safe minigun refs + fill empties; "
+            "stable: safe donor refs + fill empties (recommended first visibility/equip proof); "
             "probe: visibly distinct safe refs by state; "
             "hybrid_core: BO3 refs for core gun states, safe fallback for movement; "
-            "hybrid_idle: BO3 refs only for idle states."
+            "hybrid_idle: BO3 refs only for idle states; "
+            "bo3_full: force all animation refs to vm_thunder_gun_*."
         ),
     )
     parser.add_argument(
@@ -445,6 +582,11 @@ def main():
         help="Optional forced handModel override (e.g. viewmodel_usa_no_model).",
     )
     parser.add_argument(
+        "--parent-weapon",
+        default=None,
+        help="Optional forced parentWeaponName override (recommended: a valid T6 donor alias).",
+    )
+    parser.add_argument(
         "--gun-model",
         default=None,
         help="Optional forced gunModel override (e.g. viewmodel_usa_no_model).",
@@ -468,6 +610,17 @@ def main():
         "--truth-alias-upg",
         default=None,
         help="Optional upgraded alias paired with --truth-alias (e.g. ak74u_upgraded_zm).",
+    )
+    parser.add_argument(
+        "--strict-no-fallback-anims",
+        action="store_true",
+        help="Fail build if any animation field is not vm_thunder_gun_*.",
+    )
+    parser.add_argument(
+        "--set-field",
+        action="append",
+        default=[],
+        help="Extra field override in KEY=VALUE format (repeatable).",
     )
     args = parser.parse_args()
 
@@ -497,9 +650,24 @@ def main():
     print(f"  Minigun has {mini_anim_count} non-empty animation references (will be KEPT)")
 
     print("\nBuilding merged weapon...")
+    parent_weapon = args.parent_weapon
+    if parent_weapon is not None and parent_weapon != "" and not _is_safe_weapon_alias(parent_weapon):
+        raise ValueError(f"Invalid --parent-weapon: {parent_weapon!r}")
+
+    parsed_field_overrides = {}
+    for item in args.set_field:
+        if not item or "=" not in item:
+            raise ValueError(f"Invalid --set-field entry (expected KEY=VALUE): {item!r}")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid --set-field entry (empty key): {item!r}")
+        parsed_field_overrides[key] = value
+
     force_set = get_force_set(args.model_mode, gun_model_override=args.gun_model, world_model_override=args.world_model)
+    safe_anims = build_safe_anims(minigun)
     merged = build_weapon(minigun, thundergun, args.semantics, force_set)
-    merged, filled = fill_empty_anim_fields(merged)
+    merged, filled = fill_empty_anim_fields(merged, safe_anims)
     print(f"  Result: {len(merged)} fields")
     print(f"  Filled empty anim fields: {filled}")
     merged, forced_changed = apply_optional_field_overrides(
@@ -509,12 +677,14 @@ def main():
         hud_icon=args.hud_icon,
         kill_icon=args.kill_icon,
         hand_model=args.hand_model,
+        parent_weapon=parent_weapon,
         clear_camo=args.clear_camo,
+        field_overrides=parsed_field_overrides,
     )
     if forced_changed:
         print(f"  Optional field overrides applied: {forced_changed}")
     if args.profile == "probe":
-        merged, probe_changed = apply_probe_profile(merged)
+        merged, probe_changed = apply_probe_profile(merged, safe_anims)
         print(f"  Probe profile overrides: {probe_changed}")
     elif args.profile == "hybrid_core":
         merged, core_changed = apply_hybrid_core_profile(merged)
@@ -522,6 +692,17 @@ def main():
     elif args.profile == "hybrid_idle":
         merged, idle_changed = apply_hybrid_idle_profile(merged)
         print(f"  Hybrid idle BO3 overrides: {idle_changed}")
+    elif args.profile == "bo3_full":
+        merged, full_changed = apply_bo3_full_profile(merged)
+        print(f"  BO3 full anim overrides: {full_changed}")
+
+    if args.strict_no_fallback_anims:
+        bad_anim_refs = validate_no_donor_anim_refs(merged)
+        if bad_anim_refs:
+            print("\nERROR: strict-no-fallback-anims failed; non-BO3 anim refs found:")
+            for key, value in bad_anim_refs[:80]:
+                print(f"  {key} = {value}")
+            raise ValueError(f"Found {len(bad_anim_refs)} non-BO3 animation refs")
 
     # Verify: list animation fields that have values
     print("\n  Animation references in output:")
@@ -531,9 +712,29 @@ def main():
 
     # Verify: list key gameplay overrides
     print("\n  Key gameplay fields:")
-    for key in ["displayName", "gunModel", "worldModel", "playerAnimType",
-                "weaponClass", "fireType", "clipSize", "maxAmmo", "damage",
-                "fireTime", "ammoName", "handModel", "parentWeaponName", "camo"]:
+    for key in [
+        "displayName",
+        "gunModel",
+        "worldModel",
+        "handModel",
+        "playerAnimType",
+        "weaponType",
+        "weaponClass",
+        "inventoryType",
+        "fireType",
+        "clipSize",
+        "maxAmmo",
+        "startAmmo",
+        "damage",
+        "fireTime",
+        "ammoName",
+        "clipName",
+        "shellCasing",
+        "fireSound",
+        "fireSoundPlayer",
+        "parentWeaponName",
+        "camo",
+    ]:
         for k, v in merged:
             if k == key:
                 print(f"    {k} = {v!r}")

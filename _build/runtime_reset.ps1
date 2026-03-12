@@ -22,7 +22,7 @@ $StorageRawRoot = Join-Path $StorageRoot "raw"
 $GameModsQuarantineRoot = Join-Path $GameRoot "_build\\runtime_quarantine\\game_mods"
 $StorageModsQuarantineRoot = Join-Path $StorageRoot "_runtime_quarantine\\mods"
 
-$BaselineTransitHash = "1076303B8D35F33B7E680B477F40362C37D30DC071FD71322081BADA9C62D01E"
+$BaselineTransitHash = "0562420B37663EBF4B44D651F124123A6E6B516143ED203F06596077C3815E99"
 
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunRoot = Join-Path $GameRoot ("_build\runtime_reset\" + $Stamp)
@@ -116,7 +116,7 @@ function Restore-TransitBaselineFF {
     $target = Join-Path $Root "so_zsurvival_zm_transit.ff"
     if (-not (Test-Path $target)) { return $result }
 
-    $baseline = Join-Path $GameRoot "_build\ff_backup\20260213-125735\so_zsurvival_zm_transit.ff"
+    $baseline = Join-Path $GameRoot "_build\ff_backup\20260213-123213\so_zsurvival_zm_transit.ff"
     if (-not (Test-Path $baseline)) {
         $null = Write-Log "baseline ff missing: $baseline"
         return $result

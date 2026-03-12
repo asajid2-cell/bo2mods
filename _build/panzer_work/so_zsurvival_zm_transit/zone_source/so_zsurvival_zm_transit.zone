@@ -87,6 +87,13 @@ material,hud_icon_minigun
 image,ks_menu_minigun_64
 material,hud_ks_minigun
 weapon,minigun_zm
+material,mtl_wpn_t7_zmb_zod_idg_bone
+material,mtl_wpn_t7_zmb_zod_idg_body
+material,mtl_wpn_t7_zmb_zod_idg_eyes
+material,mtl_wpn_t7_zmb_zod_idg_sacks
+material,mtl_wpn_t7_zmb_zod_idg_tentacles
+xmodel,bo3_rev_idg_view
+weapon,ray_gun_zm
 weapon,minigun_upgraded_zm
 image,zom_icon_bullets
 material,zom_icon_minigun

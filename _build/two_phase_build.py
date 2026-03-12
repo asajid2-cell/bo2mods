@@ -16,30 +16,64 @@ import struct
 import glob
 import time
 import hashlib
+import math
 from datetime import datetime
 
 ZONE_SOURCE = r"z:\Games\pluto_t6_full_game\_build\panzer_work\so_zsurvival_zm_transit\zone_source\so_zsurvival_zm_transit.zone"
 OUTPUT_DIR = r"z:\Games\pluto_t6_full_game\_build\panzer_work\output"
 DEPLOY_DIR = r"z:\Games\pluto_t6_full_game\zone\all"
-DEPLOY_DIR_MOD = os.path.expandvars(r"%localappdata%\Plutonium\storage\t6\mods\zm_roguelike_panzer\zone\all")
 WORK_DIR = r"z:\Games\pluto_t6_full_game\_build\panzer_work\so_zsurvival_zm_transit"
 FF_NAME = "so_zsurvival_zm_transit.ff"
 IPAK_NAME = "so_zsurvival_zm_transit.ipak"
-MOD_SCRIPT_SRC = r"z:\Games\pluto_t6_full_game\mods\zm_roguelike_panzer\scripts\mod_i_am_mod.gsc"
-MOD_SCRIPT_SRC_DISABLED = r"z:\Games\pluto_t6_full_game\mods\__disabled__zm_roguelike_panzer\scripts\mod_i_am_mod.gsc"
-MOD_SCRIPT_DST_DIR = os.path.expandvars(r"%localappdata%\Plutonium\storage\t6\mods\zm_roguelike_panzer\scripts")
 RUNTIME_RESET_SCRIPT = r"z:\Games\pluto_t6_full_game\_build\runtime_reset.ps1"
+
+# Primary mod name used by local dev scripts and deploy paths.
+MOD_NAME = os.environ.get("ROGUE_MOD_NAME", "zm_roguelike_panzer").strip() or "zm_roguelike_panzer"
+
+# Plutonium can source mod content from either the game-root mods folder or the
+# storage mods folder, depending on how the mod was installed/selected.
+# Deploy to both by default to avoid lane mismatch.
+DEPLOY_DIR_MOD_GAME = os.path.join(r"z:\Games\pluto_t6_full_game", "mods", MOD_NAME, "zone", "all")
+DEPLOY_DIR_MOD_STORAGE = os.path.expandvars(rf"%localappdata%\Plutonium\storage\t6\mods\{MOD_NAME}\zone\all")
+DEPLOY_TO_MOD_GAME = os.environ.get("ROGUE_DEPLOY_TO_MOD_GAME", "1") not in ("0", "false", "False")
+DEPLOY_TO_MOD_STORAGE = os.environ.get("ROGUE_DEPLOY_TO_MOD_STORAGE", "1") not in ("0", "false", "False")
+DEPLOY_DIR_MODS = [
+    p
+    for p in (DEPLOY_DIR_MOD_GAME if DEPLOY_TO_MOD_GAME else None, DEPLOY_DIR_MOD_STORAGE if DEPLOY_TO_MOD_STORAGE else None)
+    if p
+]
+# Back-compat: many legacy helpers assume a single "mod lane" directory. Prefer
+# the game-root mod directory when present (it's the one that can override
+# map fastfiles during local testing).
+DEPLOY_DIR_MOD = DEPLOY_DIR_MOD_GAME if DEPLOY_TO_MOD_GAME else (DEPLOY_DIR_MOD_STORAGE if DEPLOY_TO_MOD_STORAGE else DEPLOY_DIR_MOD_GAME)
+
+MOD_SCRIPT_SRC = os.path.join(r"z:\Games\pluto_t6_full_game", "mods", MOD_NAME, "scripts", "mod_i_am_mod.gsc")
+MOD_SCRIPT_SRC_DISABLED = os.path.join(r"z:\Games\pluto_t6_full_game", "mods", f"__disabled__{MOD_NAME}", "scripts", "mod_i_am_mod.gsc")
+MOD_SCRIPT_DST_DIR = os.path.expandvars(rf"%localappdata%\Plutonium\storage\t6\mods\{MOD_NAME}\scripts")
 
 # Server-safe default: do not touch base zone/all unless explicitly requested.
 # Base deployment can contaminate dedicated servers that load stock Transit lanes.
 DEPLOY_TO_BASE = os.environ.get("ROGUE_DEPLOY_TO_BASE", "0") not in ("0", "false", "False")
 DEPLOY_TO_MOD = os.environ.get("ROGUE_DEPLOY_TO_MOD", "1") not in ("0", "false", "False")
 
+BUILD_MODE = os.environ.get("ROGUE_BUILD_MODE", "map_patch").strip() or "map_patch"
+if BUILD_MODE not in ("map_patch", "mod_only"):
+    print(f"WARNING: unknown ROGUE_BUILD_MODE={BUILD_MODE!r}; defaulting to map_patch")
+    BUILD_MODE = "map_patch"
+
+MOD_ZONE_NAME = os.environ.get("ROGUE_MOD_ZONE_NAME", "mod").strip() or "mod"
+MOD_FF_NAME = f"{MOD_ZONE_NAME}.ff"
+MOD_IPAK_NAME = f"{MOD_ZONE_NAME}.ipak"
+
+if BUILD_MODE == "mod_only" and DEPLOY_TO_BASE:
+    print("NOTE: forcing DEPLOY_TO_BASE=0 (mod_only build mode is mod-lane only).")
+    DEPLOY_TO_BASE = False
+
 LINKER = r"z:\Games\pluto_t6_full_game\tools\oat\Linker.exe"
 UNLINKER = r"z:\Games\pluto_t6_full_game\tools\oat\Unlinker.exe"
 THUNDERGUN_WEAPON_BUILDER = r"z:\Games\pluto_t6_full_game\_build\build_thundergun_weapon.py"
-# Step-1 conversion lane: wire BO3 core anim names first (stub-backed verification).
-THUNDERGUN_WEAPON_PROFILE = os.environ.get("ROGUE_TG_PROFILE", "hybrid_core")
+# First-pass native gunModel proof defaults to stable donor animations.
+THUNDERGUN_WEAPON_PROFILE = os.environ.get("ROGUE_TG_PROFILE", "stable")
 # Gameplay lane: default to thundergun semantics now that carrier alias override is stable.
 # Set ROGUE_TG_SEMANTICS=minigun if you need to fall back to a pure donor behavior probe.
 THUNDERGUN_WEAPON_SEMANTICS = os.environ.get("ROGUE_TG_SEMANTICS", "thundergun")
@@ -65,6 +99,10 @@ THUNDERGUN_FORCE_AMMO_NAME = os.environ.get("ROGUE_TG_AMMO_NAME", "")
 THUNDERGUN_FORCE_CLIP_NAME = os.environ.get("ROGUE_TG_CLIP_NAME", "")
 THUNDERGUN_FORCE_HUD_ICON = os.environ.get("ROGUE_TG_HUD_ICON", "")
 THUNDERGUN_FORCE_KILL_ICON = os.environ.get("ROGUE_TG_KILL_ICON", THUNDERGUN_FORCE_HUD_ICON)
+THUNDERGUN_FORCE_PARENT_WEAPON = os.environ.get("ROGUE_TG_PARENT_WEAPON", "").strip()
+THUNDERGUN_SET_FIELDS_RAW = os.environ.get("ROGUE_TG_SET_FIELDS", "").strip()
+_default_strict_no_fallback = "1" if THUNDERGUN_WEAPON_PROFILE == "bo3_full" else "0"
+THUNDERGUN_STRICT_NO_FALLBACK_ANIMS = os.environ.get("ROGUE_TG_STRICT_NO_FALLBACK_ANIMS", _default_strict_no_fallback) not in ("0", "false", "False")
 COMBINED_VIEWMODEL_MODE = os.environ.get("ROGUE_TG_COMBINED_VIEWMODEL", "0") not in ("0", "false", "False")
 # NOTE: viewmodel_hands_no_model carries a full hands skeleton (~70 joints),
 # which combined with BO3 thundergun viewmodel (~134 joints) exceeds T6's
@@ -84,8 +122,8 @@ if COMBINED_VIEWMODEL_MODE:
 # Default to clearing camo to avoid dragging in large base-game camo image chains
 # (OAT can't always source them from loaded FFs and will try to build IPaks from disk IWIs).
 THUNDERGUN_CLEAR_CAMO = os.environ.get("ROGUE_TG_CLEAR_CAMO", "1") not in ("0", "false", "False")
-THUNDERGUN_TRUTH_ALIAS = os.environ.get("ROGUE_TG_TRUTH_ALIAS", "ak74u_zm")
-THUNDERGUN_TRUTH_ALIAS_UPG = os.environ.get("ROGUE_TG_TRUTH_ALIAS_UPG", "ak74u_upgraded_zm")
+THUNDERGUN_TRUTH_ALIAS = os.environ.get("ROGUE_TG_TRUTH_ALIAS", "thundergun_zm")
+THUNDERGUN_TRUTH_ALIAS_UPG = os.environ.get("ROGUE_TG_TRUTH_ALIAS_UPG", "thundergun_upgraded_zm")
 USE_SO_SURVIVAL_LOAD_BASELINE = True
 
 HANDMODEL_SOURCE_ROOT = r"z:\Games\pluto_t6_full_game\_build\runtime_unlink_zm_transit_full_1"
@@ -94,7 +132,7 @@ ZONE_DUMP_SOURCE_ROOT = r"z:\Games\pluto_t6_full_game\zone_dump\zone_raw\so_zsur
 STUB_ZM_VIEWHANDS = os.environ.get("ROGUE_TG_STUB_ZM_VIEWHANDS", "0").strip() not in ("0", "false", "False", "")
 STUB_ZM_VIEWHANDS_NAMES = ["c_zom_suit_viewhands", "c_zom_hazmat_viewhands"]
 
-THUNDERGUN_VIEWHANDS_MODEL = os.environ.get("ROGUE_TG_VIEWHANDS_MODEL", "rogue_tg_viewhands").strip() or "rogue_tg_viewhands"
+THUNDERGUN_VIEWHANDS_MODEL = os.environ.get("ROGUE_TG_VIEWHANDS_MODEL", "viewmodel_usa_morphine").strip() or "viewmodel_usa_morphine"
 THUNDERGUN_VIEWHANDS_ENABLE = os.environ.get(
     "ROGUE_TG_VIEWHANDS_ENABLE",
     "0",
@@ -104,9 +142,10 @@ THUNDERGUN_FORCE_WORLD_MODEL = os.environ.get("ROGUE_TG_WORLD_MODEL", "").strip(
 DOBJ_BONE_LIMIT = 160
 
 if THUNDERGUN_VIEWHANDS_ENABLE and not THUNDERGUN_FORCE_GUN_MODEL and "ROGUE_TG_GUN_MODEL" not in os.environ:
-    # When the BO3 combined viewmodel is used as the *viewhands* model, the weapon's
-    # gunModel should be a minimal/no-visual carrier to avoid bone cap + duplication.
-    THUNDERGUN_FORCE_GUN_MODEL = "viewmodel_usa_no_model"
+    # Only force no-model carrier when using the custom full-rig viewhands asset.
+    # Native fallback viewhands lanes (e.g. viewmodel_usa_morphine) need a visible gunModel.
+    if THUNDERGUN_VIEWHANDS_MODEL == "rogue_tg_viewhands":
+        THUNDERGUN_FORCE_GUN_MODEL = "viewmodel_usa_no_model"
 KNOWN_HANDMODEL_BONES = {
     "viewmodel_usa_no_model": 7,
     "viewmodel_usa_morphine": 6,
@@ -305,6 +344,242 @@ BASE_ARGS = [
     "--load", r"z:\Games\pluto_t6_full_game\zone\all\common_zm.ff",
     "so_zsurvival_zm_transit"
 ]
+
+
+def _read_zone_lines(path: str) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().splitlines()
+    except Exception:
+        return []
+
+
+def write_mod_zone_source() -> bool:
+    """
+    Build a minimal mod zone ("mod.ff") containing just our ported assets.
+
+    This is the permanent fix for the deployment-lane mismatch:
+    - Map gameplay FFs load from base zone/all (stock) for Transit.
+    - Mod FFs load only when the user loads the mod.
+    - Therefore: ship overrides in mod.ff (and mod_load.ff for xanims),
+      and never touch base zone/all for normal dev runs.
+    """
+    zone_dir = os.path.join(WORK_DIR, "zone_source")
+    os.makedirs(zone_dir, exist_ok=True)
+    out_path = os.path.join(zone_dir, f"{MOD_ZONE_NAME}.zone")
+
+    # Source-of-truth: pick the tg asset lines from the so_zsurvival zone source
+    # (keeps the mod list aligned with whatever the pipeline staged).
+    src_lines = _read_zone_lines(ZONE_SOURCE)
+    if not src_lines:
+        print(f"ERROR: cannot read zone source to derive mod zone: {ZONE_SOURCE}")
+        return False
+
+    keep: list[str] = []
+    for raw in src_lines:
+        line = (raw or "").strip()
+        if not line or line.startswith("//") or line.startswith("#"):
+            continue
+        m = re.match(r"^(?P<typ>image|material|xmodel|weapon)\s*,\s*(?P<name>.+?)\s*$", line)
+        if not m:
+            continue
+        typ = m.group("typ")
+        name = m.group("name")
+        # Include all rogue_tg_* art/model assets plus the carrier override weapons.
+        if name.startswith("rogue_tg_"):
+            keep.append(f"{typ},{name}")
+            continue
+        if typ == "weapon" and name in (THUNDERGUN_TRUTH_ALIAS, THUNDERGUN_TRUTH_ALIAS_UPG):
+            keep.append(f"{typ},{name}")
+            continue
+
+    # Ensure required xmodels are present even if source filtering changes.
+    required_xmodels = {"rogue_tg_view", "rogue_tg_world"}
+    if THUNDERGUN_VIEWHANDS_ENABLE:
+        required_xmodels.add(THUNDERGUN_VIEWHANDS_MODEL)
+    for xm in sorted(required_xmodels):
+        entry = f"xmodel,{xm}"
+        if entry not in keep:
+            keep.append(entry)
+
+    # De-dup while preserving order.
+    seen = set()
+    deduped: list[str] = []
+    for line in keep:
+        if line not in seen:
+            seen.add(line)
+            deduped.append(line)
+
+    out_lines = [
+        "// Call Of Duty: Black Ops II",
+        ">game,T6",
+        "",
+        "// Auto-generated. Do not hand-edit; edit the pipeline instead.",
+        f"// Source: {os.path.basename(ZONE_SOURCE)}",
+        f"// Mode:   ROGUE_BUILD_MODE={BUILD_MODE}",
+        "",
+        *deduped,
+        "",
+    ]
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines))
+    print(f"Prep: wrote mod zone source: {out_path} ({len(deduped)} entries)")
+    return True
+
+
+def _mod_linker_args() -> list[str]:
+    # Mirror the same dependency loads as the map build; this keeps model/material
+    # deps resolvable without requiring local asset packs on disk.
+    loads = [
+        r"z:\Games\pluto_t6_full_game\zone\all\patch_zm.ff",
+        r"z:\Games\pluto_t6_full_game\zone\all\code_post_gfx_zm.ff",
+        r"z:\Games\pluto_t6_full_game\zone\all\dlc4_load_zm.ff",
+        r"z:\Games\pluto_t6_full_game\zone\english\en_dlc4_load_zm.ff",
+        r"z:\Games\pluto_t6_full_game\zone\all\zm_tomb_patch.ff",
+        r"z:\Games\pluto_t6_full_game\zone\all\zm_tomb.ff",
+        r"z:\Games\pluto_t6_full_game\zone\all\common_zm.ff",
+    ]
+    args = [
+        LINKER,
+        "--verbose",
+        "--base-folder",
+        WORK_DIR,
+        "--add-asset-search-path",
+        WORK_DIR,
+        "--add-source-search-path",
+        WORK_DIR,
+        "--output-folder",
+        OUTPUT_DIR,
+    ]
+    for ff in loads:
+        args.extend(["--load", ff])
+    # If we built a standalone custom xanim FF lane, load it so weapondef xanim
+    # references resolve during the mod zone build (prevents Linker from trying
+    # to "helpfully" null missing refs).
+    if USE_CUSTOM_XANIM_FF and os.path.exists(CUSTOM_XANIM_FF):
+        args.extend(["--load", CUSTOM_XANIM_FF])
+    args.append(MOD_ZONE_NAME)
+    return args
+
+
+def build_mod_zone() -> tuple[bool, str]:
+    """Build mod.ff (and mod.ipak if images are present) via OAT Linker."""
+    args = _mod_linker_args()
+    result = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    output = (result.stdout or "") + (result.stderr or "")
+    print(output)
+    return result.returncode == 0, output
+
+
+def _collect_linker_missing_indirect_refs(output: str) -> list[str]:
+    missing = []
+    if not output:
+        return missing
+    for line in output.splitlines():
+        s = (line or "").strip()
+        if "Could not load indirectly referenced asset" in s:
+            missing.append(s)
+    return missing
+
+
+def deploy_mod_zone_outputs() -> bool:
+    """Deploy mod.ff (+mod.ipak if present) to the active mod folder(s)."""
+    if not DEPLOY_DIR_MODS:
+        print("ERROR: no active mod deploy directories (ROGUE_DEPLOY_TO_MOD_GAME/ROGUE_DEPLOY_TO_MOD_STORAGE both disabled?)")
+        return False
+    src_ff = os.path.join(OUTPUT_DIR, MOD_FF_NAME)
+    if not os.path.exists(src_ff):
+        print(f"ERROR: missing mod build output FF: {src_ff}")
+        return False
+    deployed_any = False
+    for deploy_dir in DEPLOY_DIR_MODS:
+        os.makedirs(deploy_dir, exist_ok=True)
+        dst_ff = os.path.join(deploy_dir, MOD_FF_NAME)
+        shutil.copy2(src_ff, dst_ff)
+        print(f"  Deployed {MOD_FF_NAME} -> {deploy_dir} ({os.path.getsize(dst_ff):,} bytes)")
+        deployed_any = True
+
+    src_ipak = os.path.join(OUTPUT_DIR, MOD_IPAK_NAME)
+    if os.path.exists(src_ipak):
+        for deploy_dir in DEPLOY_DIR_MODS:
+            os.makedirs(deploy_dir, exist_ok=True)
+            dst_ipak = os.path.join(deploy_dir, MOD_IPAK_NAME)
+            shutil.copy2(src_ipak, dst_ipak)
+            print(f"  Deployed {MOD_IPAK_NAME} -> {deploy_dir} ({os.path.getsize(dst_ipak):,} bytes)")
+    else:
+        print(f"  NOTE: {MOD_IPAK_NAME} not produced (no images or linker did not emit ipak).")
+
+    # Remove legacy map-patch artifacts from the mod lane to avoid confusion and
+    # accidental overrides when switching between build modes.
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    moved_total = 0
+    for deploy_dir in DEPLOY_DIR_MODS:
+        quarantine_root = os.path.join(deploy_dir, "_quarantine")
+        moved = 0
+        for legacy in (FF_NAME, IPAK_NAME):
+            legacy_path = os.path.join(deploy_dir, legacy)
+            if not os.path.exists(legacy_path):
+                continue
+            os.makedirs(quarantine_root, exist_ok=True)
+            dst = os.path.join(quarantine_root, f"{stamp}_{legacy}")
+            try:
+                shutil.move(legacy_path, dst)
+                moved += 1
+            except Exception:
+                # If move fails, leave the file in place; it's still mod-scoped.
+                pass
+        if moved:
+            print(f"  Quarantined {moved} legacy map-patch artifact(s) from {deploy_dir}")
+            moved_total += moved
+    if not deployed_any:
+        print("ERROR: mod.fastfile deploy did not write to any destination.")
+        return False
+    return True
+
+
+def verify_deployed_mod_ff() -> bool:
+    if not DEPLOY_DIR_MODS:
+        print("ERROR: no mod deploy directories configured; cannot verify mod.ff")
+        return False
+    candidates = [os.path.join(d, MOD_FF_NAME) for d in DEPLOY_DIR_MODS]
+    ff_path = next((p for p in candidates if os.path.exists(p)), "")
+    if not ff_path:
+        print("ERROR: missing deployed mod FF in all destinations:")
+        for p in candidates:
+            print(f"  - {p}")
+        return False
+    if not os.path.exists(UNLINKER):
+        print(f"WARNING: missing unlinker: {UNLINKER} (skipping mod.ff verify)")
+        return True
+    result = subprocess.run([UNLINKER, "--list", ff_path], capture_output=True, text=True, timeout=120)
+    out = (result.stdout or "") + (result.stderr or "")
+    if result.returncode != 0:
+        print(f"ERROR: unlinker failed listing {MOD_FF_NAME} rc={result.returncode}")
+        print(out[-800:])
+        return False
+    required = [
+        f"weapon, {THUNDERGUN_TRUTH_ALIAS}",
+        f"weapon, {THUNDERGUN_TRUTH_ALIAS_UPG}",
+        "xmodel, rogue_tg_view",
+        "xmodel, rogue_tg_world",
+    ]
+    if THUNDERGUN_VIEWHANDS_ENABLE:
+        required.append(f"xmodel, {THUNDERGUN_VIEWHANDS_MODEL}")
+    missing = [r for r in required if r not in out]
+    if missing:
+        print("ERROR: mod.ff verify failed; missing assets:")
+        for r in missing:
+            print(f"  - {r}")
+        return False
+
+    expected = _load_expected_runtime_weapon_fields()
+    fields_ok, fields_reason = _verify_runtime_weapon_fields(ff_path, "modff", expected)
+    if not fields_ok:
+        print(f"ERROR: mod.ff field verify failed: {fields_reason}")
+        return False
+
+    print(f"  Mod FF verify: PASS ({MOD_FF_NAME}) from {os.path.dirname(ff_path)}")
+    return True
 
 def resolve_mod_script_source():
     """Resolve workspace script path: prefer active mod path, fall back to disabled path."""
@@ -1443,6 +1718,170 @@ def _glb_parent_map(nodes):
     return parent
 
 
+def _glb_node_local_matrix_rowmajor(node: dict) -> list[list[float]]:
+    """
+    Build a row-major 4x4 affine matrix from glTF node TRS or node.matrix.
+
+    Note: glTF stores `matrix` as column-major (16 floats). We convert it to a
+    row-major 4x4 list-of-lists for our internal math.
+    """
+    if not isinstance(node, dict):
+        return [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+
+    m = node.get("matrix")
+    if isinstance(m, list) and len(m) == 16:
+        try:
+            # glTF matrix is column-major:
+            # [m00,m10,m20,m30, m01,m11,m21,m31, ...]
+            cm = [float(x) for x in m]
+            return [
+                [cm[0], cm[4], cm[8], cm[12]],
+                [cm[1], cm[5], cm[9], cm[13]],
+                [cm[2], cm[6], cm[10], cm[14]],
+                [cm[3], cm[7], cm[11], cm[15]],
+            ]
+        except Exception:
+            pass
+
+    t = node.get("translation")
+    r = node.get("rotation")
+    s = node.get("scale")
+    if not (isinstance(t, list) and len(t) == 3):
+        t = [0.0, 0.0, 0.0]
+    if not (isinstance(r, list) and len(r) == 4):
+        r = [0.0, 0.0, 0.0, 1.0]
+    if not (isinstance(s, list) and len(s) == 3):
+        s = [1.0, 1.0, 1.0]
+    tx, ty, tz = float(t[0]), float(t[1]), float(t[2])
+    sx, sy, sz = float(s[0]), float(s[1]), float(s[2])
+
+    rr = _quat_to_matrix_rows([float(r[0]), float(r[1]), float(r[2]), float(r[3])])
+    # Row-major 3x3 for R*diag(S) (scale along local axes / columns).
+    a00, a01, a02 = rr[0][0] * sx, rr[0][1] * sy, rr[0][2] * sz
+    a10, a11, a12 = rr[1][0] * sx, rr[1][1] * sy, rr[1][2] * sz
+    a20, a21, a22 = rr[2][0] * sx, rr[2][1] * sy, rr[2][2] * sz
+    return [
+        [a00, a01, a02, tx],
+        [a10, a11, a12, ty],
+        [a20, a21, a22, tz],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def _mat4_mul_rowmajor(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    out = [[0.0, 0.0, 0.0, 0.0] for _ in range(4)]
+    for r in range(4):
+        for c in range(4):
+            out[r][c] = (
+                (a[r][0] * b[0][c])
+                + (a[r][1] * b[1][c])
+                + (a[r][2] * b[2][c])
+                + (a[r][3] * b[3][c])
+            )
+    return out
+
+
+def _mat3_inv_rowmajor(m: list[list[float]]) -> list[list[float]] | None:
+    a00, a01, a02 = m[0]
+    a10, a11, a12 = m[1]
+    a20, a21, a22 = m[2]
+    det = (
+        (a00 * ((a11 * a22) - (a12 * a21)))
+        - (a01 * ((a10 * a22) - (a12 * a20)))
+        + (a02 * ((a10 * a21) - (a11 * a20)))
+    )
+    if abs(det) <= 1e-12:
+        return None
+    inv = 1.0 / det
+    return [
+        [((a11 * a22) - (a12 * a21)) * inv, ((a02 * a21) - (a01 * a22)) * inv, ((a01 * a12) - (a02 * a11)) * inv],
+        [((a12 * a20) - (a10 * a22)) * inv, ((a00 * a22) - (a02 * a20)) * inv, ((a02 * a10) - (a00 * a12)) * inv],
+        [((a10 * a21) - (a11 * a20)) * inv, ((a01 * a20) - (a00 * a21)) * inv, ((a00 * a11) - (a01 * a10)) * inv],
+    ]
+
+
+def _mat4_affine_inv_rowmajor(m: list[list[float]]) -> list[list[float]] | None:
+    a = [
+        [m[0][0], m[0][1], m[0][2]],
+        [m[1][0], m[1][1], m[1][2]],
+        [m[2][0], m[2][1], m[2][2]],
+    ]
+    inv_a = _mat3_inv_rowmajor(a)
+    if inv_a is None:
+        return None
+    tx, ty, tz = m[0][3], m[1][3], m[2][3]
+    itx = -((inv_a[0][0] * tx) + (inv_a[0][1] * ty) + (inv_a[0][2] * tz))
+    ity = -((inv_a[1][0] * tx) + (inv_a[1][1] * ty) + (inv_a[1][2] * tz))
+    itz = -((inv_a[2][0] * tx) + (inv_a[2][1] * ty) + (inv_a[2][2] * tz))
+    return [
+        [inv_a[0][0], inv_a[0][1], inv_a[0][2], itx],
+        [inv_a[1][0], inv_a[1][1], inv_a[1][2], ity],
+        [inv_a[2][0], inv_a[2][1], inv_a[2][2], itz],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def _matrix_rows_to_quat(m: list[list[float]]) -> list[float]:
+    """
+    Convert a row-major 3x3 rotation matrix to quaternion [x,y,z,w].
+    """
+    m00, m01, m02 = m[0]
+    m10, m11, m12 = m[1]
+    m20, m21, m22 = m[2]
+    tr = m00 + m11 + m22
+    if tr > 0.0:
+        s = math.sqrt(tr + 1.0) * 2.0
+        w = 0.25 * s
+        x = (m21 - m12) / s
+        y = (m02 - m20) / s
+        z = (m10 - m01) / s
+    elif (m00 > m11) and (m00 > m22):
+        s = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
+        w = (m21 - m12) / s
+        x = 0.25 * s
+        y = (m01 + m10) / s
+        z = (m02 + m20) / s
+    elif m11 > m22:
+        s = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
+        w = (m02 - m20) / s
+        x = (m01 + m10) / s
+        y = 0.25 * s
+        z = (m12 + m21) / s
+    else:
+        s = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
+        w = (m10 - m01) / s
+        x = (m02 + m20) / s
+        y = (m12 + m21) / s
+        z = 0.25 * s
+    return [float(x), float(y), float(z), float(w)]
+
+
+def _glb_set_node_trs_from_matrix_rowmajor(node: dict, m: list[list[float]]) -> None:
+    tx, ty, tz = float(m[0][3]), float(m[1][3]), float(m[2][3])
+    # Extract scale from columns of 3x3.
+    c0 = (m[0][0], m[1][0], m[2][0])
+    c1 = (m[0][1], m[1][1], m[2][1])
+    c2 = (m[0][2], m[1][2], m[2][2])
+    sx = math.sqrt((c0[0] * c0[0]) + (c0[1] * c0[1]) + (c0[2] * c0[2])) or 1.0
+    sy = math.sqrt((c1[0] * c1[0]) + (c1[1] * c1[1]) + (c1[2] * c1[2])) or 1.0
+    sz = math.sqrt((c2[0] * c2[0]) + (c2[1] * c2[1]) + (c2[2] * c2[2])) or 1.0
+    r = [
+        [m[0][0] / sx, m[0][1] / sy, m[0][2] / sz],
+        [m[1][0] / sx, m[1][1] / sy, m[1][2] / sz],
+        [m[2][0] / sx, m[2][1] / sy, m[2][2] / sz],
+    ]
+    q = _matrix_rows_to_quat(r)
+    node.pop("matrix", None)
+    node["translation"] = [tx, ty, tz]
+    node["scale"] = [float(sx), float(sy), float(sz)]
+    node["rotation"] = [float(q[0]), float(q[1]), float(q[2]), float(q[3])]
+
+
 def normalize_thundergun_camera_hierarchy():
     """
     Our rebuilt BO3 rig initially had camera bones under `tag_torso`:
@@ -1487,18 +1926,60 @@ def normalize_thundergun_camera_hierarchy():
     if p_cam == idx_view and (idx_torso is None or p_torso == idx_view) and p_view not in (idx_cam, idx_torso):
         return True
 
+    # Preserve world transforms while reparenting. The earlier implementation
+    # did a pure hierarchy edit which changes global matrices and can make the
+    # viewmodel appear "giant/mangled" in first person.
+    parent = _glb_parent_map(nodes)
+
+    world_cache: dict[int, list[list[float]]] = {}
+
+    def world(i: int) -> list[list[float]]:
+        if i in world_cache:
+            return world_cache[i]
+        n = nodes[i] if 0 <= i < len(nodes) and isinstance(nodes[i], dict) else {}
+        local = _glb_node_local_matrix_rowmajor(n)
+        p = parent.get(i)
+        w = _mat4_mul_rowmajor(world(p), local) if isinstance(p, int) else local
+        world_cache[i] = w
+        return w
+
+    view_world = world(idx_view)
+    skel_world = world(idx_skel) if isinstance(idx_skel, int) else [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    torso_world = world(idx_torso) if isinstance(idx_torso, int) else None
+    cam_world = world(idx_cam)
+
+    inv_skel = _mat4_affine_inv_rowmajor(skel_world)
+    inv_view = _mat4_affine_inv_rowmajor(view_world)
+    if inv_skel is None or inv_view is None:
+        print("  WARNING: Unable to invert viewmodel matrices; skipping hierarchy normalize.")
+        return True
+
     # Detach tag_view from its current parent (often tag_cambone) and reattach to skel/root.
     _glb_remove_child(nodes, p_view, idx_view)
     _glb_add_child(nodes, idx_skel, idx_view)
+    view_node = nodes[idx_view] if isinstance(nodes[idx_view], dict) else {}
+    _glb_set_node_trs_from_matrix_rowmajor(view_node, _mat4_mul_rowmajor(inv_skel, view_world))
+    nodes[idx_view] = view_node
 
     # Ensure torso is under tag_view so the skin has a single common root (tag_view).
-    if idx_torso is not None:
+    if idx_torso is not None and torso_world is not None:
         _glb_remove_child(nodes, p_torso, idx_torso)
         _glb_add_child(nodes, idx_view, idx_torso)
+        torso_node = nodes[idx_torso] if isinstance(nodes[idx_torso], dict) else {}
+        _glb_set_node_trs_from_matrix_rowmajor(torso_node, _mat4_mul_rowmajor(inv_view, torso_world))
+        nodes[idx_torso] = torso_node
 
     # Detach tag_cambone from torso and attach under tag_view.
     _glb_remove_child(nodes, p_cam, idx_cam)
     _glb_add_child(nodes, idx_view, idx_cam)
+    cam_node = nodes[idx_cam] if isinstance(nodes[idx_cam], dict) else {}
+    _glb_set_node_trs_from_matrix_rowmajor(cam_node, _mat4_mul_rowmajor(inv_view, cam_world))
+    nodes[idx_cam] = cam_node
 
     # Update skin skeleton root to tag_view (required by OAT glTF loader).
     skins = gltf.get("skins") or []
@@ -1554,9 +2035,9 @@ def align_thundergun_tag_view_basis():
 
     # Avoid churn if already aligned.
     eps = 1e-6
-    cam_ok = all(abs(float(cur_cam[i]) - float(ref_rot[i])) <= eps for i in range(4))
-    view_ok = all(abs(float(cur_view[i]) - float(identity[i])) <= eps for i in range(4))
-    if cam_ok and view_ok:
+    view_ok = all(abs(float(cur_view[i]) - float(ref_rot[i])) <= eps for i in range(4))
+    cam_ok = all(abs(float(cur_cam[i]) - float(identity[i])) <= eps for i in range(4))
+    if view_ok and cam_ok:
         return True
 
     # After `normalize_thundergun_camera_hierarchy()`, `tag_cambone` is under `tag_view`
@@ -1739,7 +2220,8 @@ def _runtime_custom_xanim_targets():
     if CUSTOM_XANIM_RUNTIME_DEPLOY_BASE and DEPLOY_TO_BASE:
         targets.append(("base", os.path.join(DEPLOY_DIR, CUSTOM_XANIM_RUNTIME_FF_NAME)))
     if CUSTOM_XANIM_RUNTIME_DEPLOY_MOD and DEPLOY_TO_MOD:
-        targets.append(("mod", os.path.join(DEPLOY_DIR_MOD, CUSTOM_XANIM_RUNTIME_FF_NAME)))
+        for deploy_dir in DEPLOY_DIR_MODS:
+            targets.append(("mod", os.path.join(deploy_dir, CUSTOM_XANIM_RUNTIME_FF_NAME)))
     return targets
 
 
@@ -1917,7 +2399,32 @@ def _load_expected_runtime_weapon_fields():
         wanted.append(THUNDERGUN_TRUTH_ALIAS)
     if THUNDERGUN_TRUTH_ALIAS_UPG and THUNDERGUN_TRUTH_ALIAS_UPG not in wanted:
         wanted.append(THUNDERGUN_TRUTH_ALIAS_UPG)
-    fields = ("displayName", "parentWeaponName", "ammoName", "clipName", "gunModel", "worldModel", "handModel")
+    fields = (
+        "displayName",
+        "parentWeaponName",
+        "ammoName",
+        "clipName",
+        "gunModel",
+        "worldModel",
+        "handModel",
+        "weaponType",
+        "weaponClass",
+        "inventoryType",
+        "fireType",
+        "clipSize",
+        "maxAmmo",
+        "startAmmo",
+        "damage",
+        "fireTime",
+        "shellCasing",
+        "projectileModel",
+        "projExplosionType",
+        "projExplosionEffect",
+        "fireSound",
+        "fireSoundPlayer",
+        "killIcon",
+        "hudIcon",
+    )
 
     manifest = None
     if os.path.exists(TG_BUILD_MANIFEST_PATH):
@@ -2028,6 +2535,17 @@ def _read_weapon_manifest_fields(path):
         entry["error"] = str(ex)
         return entry
 
+    donor_anim_refs = sorted(
+        set(
+            re.findall(
+                r"viewmodel_(?:ak74u|minigun)_t6_[A-Za-z0-9_]+",
+                raw,
+            )
+        )
+    )
+    entry["donor_anim_refs"] = donor_anim_refs
+    entry["donor_anim_ref_count"] = len(donor_anim_refs)
+
     for field_name in (
         "displayName",
         "parentWeaponName",
@@ -2036,9 +2554,48 @@ def _read_weapon_manifest_fields(path):
         "gunModel",
         "worldModel",
         "handModel",
+        "weaponType",
+        "weaponClass",
+        "inventoryType",
+        "fireType",
+        "clipSize",
+        "maxAmmo",
+        "startAmmo",
+        "damage",
+        "fireTime",
+        "shellCasing",
+        "projectileModel",
+        "projExplosionType",
+        "projExplosionEffect",
+        "fireSound",
+        "fireSoundPlayer",
+        "killIcon",
+        "hudIcon",
     ):
         entry[field_name] = _extract_weapon_field(raw, field_name)
     return entry
+
+
+def _parse_set_fields(raw_value):
+    parsed = {}
+    if not raw_value:
+        return parsed
+    for token in re.split(r"[;\r\n]+", raw_value):
+        token = token.strip()
+        if not token:
+            continue
+        if "=" not in token:
+            raise ValueError(
+                f"Invalid ROGUE_TG_SET_FIELDS entry (expected KEY=VALUE): {token!r}"
+            )
+        key, value = token.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"Invalid ROGUE_TG_SET_FIELDS entry (empty key): {token!r}"
+            )
+        parsed[key] = value
+    return parsed
 
 
 def _collect_tg_build_context():
@@ -2053,6 +2610,9 @@ def _collect_tg_build_context():
             "ROGUE_TG_CLIP_NAME": THUNDERGUN_FORCE_CLIP_NAME,
             "ROGUE_TG_HUD_ICON": THUNDERGUN_FORCE_HUD_ICON,
             "ROGUE_TG_KILL_ICON": THUNDERGUN_FORCE_KILL_ICON,
+            "ROGUE_TG_PARENT_WEAPON": THUNDERGUN_FORCE_PARENT_WEAPON,
+            "ROGUE_TG_SET_FIELDS": THUNDERGUN_SET_FIELDS_RAW,
+            "ROGUE_TG_STRICT_NO_FALLBACK_ANIMS": THUNDERGUN_STRICT_NO_FALLBACK_ANIMS,
             "ROGUE_TG_COMBINED_VIEWMODEL": COMBINED_VIEWMODEL_MODE,
             "ROGUE_TG_HAND_MODEL": THUNDERGUN_FORCE_HAND_MODEL,
             "ROGUE_TG_REQUIRE_VISIBLE_HANDMODEL": REQUIRE_VISIBLE_HANDMODEL,
@@ -2092,7 +2652,7 @@ def _append_tg_weapon_manifest_and_guardrails(manifest):
 
     manifest["weapondefs"] = {}
     guardrail_errors = []
-    reject_parent_names = {"type95"}
+    reject_parent_names = {"type95", "thundergun"}
 
     for name, path in weapon_paths.items():
         entry = _read_weapon_manifest_fields(path)
@@ -2100,6 +2660,12 @@ def _append_tg_weapon_manifest_and_guardrails(manifest):
         if not entry.get("exists"):
             guardrail_errors.append(f"{name}: missing generated weapon file")
             continue
+        if THUNDERGUN_STRICT_NO_FALLBACK_ANIMS and name.startswith(("thundergun_", "rogue_thundergun_", "truth_alias::")):
+            donor_refs = entry.get("donor_anim_refs") or []
+            if donor_refs:
+                guardrail_errors.append(
+                    f"{name}: contains donor anim refs ({', '.join(donor_refs[:5])})"
+                )
         parent_name = (entry.get("parentWeaponName") or "").strip().lower()
         if parent_name in reject_parent_names:
             guardrail_errors.append(
@@ -2171,6 +2737,20 @@ def prepare_thundergun_weapondefs():
         cmd.extend(["--hud-icon", THUNDERGUN_FORCE_HUD_ICON])
     if THUNDERGUN_FORCE_KILL_ICON:
         cmd.extend(["--kill-icon", THUNDERGUN_FORCE_KILL_ICON])
+    try:
+        set_fields = _parse_set_fields(THUNDERGUN_SET_FIELDS_RAW)
+    except Exception as ex:
+        print(f"ERROR: {ex}")
+        return False
+    for key, value in set_fields.items():
+        cmd.extend(["--set-field", f"{key}={value}"])
+    parent_weapon_alias = THUNDERGUN_FORCE_PARENT_WEAPON
+    if not parent_weapon_alias:
+        parent_weapon_alias = os.path.splitext(os.path.basename(THUNDERGUN_BASE_WPN))[0]
+    if parent_weapon_alias and re.match(r"^[A-Za-z0-9_]+$", parent_weapon_alias):
+        cmd.extend(["--parent-weapon", parent_weapon_alias])
+    else:
+        parent_weapon_alias = ""
     if THUNDERGUN_FORCE_HAND_MODEL:
         cmd.extend(["--hand-model", THUNDERGUN_FORCE_HAND_MODEL])
     if THUNDERGUN_FORCE_GUN_MODEL:
@@ -2179,12 +2759,16 @@ def prepare_thundergun_weapondefs():
         cmd.extend(["--world-model", THUNDERGUN_FORCE_WORLD_MODEL])
     if THUNDERGUN_CLEAR_CAMO:
         cmd.append("--clear-camo")
+    if THUNDERGUN_STRICT_NO_FALLBACK_ANIMS:
+        cmd.append("--strict-no-fallback-anims")
     if THUNDERGUN_TRUTH_ALIAS:
         cmd.extend(["--truth-alias", THUNDERGUN_TRUTH_ALIAS])
     if THUNDERGUN_TRUTH_ALIAS_UPG:
         cmd.extend(["--truth-alias-upg", THUNDERGUN_TRUTH_ALIAS_UPG])
 
     manifest = _collect_tg_build_context()
+    manifest.setdefault("effective", {})["ROGUE_TG_PARENT_WEAPON_EFFECTIVE"] = parent_weapon_alias
+    manifest.setdefault("effective", {})["ROGUE_TG_SET_FIELDS_EFFECTIVE"] = set_fields
     manifest["builder_cmd"] = cmd
     _write_tg_build_manifest(manifest)
     print(
@@ -2395,6 +2979,11 @@ def stage_thundergun_viewhands_asset():
     if not THUNDERGUN_VIEWHANDS_ENABLE:
         print("Prep: thundergun viewhands swap disabled.")
         return True
+
+    # Native viewhands model selected (engine-shipped asset); no custom xmodel staging needed.
+    if THUNDERGUN_VIEWHANDS_MODEL != "rogue_tg_viewhands":
+        print(f"Prep: using native viewhands model for TG swap: {THUNDERGUN_VIEWHANDS_MODEL}")
+        return ensure_handmodel_zone_entry(THUNDERGUN_VIEWHANDS_MODEL)
 
     src = os.path.join(WORK_DIR, "model_export", "thundergun_view_lod0.glb")
     if not os.path.exists(src):
@@ -2679,17 +3268,20 @@ def enforce_thundergun_dobj_bone_budget():
             if worst is None or vm_total > worst["total"]:
                 worst = {"vm": vm, "vm_bones": vm_bones, "total": vm_total, "mode": vm_mode}
 
-        if worst and worst["total"] > DOBJ_BONE_LIMIT:
-            print(
-                "ERROR: stock ZM viewhands + weapon viewmodel would exceed bone cap "
-                f"(viewhands={worst['vm']}:{worst['vm_bones']}, gunModel={gun_model}:{gun_bones}, "
-                f"handModel={hand_model}:{hand_bones}, total={worst['total']}/{DOBJ_BONE_LIMIT}, mode={worst['mode']})."
-            )
-            print("  Fix: build with viewhands swap mode enabled so TG uses a dedicated BO3 viewhands xmodel:")
-            print('    $env:ROGUE_TG_VIEWHANDS_ENABLE=\"1\"')
-            print("  Then in-game enable runtime swap (default off):")
-            print("    set rogue_tg_viewhands_enable 1")
-            return False
+            if worst and worst["total"] > DOBJ_BONE_LIMIT:
+                print(
+                    "ERROR: stock ZM viewhands + weapon viewmodel would exceed bone cap "
+                    f"(viewhands={worst['vm']}:{worst['vm_bones']}, gunModel={gun_model}:{gun_bones}, "
+                    f"handModel={hand_model}:{hand_bones}, total={worst['total']}/{DOBJ_BONE_LIMIT}, mode={worst['mode']})."
+                )
+                print("  Fix: build with viewhands swap mode enabled so TG uses a dedicated BO3 viewhands xmodel:")
+                print('    $env:ROGUE_TG_VIEWHANDS_ENABLE=\"1\"')
+                print(
+                    "  Runtime gate: rogue_tg_viewhands_enable is opt-in in "
+                    "mods/zm_roguelike_panzer/scripts/mod_i_am_mod.gsc "
+                    "(Plutonium doesn't reliably allow setting custom dvars interactively)."
+                )
+                return False
     return True
 
 
@@ -2757,6 +3349,14 @@ def enforce_deploy_lane():
         f"base={'on' if DEPLOY_TO_BASE else 'off'}, "
         f"mod={'on' if DEPLOY_TO_MOD else 'off'}"
     )
+    if not DEPLOY_TO_BASE:
+        print(
+            "  NOTE: Transit map fastfiles are loaded from base zone/all. "
+            "If you still see stock ak74u/stock viewhands in-game, re-run with "
+            "ROGUE_DEPLOY_TO_BASE=1 for local testing, then run "
+            "powershell -ExecutionPolicy Bypass -File _build/runtime_reset.ps1 -Mode server "
+            "before joining public servers."
+        )
     return True
 
 
@@ -2945,8 +3545,9 @@ def phase3_patch_xanims():
 
 
 def main():
-    if not enforce_deploy_lane():
-        return False
+    if BUILD_MODE != "mod_only":
+        if not enforce_deploy_lane():
+            return False
     if not run_runtime_lane_reset_sequence():
         return False
     if not ensure_mod_runtime_script_alignment():
@@ -3045,6 +3646,43 @@ def main():
         if not verify_runtime_custom_xanim_ff():
             return False
     maybe_add_custom_xanim_load(effective_emit_mode)
+
+    if BUILD_MODE == "mod_only":
+        print("\n" + "=" * 60)
+        print("MOD-ONLY BUILD: Build and deploy mod.ff (+mod_load.ff)")
+        print("=" * 60)
+        if not write_mod_zone_source():
+            return False
+        print("\nStep M.1: Building mod zone...")
+        ok, _out = build_mod_zone()
+        if not ok:
+            print("ERROR: mod-only Linker build failed.")
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        missing_indirect = _collect_linker_missing_indirect_refs(_out)
+        if missing_indirect:
+            print("ERROR: mod-only Linker reported unresolved indirect assets:")
+            for line in missing_indirect[:80]:
+                print(f"  {line}")
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        print("\nStep M.2: Deploying mod fastfiles...")
+        if not deploy_mod_zone_outputs():
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        if not deploy_runtime_custom_xanim_ff():
+            print("ERROR: failed deploying runtime custom xanim FF lane.")
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        if not verify_deployed_mod_ff():
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        if not verify_deployed_runtime_custom_xanim_ff():
+            print("ERROR: deployed runtime custom xanim FF validation failed.")
+            restore_live_ff(live_main_snap, live_mod_snap, live_custom_snap)
+            return False
+        print("\n SUCCESS: mod-only build deployed (no base zone/all contamination).")
+        return True
 
     print("=" * 60)
     print("PHASE 1: Build clean zone WITHOUT thundergun images")
