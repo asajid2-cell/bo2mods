@@ -528,9 +528,8 @@ bool patch_byte(uintptr_t addr, BYTE value, BYTE* original = nullptr)
     return true;
 }
 
-void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 8)
+void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 8)
 {
-    std::lock_guard<std::mutex> lock(g_state_mutex);
     auto& point = g_exec_traces[addr];
     point.label = label;
     point.addr = addr;
@@ -551,6 +550,12 @@ void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_
         log_line("exec_trace_rearmed label=%s addr=0x%08lX trace=%llu path=%s max_hits=%d",
             point.label.c_str(), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str(), point.max_hits);
     }
+}
+
+void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 8)
+{
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    arm_exec_trace_locked(label, addr, trace_id, path, max_hits);
 }
 
 void arm_branch_traces_after_return(bool success, unsigned long long trace_id, const std::string& path)
@@ -871,20 +876,20 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                 static_cast<unsigned long>(rva_to_va(kSpecialOpenSuccessClass1PostCallRva)),
                 point.trace_id,
                 point.path.c_str());
-            arm_exec_trace("special_open_class1_call_entry", rva_to_va(kSpecialOpenSuccessClass1CallTargetRva), point.trace_id, point.path);
-            arm_exec_trace("special_open_class1_postcall", rva_to_va(kSpecialOpenSuccessClass1PostCallRva), point.trace_id, point.path);
+            arm_exec_trace_locked("special_open_class1_call_entry", rva_to_va(kSpecialOpenSuccessClass1CallTargetRva), point.trace_id, point.path);
+            arm_exec_trace_locked("special_open_class1_postcall", rva_to_va(kSpecialOpenSuccessClass1PostCallRva), point.trace_id, point.path);
         }
         else if (point.label == "special_open_success_branch")
         {
-            arm_exec_trace("special_open_success_postcall", rva_to_va(kSpecialOpenSuccessPostCallRva), point.trace_id, point.path);
+            arm_exec_trace_locked("special_open_success_postcall", rva_to_va(kSpecialOpenSuccessPostCallRva), point.trace_id, point.path);
         }
         else if (point.label == "special_open_success_postcall")
         {
-            arm_exec_trace("special_open_success_continue", rva_to_va(kSpecialOpenSuccessContinueRva), point.trace_id, point.path);
+            arm_exec_trace_locked("special_open_success_continue", rva_to_va(kSpecialOpenSuccessContinueRva), point.trace_id, point.path);
         }
         else if (point.label == "special_open_success_continue")
         {
-            arm_exec_trace("special_open_success_class1_continue", rva_to_va(kSpecialOpenSuccessClass1ContinueRva), point.trace_id, point.path);
+            arm_exec_trace_locked("special_open_success_class1_continue", rva_to_va(kSpecialOpenSuccessClass1ContinueRva), point.trace_id, point.path);
         }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
