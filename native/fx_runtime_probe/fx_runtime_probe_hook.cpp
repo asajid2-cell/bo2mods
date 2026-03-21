@@ -27,7 +27,7 @@ constexpr DWORD kSpecialOpenSuccessBranchRva = 0x0068E872;
 constexpr DWORD kSpecialOpenSuccessPostCallRva = 0x0068E87B;
 constexpr DWORD kSpecialOpenSuccessContinueRva = 0x0068E8C3;
 constexpr DWORD kSpecialOpenSuccessClass1ContinueRva = 0x0068E8D7;
-constexpr DWORD kSpecialOpenSuccessClass1CallTargetRva = 0x0068E8FF78 - 0x00400000;
+constexpr DWORD kSpecialOpenSuccessClass1CallTargetRva = 0x0068FF78;
 constexpr DWORD kSpecialOpenSuccessClass1PostCallRva = 0x0068E8E1;
 
 struct SavedRegisters
