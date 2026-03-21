@@ -29,6 +29,11 @@ constexpr DWORD kSpecialOpenSuccessContinueRva = 0x0068E8C3;
 constexpr DWORD kSpecialOpenSuccessClass1ContinueRva = 0x0068E8D7;
 constexpr DWORD kSpecialOpenSuccessClass1CallTargetRva = 0x0068FF78;
 constexpr DWORD kSpecialOpenSuccessClass1PostCallRva = 0x0068E8E1;
+constexpr DWORD kConsumerImageClassMapRva = 0x003446B6;
+constexpr DWORD kConsumerAssetClassLookupRva = 0x00341C36;
+constexpr DWORD kConsumerRenderTableRva = 0x0037C239;
+constexpr DWORD kConsumerSubmitFlagsRva = 0x001F1C30;
+constexpr int kConsumerStepTraceInstructions = 12;
 constexpr DWORD kTouchTraceDelayMs = 15000;
 constexpr size_t kTouchTraceChunkSize = 0x10000;
 constexpr size_t kTouchTraceMaxPages = 128;
@@ -105,6 +110,15 @@ struct TouchTraceTarget
     bool hit {};
 };
 
+struct StepTraceState
+{
+    std::string label;
+    unsigned long long trace_id {};
+    std::string path;
+    uintptr_t last_eip {};
+    int steps_remaining {};
+};
+
 HMODULE g_self = nullptr;
 HMODULE g_main_module = nullptr;
 uintptr_t g_main_base = 0;
@@ -124,6 +138,7 @@ std::unordered_set<std::string> g_watch_techsets;
 std::unordered_map<uintptr_t, AssetTrace> g_active_handles;
 std::unordered_map<DWORD, ReturnTraceState> g_return_states;
 std::unordered_map<uintptr_t, ExecTracePoint> g_exec_traces;
+std::unordered_map<DWORD, StepTraceState> g_step_traces;
 std::vector<TouchTraceTarget> g_touch_targets;
 std::unordered_map<uintptr_t, std::vector<size_t>> g_touch_pages;
 
@@ -143,6 +158,7 @@ HANDLE WINAPI hook_create_file_a(LPCSTR file_name, DWORD desired_access, DWORD s
 HANDLE WINAPI hook_create_file_w(LPCWSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
 BOOL WINAPI hook_read_file(HANDLE handle, LPVOID buffer, DWORD bytes_to_read, LPDWORD bytes_read, LPOVERLAPPED overlapped);
 BOOL WINAPI hook_close_handle(HANDLE handle);
+void arm_consumer_exec_traces();
 
 std::string narrow_from_wide(const std::wstring& value)
 {
@@ -730,6 +746,7 @@ DWORD WINAPI touch_trace_thread(void*)
     enumerate_modules();
     scan_touch_targets();
     arm_touch_trace_pages();
+    arm_consumer_exec_traces();
     g_touch_trace_complete = true;
     return 0;
 }
@@ -737,6 +754,58 @@ DWORD WINAPI touch_trace_thread(void*)
 uintptr_t rva_to_va(DWORD rva)
 {
     return g_main_base + rva;
+}
+
+const char* consumer_label_for_addr(uintptr_t addr)
+{
+    if (addr == rva_to_va(kConsumerImageClassMapRva))
+        return "consumer_image_class_map";
+    if (addr == rva_to_va(kConsumerAssetClassLookupRva))
+        return "consumer_asset_class_lookup";
+    if (addr == rva_to_va(kConsumerRenderTableRva))
+        return "consumer_render_table";
+    if (addr == rva_to_va(kConsumerSubmitFlagsRva))
+        return "consumer_submit_flags";
+    return nullptr;
+}
+
+std::string join_touch_targets(const std::vector<size_t>& indices)
+{
+    std::string out;
+    unsigned count = 0;
+    for (size_t index : indices)
+    {
+        if (index >= g_touch_targets.size())
+            continue;
+        const auto& target = g_touch_targets[index];
+        if (count++)
+            out.push_back(',');
+        out += target.label;
+        out.push_back(':');
+        out += target.text;
+        if (count >= 6)
+            break;
+    }
+    return out;
+}
+
+void begin_step_trace_locked(DWORD thread_id, const char* label, unsigned long long trace_id, const std::string& path, uintptr_t start_eip, int steps)
+{
+    if (!label || steps <= 0)
+        return;
+    auto& state = g_step_traces[thread_id];
+    state.label = label;
+    state.trace_id = trace_id;
+    state.path = path;
+    state.last_eip = start_eip;
+    state.steps_remaining = steps;
+    log_line("step_trace_begin label=%s thread=%lu trace=%llu start=0x%08lX steps=%d path=%s",
+        label,
+        static_cast<unsigned long>(thread_id),
+        trace_id,
+        static_cast<unsigned long>(start_eip),
+        steps,
+        path.c_str());
 }
 
 bool patch_byte(uintptr_t addr, BYTE value, BYTE* original = nullptr)
@@ -780,6 +849,15 @@ void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_
 {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     arm_exec_trace_locked(label, addr, trace_id, path, max_hits);
+}
+
+void arm_consumer_exec_traces()
+{
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    arm_exec_trace_locked("consumer_image_class_map", rva_to_va(kConsumerImageClassMapRva), 0, "consumer_probe");
+    arm_exec_trace_locked("consumer_asset_class_lookup", rva_to_va(kConsumerAssetClassLookupRva), 0, "consumer_probe");
+    arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), 0, "consumer_probe");
+    arm_exec_trace_locked("consumer_submit_flags", rva_to_va(kConsumerSubmitFlagsRva), 0, "consumer_probe");
 }
 
 void arm_branch_traces_after_return(bool success, unsigned long long trace_id, const std::string& path)
@@ -1115,6 +1193,12 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_register_block(ctx);
         log_bytes_around("touch_trace_eip bytes", ctx.Eip);
         log_backtrace_frames("touch_trace", 0, 10);
+        const char* consumer_label = consumer_label_for_addr(static_cast<uintptr_t>(ctx.Eip));
+        if (consumer_label)
+        {
+            begin_step_trace_locked(GetCurrentThreadId(), consumer_label, 0, join_touch_targets(page_it->second), static_cast<uintptr_t>(ctx.Eip), kConsumerStepTraceInstructions);
+            ctx.EFlags |= 0x100u;
+        }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
@@ -1158,6 +1242,12 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_pointer_info("ebp", ctx.Ebp);
         log_pointer_info("esp", ctx.Esp);
 
+        if (std::strncmp(point.label.c_str(), "consumer_", 9) == 0)
+        {
+            begin_step_trace_locked(GetCurrentThreadId(), point.label.c_str(), point.trace_id, point.path, point.addr, kConsumerStepTraceInstructions);
+            ctx.EFlags |= 0x100u;
+        }
+
         if (point.label == "special_open_success_class1_continue")
         {
             log_line("branch_trace_request kind=class1_call target=0x%08lX postcall=0x%08lX trace=%llu path=%s",
@@ -1184,18 +1274,57 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
-    if (code == STATUS_SINGLE_STEP && g_tls_rearm_addr)
+    if (code == STATUS_SINGLE_STEP)
     {
         g_tls_in_veh = true;
         std::lock_guard<std::mutex> lock(g_state_mutex);
-        auto it = g_exec_traces.find(g_tls_rearm_addr);
-        if (it != g_exec_traces.end() && it->second.hits < it->second.max_hits)
+        auto step_it = g_step_traces.find(GetCurrentThreadId());
+        bool keep_tracing = false;
+        if (step_it != g_step_traces.end())
         {
-            patch_byte(it->second.addr, 0xCC, nullptr);
-            it->second.armed = true;
+            StepTraceState& state = step_it->second;
+            log_line("step_trace_hit label=%s trace=%llu step=%d eip=0x%08lX prev=0x%08lX path=%s",
+                state.label.c_str(),
+                state.trace_id,
+                kConsumerStepTraceInstructions - state.steps_remaining + 1,
+                ctx.Eip,
+                static_cast<unsigned long>(state.last_eip),
+                state.path.c_str());
+            log_register_block(ctx);
+            log_bytes_around("step_trace_eip bytes", ctx.Eip);
+            log_pointer_info("eax", ctx.Eax);
+            log_pointer_info("ecx", ctx.Ecx);
+            log_pointer_info("edx", ctx.Edx);
+            log_pointer_info("esi", ctx.Esi);
+            log_pointer_info("edi", ctx.Edi);
+            state.last_eip = ctx.Eip;
+            state.steps_remaining -= 1;
+            if (state.steps_remaining > 0)
+                keep_tracing = true;
+            else
+            {
+                log_line("step_trace_end label=%s trace=%llu eip=0x%08lX",
+                    state.label.c_str(),
+                    state.trace_id,
+                    ctx.Eip);
+                g_step_traces.erase(step_it);
+            }
         }
-        g_tls_rearm_addr = 0;
-        ctx.EFlags &= ~0x100u;
+
+        if (g_tls_rearm_addr)
+        {
+            auto it = g_exec_traces.find(g_tls_rearm_addr);
+            if (it != g_exec_traces.end() && it->second.hits < it->second.max_hits)
+            {
+                patch_byte(it->second.addr, 0xCC, nullptr);
+                it->second.armed = true;
+            }
+            g_tls_rearm_addr = 0;
+        }
+        if (keep_tracing)
+            ctx.EFlags |= 0x100u;
+        else
+            ctx.EFlags &= ~0x100u;
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
