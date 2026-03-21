@@ -65,6 +65,12 @@ struct AssetTrace
     bool logged_first {};
 };
 
+struct CallerSelection
+{
+    uintptr_t selected_return {};
+    std::vector<uintptr_t> frames;
+};
+
 struct ReturnTraceState
 {
     void** slot {};
@@ -165,6 +171,16 @@ std::string normalize_image_token(const std::string& path)
     if (!file_name.empty() && file_name[0] == ',')
         file_name.erase(file_name.begin());
     return remove_iwi_suffix(file_name);
+}
+
+bool is_in_main_module(uintptr_t addr)
+{
+    return g_main_base && addr >= g_main_base;
+}
+
+unsigned long main_module_rva(uintptr_t addr)
+{
+    return static_cast<unsigned long>(addr - g_main_base);
 }
 
 bool path_is_watched_file(const std::string& path)
@@ -544,6 +560,65 @@ void arm_branch_traces_after_return(bool success, unsigned long long trace_id, c
     }
 }
 
+CallerSelection capture_relevant_caller()
+{
+    CallerSelection result;
+    void* frames_raw[24] {};
+    const USHORT captured = CaptureStackBackTrace(0, static_cast<DWORD>(std::size(frames_raw)), frames_raw, nullptr);
+    result.frames.reserve(captured);
+    for (USHORT i = 0; i < captured; ++i)
+        result.frames.push_back(reinterpret_cast<uintptr_t>(frames_raw[i]));
+
+    uintptr_t first_bootstrapper = 0;
+    for (uintptr_t frame : result.frames)
+    {
+        if (!is_in_main_module(frame))
+            continue;
+        const unsigned long rva = main_module_rva(frame);
+        if (!first_bootstrapper)
+            first_bootstrapper = frame;
+        if (rva >= 0x00680000 && rva <= 0x006A0000)
+        {
+            result.selected_return = frame;
+            break;
+        }
+    }
+
+    if (!result.selected_return)
+        result.selected_return = first_bootstrapper;
+
+    return result;
+}
+
+void log_backtrace_selection(unsigned long long trace_id, const CallerSelection& sel, const std::string& image, const std::string& path)
+{
+    log_line("caller_select trace=%llu image=%s selected=0x%08lX frame_count=%u path=%s",
+        trace_id,
+        image.c_str(),
+        static_cast<unsigned long>(sel.selected_return),
+        static_cast<unsigned>(sel.frames.size()),
+        path.c_str());
+
+    const size_t limit = std::min<size_t>(sel.frames.size(), 8);
+    for (size_t i = 0; i < limit; ++i)
+    {
+        const uintptr_t frame = sel.frames[i];
+        if (is_in_main_module(frame))
+        {
+            log_line("caller_frame[%u]=0x%08lX module=plutonium-bootstrapper-win32.exe rva=0x%08lX",
+                static_cast<unsigned>(i),
+                static_cast<unsigned long>(frame),
+                main_module_rva(frame));
+        }
+        else
+        {
+            log_line("caller_frame[%u]=0x%08lX module=<other>",
+                static_cast<unsigned>(i),
+                static_cast<unsigned long>(frame));
+        }
+    }
+}
+
 extern "C" uintptr_t __cdecl on_return_trace_hit(SavedRegisters* saved)
 {
     ReturnTraceState state {};
@@ -592,10 +667,12 @@ extern "C" __declspec(naked) void return_trace_thunk()
     }
 }
 
-void maybe_install_return_trace(unsigned long long trace_id, const std::string& path)
+void maybe_install_return_trace(unsigned long long trace_id, uintptr_t selected_return, const std::string& path)
 {
     void** slot = reinterpret_cast<void**>(_AddressOfReturnAddress());
-    const uintptr_t ret = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uintptr_t ret = selected_return;
+    if (!ret)
+        return;
     if (ret != rva_to_va(kDispatchCallSiteRva))
         return;
 
@@ -629,7 +706,8 @@ void begin_asset_trace(HANDLE handle, const std::string& image, const std::strin
     trace.image = image;
     trace.path = path;
     trace.resolved = resolved;
-    trace.return_addr = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const CallerSelection caller = capture_relevant_caller();
+    trace.return_addr = caller.selected_return;
 
     {
         std::lock_guard<std::mutex> lock(g_state_mutex);
@@ -638,7 +716,9 @@ void begin_asset_trace(HANDLE handle, const std::string& image, const std::strin
 
     log_line("asset_trace_begin trace=%llu thread=%lu handle=0x%08lX image=%s path=%s resolved=%s return=0x%08lX",
         trace.trace_id, trace.thread_id, static_cast<unsigned long>(trace.handle), trace.image.c_str(), trace.path.c_str(), trace.resolved.c_str(), static_cast<unsigned long>(trace.return_addr));
-    maybe_install_return_trace(trace.trace_id, path);
+    if (path.find("\\,") != std::string::npos || image == "fxt_light_phosphorous" || image == "fxt_debris_clump" || image == "fxt_light_glow_square")
+        log_backtrace_selection(trace.trace_id, caller, image, path);
+    maybe_install_return_trace(trace.trace_id, trace.return_addr, path);
 }
 
 HANDLE WINAPI hook_create_file_a(LPCSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file)
