@@ -813,9 +813,10 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
 
     if (code == STATUS_BREAKPOINT)
     {
-        const uintptr_t addr = static_cast<uintptr_t>(ctx.Eip - 1);
         std::lock_guard<std::mutex> lock(g_state_mutex);
-        auto it = g_exec_traces.find(addr);
+        auto it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip - 1));
+        if (it == g_exec_traces.end() || !it->second.armed)
+            it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip));
         if (it == g_exec_traces.end() || !it->second.armed)
             return EXCEPTION_CONTINUE_SEARCH;
 
