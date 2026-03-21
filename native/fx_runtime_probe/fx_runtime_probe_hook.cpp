@@ -29,6 +29,9 @@ constexpr DWORD kSpecialOpenSuccessContinueRva = 0x0068E8C3;
 constexpr DWORD kSpecialOpenSuccessClass1ContinueRva = 0x0068E8D7;
 constexpr DWORD kSpecialOpenSuccessClass1CallTargetRva = 0x0068FF78;
 constexpr DWORD kSpecialOpenSuccessClass1PostCallRva = 0x0068E8E1;
+constexpr DWORD kTouchTraceDelayMs = 15000;
+constexpr size_t kTouchTraceChunkSize = 0x10000;
+constexpr size_t kTouchTraceMaxPages = 128;
 
 struct SavedRegisters
 {
@@ -91,6 +94,17 @@ struct ExecTracePoint
     std::string path;
 };
 
+struct TouchTraceTarget
+{
+    std::string label;
+    std::string text;
+    uintptr_t addr {};
+    uintptr_t page_base {};
+    DWORD original_protect {};
+    bool armed {};
+    bool hit {};
+};
+
 HMODULE g_self = nullptr;
 HMODULE g_main_module = nullptr;
 uintptr_t g_main_base = 0;
@@ -110,6 +124,8 @@ std::unordered_set<std::string> g_watch_techsets;
 std::unordered_map<uintptr_t, AssetTrace> g_active_handles;
 std::unordered_map<DWORD, ReturnTraceState> g_return_states;
 std::unordered_map<uintptr_t, ExecTracePoint> g_exec_traces;
+std::vector<TouchTraceTarget> g_touch_targets;
+std::unordered_map<uintptr_t, std::vector<size_t>> g_touch_pages;
 
 thread_local uintptr_t g_tls_rearm_addr = 0;
 thread_local bool g_tls_in_veh = false;
@@ -120,6 +136,8 @@ decltype(&ReadFile) g_real_read_file = nullptr;
 decltype(&CloseHandle) g_real_close_handle = nullptr;
 
 void* g_return_trace_thunk = nullptr;
+std::atomic<bool> g_touch_trace_started {false};
+std::atomic<bool> g_touch_trace_complete {false};
 
 HANDLE WINAPI hook_create_file_a(LPCSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
 HANDLE WINAPI hook_create_file_w(LPCWSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
@@ -332,6 +350,62 @@ void log_pointer_info(const char* name, uintptr_t value)
     }
 }
 
+const char* module_name_for_addr(uintptr_t value, unsigned long* rva_out = nullptr)
+{
+    for (const auto& module : g_modules)
+    {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(module.base);
+        if (value >= base && value < base + module.size)
+        {
+            if (rva_out)
+                *rva_out = static_cast<unsigned long>(value - base);
+            return module.name.c_str();
+        }
+    }
+    if (rva_out)
+        *rva_out = 0;
+    return "<unknown>";
+}
+
+void log_backtrace_frames(const char* prefix, unsigned skip = 0, unsigned max_frames = 8)
+{
+    void* frames_raw[32] {};
+    const USHORT captured = CaptureStackBackTrace(skip, std::min<unsigned>(max_frames, static_cast<unsigned>(std::size(frames_raw))), frames_raw, nullptr);
+    log_line("%s backtrace_count=%u", prefix, static_cast<unsigned>(captured));
+    for (USHORT i = 0; i < captured; ++i)
+    {
+        const uintptr_t frame = reinterpret_cast<uintptr_t>(frames_raw[i]);
+        unsigned long rva = 0;
+        const char* module_name = module_name_for_addr(frame, &rva);
+        if (std::strcmp(module_name, "<unknown>") == 0)
+            log_line("%s frame[%u]=0x%08lX module=<unknown>", prefix, static_cast<unsigned>(i), static_cast<unsigned long>(frame));
+        else
+            log_line("%s frame[%u]=0x%08lX module=%s rva=0x%08lX", prefix, static_cast<unsigned>(i), static_cast<unsigned long>(frame), module_name, rva);
+    }
+}
+
+bool region_is_readable(const MEMORY_BASIC_INFORMATION& mbi)
+{
+    if (mbi.State != MEM_COMMIT)
+        return false;
+    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+        return false;
+
+    const DWORD protect = mbi.Protect & 0xFFu;
+    switch (protect)
+    {
+    case PAGE_READONLY:
+    case PAGE_READWRITE:
+    case PAGE_WRITECOPY:
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_READWRITE:
+    case PAGE_EXECUTE_WRITECOPY:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void enumerate_modules()
 {
     g_modules.clear();
@@ -508,6 +582,156 @@ void install_file_hooks()
         static_cast<unsigned long>(reinterpret_cast<uintptr_t>(g_real_create_file_a)),
         static_cast<unsigned long>(reinterpret_cast<uintptr_t>(g_real_read_file)),
         static_cast<unsigned long>(reinterpret_cast<uintptr_t>(g_real_close_handle)));
+}
+
+std::vector<std::pair<std::string, std::string>> build_touch_needles()
+{
+    std::vector<std::pair<std::string, std::string>> needles;
+    needles.reserve(g_watch_images.size() * 2 + g_watch_materials.size() + g_watch_techsets.size());
+
+    for (const auto& image : g_watch_images)
+    {
+        needles.emplace_back("image", image);
+        if (!image.empty() && image.front() != ',')
+            needles.emplace_back("image", "," + image);
+    }
+    for (const auto& material : g_watch_materials)
+        needles.emplace_back("material", material);
+    for (const auto& techset : g_watch_techsets)
+        needles.emplace_back("techset", techset);
+
+    return needles;
+}
+
+void add_touch_target_locked(const std::string& label, const std::string& text, uintptr_t addr, DWORD original_protect)
+{
+    if (g_touch_targets.size() >= kTouchTraceMaxPages && g_touch_pages.find(addr & ~(static_cast<uintptr_t>(g_system_info.dwPageSize) - 1u)) == g_touch_pages.end())
+        return;
+
+    const uintptr_t page_base = addr & ~(static_cast<uintptr_t>(g_system_info.dwPageSize) - 1u);
+    for (const auto& existing : g_touch_targets)
+    {
+        if (existing.addr == addr && existing.text == text && existing.label == label)
+            return;
+    }
+
+    TouchTraceTarget target;
+    target.label = label;
+    target.text = text;
+    target.addr = addr;
+    target.page_base = page_base;
+    target.original_protect = original_protect & ~PAGE_GUARD;
+    g_touch_pages[page_base].push_back(g_touch_targets.size());
+    g_touch_targets.push_back(std::move(target));
+}
+
+void arm_touch_trace_pages()
+{
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    for (auto& target : g_touch_targets)
+    {
+        if (target.armed)
+            continue;
+        DWORD old = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(target.page_base), g_system_info.dwPageSize, target.original_protect | PAGE_GUARD, &old))
+            continue;
+        target.armed = true;
+    }
+
+    log_line("touch_trace_armed targets=%u pages=%u delay_ms=%lu",
+        static_cast<unsigned>(g_touch_targets.size()),
+        static_cast<unsigned>(g_touch_pages.size()),
+        static_cast<unsigned long>(kTouchTraceDelayMs));
+}
+
+void scan_touch_targets()
+{
+    const auto needles = build_touch_needles();
+    if (needles.empty())
+    {
+        log_line("touch_trace_scan skipped reason=no_needles");
+        return;
+    }
+
+    std::unordered_set<std::string> found_keys;
+    uintptr_t cursor = 0;
+    unsigned regions_scanned = 0;
+
+    while (true)
+    {
+        MEMORY_BASIC_INFORMATION mbi {};
+        const SIZE_T q = VirtualQuery(reinterpret_cast<void*>(cursor), &mbi, sizeof(mbi));
+        if (!q)
+            break;
+
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        const uintptr_t next = base + mbi.RegionSize;
+        if (next <= cursor)
+            break;
+        cursor = next;
+
+        if (!region_is_readable(mbi))
+            continue;
+        ++regions_scanned;
+
+        std::vector<unsigned char> buffer;
+        size_t offset = 0;
+        while (offset < mbi.RegionSize)
+        {
+            const size_t remaining = static_cast<size_t>(mbi.RegionSize - offset);
+            const size_t chunk = std::min(kTouchTraceChunkSize, remaining);
+            buffer.resize(chunk);
+            if (!safe_copy_memory(base + offset, buffer.data(), chunk))
+            {
+                offset += chunk;
+                continue;
+            }
+
+            for (const auto& needle : needles)
+            {
+                const std::string key = needle.first + ":" + needle.second;
+                if (found_keys.find(key) != found_keys.end())
+                    continue;
+                const auto it = std::search(buffer.begin(), buffer.end(), needle.second.begin(), needle.second.end());
+                if (it == buffer.end())
+                    continue;
+
+                add_touch_target_locked(needle.first, needle.second, base + offset + static_cast<size_t>(std::distance(buffer.begin(), it)), mbi.Protect);
+                found_keys.insert(key);
+            }
+
+            offset += chunk;
+        }
+    }
+
+    log_line("touch_trace_scan_complete needles=%u found=%u pages=%u regions=%u",
+        static_cast<unsigned>(needles.size()),
+        static_cast<unsigned>(found_keys.size()),
+        static_cast<unsigned>(g_touch_pages.size()),
+        regions_scanned);
+    for (const auto& target : g_touch_targets)
+    {
+        unsigned long rva = 0;
+        const char* module_name = module_name_for_addr(target.addr, &rva);
+        if (std::strcmp(module_name, "<unknown>") == 0)
+            log_line("touch_trace_target label=%s text=%s addr=0x%08lX page=0x%08lX module=<unknown>",
+                target.label.c_str(), target.text.c_str(), static_cast<unsigned long>(target.addr), static_cast<unsigned long>(target.page_base));
+        else
+            log_line("touch_trace_target label=%s text=%s addr=0x%08lX page=0x%08lX module=%s rva=0x%08lX",
+                target.label.c_str(), target.text.c_str(), static_cast<unsigned long>(target.addr), static_cast<unsigned long>(target.page_base), module_name, rva);
+    }
+}
+
+DWORD WINAPI touch_trace_thread(void*)
+{
+    g_touch_trace_started = true;
+    log_line("touch_trace_thread delay_ms=%lu", static_cast<unsigned long>(kTouchTraceDelayMs));
+    Sleep(kTouchTraceDelayMs);
+    enumerate_modules();
+    scan_touch_targets();
+    arm_touch_trace_pages();
+    g_touch_trace_complete = true;
+    return 0;
 }
 
 uintptr_t rva_to_va(DWORD rva)
@@ -835,6 +1059,66 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
     if (g_tls_in_veh)
         return EXCEPTION_CONTINUE_SEARCH;
 
+    if (code == STATUS_GUARD_PAGE_VIOLATION)
+    {
+        g_tls_in_veh = true;
+        const uintptr_t fault_addr = static_cast<uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
+        const uintptr_t page_base = fault_addr & ~(static_cast<uintptr_t>(g_system_info.dwPageSize) - 1u);
+
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        auto page_it = g_touch_pages.find(page_base);
+        if (page_it == g_touch_pages.end())
+        {
+            g_tls_in_veh = false;
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        bool any_armed = false;
+        DWORD restore_protect = PAGE_READONLY;
+        for (size_t index : page_it->second)
+        {
+            if (index >= g_touch_targets.size())
+                continue;
+            auto& target = g_touch_targets[index];
+            if (!target.armed)
+                continue;
+            any_armed = true;
+            restore_protect = target.original_protect;
+            target.armed = false;
+            target.hit = true;
+        }
+        if (!any_armed)
+        {
+            g_tls_in_veh = false;
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        DWORD old = 0;
+        VirtualProtect(reinterpret_cast<void*>(page_base), g_system_info.dwPageSize, restore_protect, &old);
+
+        log_line("touch_trace_hit page=0x%08lX fault=0x%08lX eip=0x%08lX targets=%u",
+            static_cast<unsigned long>(page_base),
+            static_cast<unsigned long>(fault_addr),
+            ctx.Eip,
+            static_cast<unsigned>(page_it->second.size()));
+        for (size_t index : page_it->second)
+        {
+            if (index >= g_touch_targets.size())
+                continue;
+            const auto& target = g_touch_targets[index];
+            log_line("touch_trace_target_hit label=%s text=%s addr=0x%08lX hit=%d",
+                target.label.c_str(),
+                target.text.c_str(),
+                static_cast<unsigned long>(target.addr),
+                target.hit ? 1 : 0);
+        }
+        log_register_block(ctx);
+        log_bytes_around("touch_trace_eip bytes", ctx.Eip);
+        log_backtrace_frames("touch_trace", 0, 10);
+        g_tls_in_veh = false;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
     if (code == STATUS_BREAKPOINT)
     {
         g_tls_in_veh = true;
@@ -956,6 +1240,16 @@ DWORD WINAPI init_thread(void*)
     AddVectoredExceptionHandler(1, probe_veh);
     install_file_hooks();
     log_line("guard_watches=disabled");
+    HANDLE touch_thread = CreateThread(nullptr, 0, touch_trace_thread, nullptr, 0, nullptr);
+    if (touch_thread)
+    {
+        log_line("touch_trace_thread_started");
+        CloseHandle(touch_thread);
+    }
+    else
+    {
+        log_line("touch_trace_thread_failed gle=%lu", GetLastError());
+    }
     log_line("hook_install_complete installed=0");
     return 0;
 }
