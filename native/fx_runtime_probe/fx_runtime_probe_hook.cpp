@@ -112,6 +112,7 @@ std::unordered_map<DWORD, ReturnTraceState> g_return_states;
 std::unordered_map<uintptr_t, ExecTracePoint> g_exec_traces;
 
 thread_local uintptr_t g_tls_rearm_addr = 0;
+thread_local bool g_tls_in_veh = false;
 
 decltype(&CreateFileA) g_real_create_file_a = nullptr;
 decltype(&CreateFileW) g_real_create_file_w = nullptr;
@@ -291,26 +292,44 @@ void log_register_block(const CONTEXT& ctx)
 
 void log_pointer_info(const char* name, uintptr_t value)
 {
-    MEMORY_BASIC_INFORMATION mbi {};
-    VirtualQuery(reinterpret_cast<void*>(value), &mbi, sizeof(mbi));
-    const char* module_name = "<unknown>";
-    unsigned long rva = 0;
-    for (const auto& module : g_modules)
+    __try
     {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(module.base);
-        if (value >= base && value < base + module.size)
+        MEMORY_BASIC_INFORMATION mbi {};
+        const SIZE_T q = VirtualQuery(reinterpret_cast<void*>(value), &mbi, sizeof(mbi));
+        const char* module_name = "<unknown>";
+        unsigned long rva = 0;
+        for (const auto& module : g_modules)
         {
-            module_name = module.name.c_str();
-            rva = static_cast<unsigned long>(value - base);
-            break;
+            const uintptr_t base = reinterpret_cast<uintptr_t>(module.base);
+            if (value >= base && value < base + module.size)
+            {
+                module_name = module.name.c_str();
+                rva = static_cast<unsigned long>(value - base);
+                break;
+            }
         }
+        log_line("%s addr=0x%08lX module=%s%s%08lX", name, static_cast<unsigned long>(value), module_name, std::strcmp(module_name, "<unknown>") ? " rva=0x" : "", rva);
+        if (!q || !mbi.BaseAddress)
+            return;
+        log_line("%s mem base=0x%08lX size=0x%08lX protect=0x%08lX type=0x%08lX state=0x%08lX",
+            name,
+            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(mbi.BaseAddress)),
+            static_cast<unsigned long>(mbi.RegionSize),
+            static_cast<unsigned long>(mbi.Protect),
+            static_cast<unsigned long>(mbi.Type),
+            static_cast<unsigned long>(mbi.State));
+        if (mbi.State != MEM_COMMIT)
+            return;
+        if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+            return;
+        DWORD dword = 0;
+        if (safe_copy_memory(value, &dword, sizeof(dword)))
+            log_line("%s dword=0x%08lX", name, dword);
     }
-    log_line("%s addr=0x%08lX module=%s%s%08lX", name, static_cast<unsigned long>(value), module_name, std::strcmp(module_name, "<unknown>") ? " rva=0x" : "", rva);
-    if (mbi.BaseAddress)
-        log_line("%s mem base=0x%08lX size=0x%08lX protect=0x%08lX type=0x%08lX", name, static_cast<unsigned long>(reinterpret_cast<uintptr_t>(mbi.BaseAddress)), static_cast<unsigned long>(mbi.RegionSize), static_cast<unsigned long>(mbi.Protect), static_cast<unsigned long>(mbi.Type));
-    DWORD dword = 0;
-    if (safe_copy_memory(value, &dword, sizeof(dword)))
-        log_line("%s dword=0x%08lX", name, dword);
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        log_line("%s pointer_info_fault addr=0x%08lX", name, static_cast<unsigned long>(value));
+    }
 }
 
 void enumerate_modules()
@@ -811,14 +830,21 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
     const DWORD code = info->ExceptionRecord->ExceptionCode;
     CONTEXT& ctx = *info->ContextRecord;
 
+    if (g_tls_in_veh)
+        return EXCEPTION_CONTINUE_SEARCH;
+
     if (code == STATUS_BREAKPOINT)
     {
+        g_tls_in_veh = true;
         std::lock_guard<std::mutex> lock(g_state_mutex);
         auto it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip - 1));
         if (it == g_exec_traces.end() || !it->second.armed)
             it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip));
         if (it == g_exec_traces.end() || !it->second.armed)
+        {
+            g_tls_in_veh = false;
             return EXCEPTION_CONTINUE_SEARCH;
+        }
 
         ExecTracePoint& point = it->second;
         patch_byte(point.addr, point.original, nullptr);
@@ -851,11 +877,13 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             arm_exec_trace("special_open_class1_call_entry", rva_to_va(kSpecialOpenSuccessClass1CallTargetRva), point.trace_id, point.path);
             arm_exec_trace("special_open_class1_postcall", rva_to_va(kSpecialOpenSuccessClass1PostCallRva), point.trace_id, point.path);
         }
+        g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
     if (code == STATUS_SINGLE_STEP && g_tls_rearm_addr)
     {
+        g_tls_in_veh = true;
         std::lock_guard<std::mutex> lock(g_state_mutex);
         auto it = g_exec_traces.find(g_tls_rearm_addr);
         if (it != g_exec_traces.end() && it->second.hits < it->second.max_hits)
@@ -865,6 +893,7 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         }
         g_tls_rearm_addr = 0;
         ctx.EFlags &= ~0x100u;
+        g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
