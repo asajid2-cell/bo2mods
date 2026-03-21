@@ -398,11 +398,6 @@ bool patch_imports_in_module(HMODULE module, const char* target_name, void* repl
     auto* imports = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(reinterpret_cast<unsigned char*>(module) + dir.VirtualAddress);
     for (; imports->Name; ++imports)
     {
-        const char* dll_name = reinterpret_cast<const char*>(reinterpret_cast<unsigned char*>(module) + imports->Name);
-        std::string dll_lower = to_lower_copy(dll_name);
-        if (dll_lower != "kernel32.dll" && dll_lower != "kernelbase.dll")
-            continue;
-
         auto* orig = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + imports->OriginalFirstThunk);
         auto* thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + imports->FirstThunk);
         if (!imports->OriginalFirstThunk)
