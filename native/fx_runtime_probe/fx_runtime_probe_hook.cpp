@@ -808,6 +808,16 @@ void begin_step_trace_locked(DWORD thread_id, const char* label, unsigned long l
         path.c_str());
 }
 
+bool bytes_match(uintptr_t addr, const BYTE* expected, size_t size)
+{
+    BYTE buffer[32] {};
+    if (size > sizeof(buffer))
+        return false;
+    if (!safe_copy_memory(addr, buffer, size))
+        return false;
+    return std::memcmp(buffer, expected, size) == 0;
+}
+
 bool patch_byte(uintptr_t addr, BYTE value, BYTE* original = nullptr)
 {
     DWORD old = 0;
@@ -854,10 +864,34 @@ void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_
 void arm_consumer_exec_traces()
 {
     std::lock_guard<std::mutex> lock(g_state_mutex);
-    arm_exec_trace_locked("consumer_image_class_map", rva_to_va(kConsumerImageClassMapRva), 0, "consumer_probe");
-    arm_exec_trace_locked("consumer_asset_class_lookup", rva_to_va(kConsumerAssetClassLookupRva), 0, "consumer_probe");
-    arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), 0, "consumer_probe");
-    arm_exec_trace_locked("consumer_submit_flags", rva_to_va(kConsumerSubmitFlagsRva), 0, "consumer_probe");
+    struct ConsumerSpec
+    {
+        const char* label;
+        DWORD rva;
+        BYTE bytes[10];
+        size_t size;
+    };
+
+    static const ConsumerSpec specs[] = {
+        {"consumer_image_class_map", kConsumerImageClassMapRva, {0x8B, 0x04, 0x85, 0x28, 0x4A, 0xD2, 0x00, 0x89, 0x06}, 9},
+        {"consumer_asset_class_lookup", kConsumerAssetClassLookupRva, {0x0F, 0xB7, 0x41, 0x06, 0x33, 0xDB, 0x89, 0x44, 0x24, 0x14}, 10},
+        {"consumer_render_table", kConsumerRenderTableRva, {0x66, 0x83, 0x3E, 0x00, 0x75, 0x7C, 0xEB, 0x04}, 8},
+        {"consumer_submit_flags", kConsumerSubmitFlagsRva, {0xF7, 0x86, 0x20, 0xFF, 0xFF, 0xFF, 0x00, 0x20, 0x00, 0x00}, 10},
+    };
+
+    for (const auto& spec : specs)
+    {
+        const uintptr_t addr = rva_to_va(spec.rva);
+        if (!bytes_match(addr, spec.bytes, spec.size))
+        {
+            log_line("consumer_trace_skip label=%s addr=0x%08lX reason=signature_mismatch",
+                spec.label,
+                static_cast<unsigned long>(addr));
+            log_bytes_around("consumer_trace_skip bytes", addr, 8, 16);
+            continue;
+        }
+        arm_exec_trace_locked(spec.label, addr, 0, "consumer_probe");
+    }
 }
 
 void arm_branch_traces_after_return(bool success, unsigned long long trace_id, const std::string& path)
