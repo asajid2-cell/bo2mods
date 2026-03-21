@@ -558,9 +558,6 @@ void arm_branch_traces_after_return(bool success, unsigned long long trace_id, c
     if (success)
     {
         arm_exec_trace("special_open_success_branch", rva_to_va(kSpecialOpenSuccessBranchRva), trace_id, path);
-        arm_exec_trace("special_open_success_postcall", rva_to_va(kSpecialOpenSuccessPostCallRva), trace_id, path);
-        arm_exec_trace("special_open_success_continue", rva_to_va(kSpecialOpenSuccessContinueRva), trace_id, path);
-        arm_exec_trace("special_open_success_class1_continue", rva_to_va(kSpecialOpenSuccessClass1ContinueRva), trace_id, path);
         log_line("branch_trace_request kind=success target1=0x%08lX target2=0x%08lX trace=%llu path=%s",
             static_cast<unsigned long>(rva_to_va(kSpecialOpenSuccessBranchRva)),
             static_cast<unsigned long>(rva_to_va(kSpecialOpenSuccessContinueRva)),
@@ -876,6 +873,18 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                 point.path.c_str());
             arm_exec_trace("special_open_class1_call_entry", rva_to_va(kSpecialOpenSuccessClass1CallTargetRva), point.trace_id, point.path);
             arm_exec_trace("special_open_class1_postcall", rva_to_va(kSpecialOpenSuccessClass1PostCallRva), point.trace_id, point.path);
+        }
+        else if (point.label == "special_open_success_branch")
+        {
+            arm_exec_trace("special_open_success_postcall", rva_to_va(kSpecialOpenSuccessPostCallRva), point.trace_id, point.path);
+        }
+        else if (point.label == "special_open_success_postcall")
+        {
+            arm_exec_trace("special_open_success_continue", rva_to_va(kSpecialOpenSuccessContinueRva), point.trace_id, point.path);
+        }
+        else if (point.label == "special_open_success_continue")
+        {
+            arm_exec_trace("special_open_success_class1_continue", rva_to_va(kSpecialOpenSuccessClass1ContinueRva), point.trace_id, point.path);
         }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
