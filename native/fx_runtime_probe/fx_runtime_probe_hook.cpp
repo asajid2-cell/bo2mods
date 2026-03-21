@@ -528,7 +528,7 @@ bool patch_byte(uintptr_t addr, BYTE value, BYTE* original = nullptr)
     return true;
 }
 
-void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 8)
+void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 1)
 {
     auto& point = g_exec_traces[addr];
     point.label = label;
@@ -552,7 +552,7 @@ void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long
     }
 }
 
-void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 8)
+void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits = 1)
 {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     arm_exec_trace_locked(label, addr, trace_id, path, max_hits);
@@ -852,8 +852,13 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         patch_byte(point.addr, point.original, nullptr);
         point.armed = false;
         point.hits += 1;
-        g_tls_rearm_addr = point.addr;
-        ctx.EFlags |= 0x100;
+        g_tls_rearm_addr = 0;
+        const bool should_rearm = point.max_hits > 1 && point.hits < point.max_hits;
+        if (should_rearm)
+        {
+            g_tls_rearm_addr = point.addr;
+            ctx.EFlags |= 0x100;
+        }
         ctx.Eip = static_cast<DWORD>(point.addr);
 
         log_line("exec_trace_hit label=%s hit=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
