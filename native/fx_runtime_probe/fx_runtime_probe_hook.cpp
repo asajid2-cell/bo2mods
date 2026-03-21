@@ -1368,6 +1368,7 @@ DWORD WINAPI init_thread(void*)
 
     AddVectoredExceptionHandler(1, probe_veh);
     install_file_hooks();
+    arm_consumer_exec_traces();
     log_line("guard_watches=disabled");
     HANDLE touch_thread = CreateThread(nullptr, 0, touch_trace_thread, nullptr, 0, nullptr);
     if (touch_thread)
