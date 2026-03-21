@@ -383,46 +383,66 @@ bool patch_imports_in_module(HMODULE module, const char* target_name, void* repl
     if (!module)
         return false;
 
-    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(module);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE)
-        return false;
-    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<unsigned char*>(module) + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE)
-        return false;
-
-    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (!dir.VirtualAddress || !dir.Size)
-        return false;
-
-    bool touched = false;
-    auto* imports = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(reinterpret_cast<unsigned char*>(module) + dir.VirtualAddress);
-    for (; imports->Name; ++imports)
+    __try
     {
-        auto* orig = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + imports->OriginalFirstThunk);
-        auto* thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + imports->FirstThunk);
-        if (!imports->OriginalFirstThunk)
-            orig = thunk;
+        auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(module);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+            return false;
+        auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<unsigned char*>(module) + dos->e_lfanew);
+        if (nt->Signature != IMAGE_NT_SIGNATURE)
+            return false;
 
-        for (; orig->u1.AddressOfData; ++orig, ++thunk)
+        const DWORD image_size = nt->OptionalHeader.SizeOfImage;
+        const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (!dir.VirtualAddress || !dir.Size)
+            return false;
+        if (dir.VirtualAddress >= image_size || dir.VirtualAddress + dir.Size > image_size)
+            return false;
+
+        bool touched = false;
+        auto* imports = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(reinterpret_cast<unsigned char*>(module) + dir.VirtualAddress);
+        const size_t max_desc = dir.Size / sizeof(IMAGE_IMPORT_DESCRIPTOR);
+        for (size_t desc_index = 0; desc_index < max_desc && imports[desc_index].Name; ++desc_index)
         {
-            if (IMAGE_SNAP_BY_ORDINAL(orig->u1.Ordinal))
+            auto& import_desc = imports[desc_index];
+            if (import_desc.FirstThunk >= image_size)
                 continue;
-            auto* by_name = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(reinterpret_cast<unsigned char*>(module) + orig->u1.AddressOfData);
-            if (std::strcmp(reinterpret_cast<const char*>(by_name->Name), target_name) != 0)
+            if (import_desc.OriginalFirstThunk && import_desc.OriginalFirstThunk >= image_size)
                 continue;
 
-            DWORD old = 0;
-            if (!VirtualProtect(&thunk->u1.Function, sizeof(void*), PAGE_READWRITE, &old))
-                continue;
-            if (original_out && !*original_out)
-                *original_out = reinterpret_cast<void*>(thunk->u1.Function);
-            thunk->u1.Function = reinterpret_cast<ULONG_PTR>(replacement);
-            VirtualProtect(&thunk->u1.Function, sizeof(void*), old, &old);
-            FlushInstructionCache(GetCurrentProcess(), &thunk->u1.Function, sizeof(void*));
-            touched = true;
+            auto* orig = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + (import_desc.OriginalFirstThunk ? import_desc.OriginalFirstThunk : import_desc.FirstThunk));
+            auto* thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(reinterpret_cast<unsigned char*>(module) + import_desc.FirstThunk);
+
+            for (size_t thunk_index = 0; thunk_index < 16384 && orig[thunk_index].u1.AddressOfData; ++thunk_index)
+            {
+                auto& orig_thunk = orig[thunk_index];
+                auto& iat_thunk = thunk[thunk_index];
+                if (IMAGE_SNAP_BY_ORDINAL(orig_thunk.u1.Ordinal))
+                    continue;
+                if (orig_thunk.u1.AddressOfData >= image_size)
+                    continue;
+
+                auto* by_name = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(reinterpret_cast<unsigned char*>(module) + orig_thunk.u1.AddressOfData);
+                if (std::strcmp(reinterpret_cast<const char*>(by_name->Name), target_name) != 0)
+                    continue;
+
+                DWORD old = 0;
+                if (!VirtualProtect(&iat_thunk.u1.Function, sizeof(void*), PAGE_READWRITE, &old))
+                    continue;
+                if (original_out && !*original_out)
+                    *original_out = reinterpret_cast<void*>(iat_thunk.u1.Function);
+                iat_thunk.u1.Function = reinterpret_cast<ULONG_PTR>(replacement);
+                VirtualProtect(&iat_thunk.u1.Function, sizeof(void*), old, &old);
+                FlushInstructionCache(GetCurrentProcess(), &iat_thunk.u1.Function, sizeof(void*));
+                touched = true;
+            }
         }
+        return touched;
     }
-    return touched;
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
 }
 
 void install_file_hooks()
@@ -434,6 +454,10 @@ void install_file_hooks()
 
     for (const auto& module : g_modules)
     {
+        if (module.base == g_self)
+            continue;
+        if (module.name == "ntdll.dll" || module.name == "kernel32.dll" || module.name == "kernelbase.dll")
+            continue;
         create_w_count += patch_imports_in_module(module.base, "CreateFileW", reinterpret_cast<void*>(&hook_create_file_w), reinterpret_cast<void**>(&g_real_create_file_w)) ? 1 : 0;
         create_a_count += patch_imports_in_module(module.base, "CreateFileA", reinterpret_cast<void*>(&hook_create_file_a), reinterpret_cast<void**>(&g_real_create_file_a)) ? 1 : 0;
         read_count += patch_imports_in_module(module.base, "ReadFile", reinterpret_cast<void*>(&hook_read_file), reinterpret_cast<void**>(&g_real_read_file)) ? 1 : 0;
