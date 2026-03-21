@@ -1,6 +1,8 @@
 param(
     [switch]$Launch,
     [switch]$InjectProbe,
+    [ValidateSet("safe", "render_opacity_focus")]
+    [string]$ProbeMode = "safe",
     [switch]$EnableProbeGuards,
     [string]$ProbeGuardLabel = "material",
     [string]$ProbeGuardNeedle = "gfx_light_phosphorous_em_i1024",
@@ -38,6 +40,7 @@ $probeBinRoot = Join-Path $probeRoot "bin\x86\Release"
 $probeLogPath = Join-Path $probeBinRoot "fx_runtime_probe.log"
 $probeLatestBuildJson = Join-Path $probeBinRoot "fx_runtime_probe_latest_build.json"
 $probeGuardConfigPath = Join-Path $probeRoot "active_guard_config.txt"
+$probeModeConfigPath = Join-Path $probeRoot "active_probe_mode.txt"
 
 $runtimeFiles = @(
     @{
@@ -180,6 +183,12 @@ if ($InjectProbe) {
     if (Test-Path $probeGuardConfigPath) {
         Remove-Item -Path $probeGuardConfigPath -Force
     }
+    @("mode=$ProbeMode") | Set-Content -Path $probeModeConfigPath -Encoding ASCII
+    if (-not (Test-Path $probeModeConfigPath)) {
+        throw "Failed to write probe mode config: $probeModeConfigPath"
+    }
+    Write-Host "Probe mode config: $probeModeConfigPath"
+    Get-Content $probeModeConfigPath | ForEach-Object { Write-Host "  $_" }
     if ($expectedProbeBuild) {
         Write-Host "Expecting probe build: $expectedProbeBuild"
     }

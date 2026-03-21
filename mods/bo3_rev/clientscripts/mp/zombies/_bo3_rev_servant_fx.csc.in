@@ -1,0 +1,269 @@
+// T6 GSC SOURCE
+// Dedicated T6-native Servant FX bridge. Registered from zm_transit.csc.
+// Runtime ownership is the stock equipment_activated clientfield path so the
+// rewritten BO3 FX payload is exercised through a proven client callback lane.
+
+init()
+{
+    if ( isdefined( level.bo3_rev_v3_servant_client_init ) )
+        return;
+
+    level.bo3_rev_v3_servant_client_init = 1;
+    println( "[bo3_rev][cscv3] init build=__BUILD_TAG__" );
+
+    if ( __SERVANT_VORTEX_DEBUG_MARKERS__ )
+        level._effect["bo3_rev_v3_debug_marker"] = bo3_rev_v3_loadfx_safe( "maps/zombie/fx_zmb_tranzit_marker_glow" );
+
+    if ( __SERVANT_ENABLE_PROJECTILE__ )
+    {
+        level._effect["bo3_rev_v3_servant_projectile_trail"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_projectile_zod_zmb" );
+        level._effect["bo3_rev_v3_servant_projectile_glow"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_hole_xsm_zod_zmb" );
+    }
+    if ( __SERVANT_ENABLE_VORTEX_SHELL__ )
+        level._effect["bo3_rev_v3_servant_vortex_shell"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_hole_sm_zod_zmb" );
+    if ( __SERVANT_ENABLE_VORTEX_LOOP__ )
+        level._effect["bo3_rev_v3_servant_vortex_loop"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_hole_lg_zod_zmb" );
+    if ( __SERVANT_ENABLE_VORTEX_INNER__ )
+        level._effect["bo3_rev_v3_servant_vortex_inner"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_hole_xsm_zod_zmb" );
+    if ( __SERVANT_ENABLE_VORTEX_BURST__ )
+        level._effect["bo3_rev_v3_servant_vortex_burst"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_vortex_explo_zod_zmb" );
+    level._effect["bo3_rev_v3_servant_vortex_end"] = bo3_rev_v3_loadfx_safe( "zombie/fx_idgun_hole_xl_zod_zmb" );
+    clientscripts\mp\zombies\_zm_equipment::add_equip_activated_callback_override(
+        bo3_rev_v3_servant_bridge_model_asset(),
+        ::bo3_rev_v3_equipment_bridge_cb
+    );
+    println( "[bo3_rev][cscv3] bridge_mode=equipment model=" + bo3_rev_v3_servant_bridge_model_asset() );
+}
+
+bo3_rev_v3_servant_bridge_model_asset()
+{
+    return "__BRIDGE_WORLD_MODEL_ASSET__";
+}
+
+bo3_rev_v3_loadfx_safe(name)
+{
+    fx = loadfx( name );
+    if ( isdefined( fx ) && fx )
+    {
+        println( "[bo3_rev][cscv3] loadfx ok name=" + name );
+        return fx;
+    }
+
+    println( "[bo3_rev][cscv3] loadfx fail name=" + name );
+
+    return undefined;
+}
+
+bo3_rev_v3_playfxontag_safe(localclientnum, key, ent, tag)
+{
+    if ( !isdefined( ent ) )
+        return -1;
+
+    if ( !isdefined( level._effect[key] ) || !level._effect[key] )
+        return -1;
+
+    fx_handle = playfxontag( localclientnum, level._effect[key], ent, tag );
+    ent_num = -1;
+    if ( isdefined( ent ) )
+        ent_num = ent getentitynumber();
+    println( "[bo3_rev][cscv3] playfxontag key=" + key + " ent=" + ent_num + " tag=" + tag + " handle=" + fx_handle );
+    return fx_handle;
+}
+
+bo3_rev_v3_deletefx_safe(localclientnum, fx_handle)
+{
+    if ( isdefined( fx_handle ) && fx_handle != -1 )
+        deletefx( localclientnum, fx_handle );
+}
+
+bo3_rev_v3_playfx_safe(localclientnum, key, origin)
+{
+    if ( !isdefined( level._effect[key] ) || !level._effect[key] )
+        return -1;
+
+    fx_handle = playfx( localclientnum, level._effect[key], origin );
+    println( "[bo3_rev][cscv3] playfx key=" + key + " origin=" + origin + " handle=" + fx_handle );
+    return fx_handle;
+}
+
+bo3_rev_v3_resolve_client_host(localclientnum, ent)
+{
+    if ( !isdefined( ent ) )
+        return undefined;
+
+    ent_num = ent getentitynumber();
+    if ( !isdefined( ent_num ) || ent_num < 0 )
+        return ent;
+
+    ent_for_client = getentbynum( localclientnum, ent_num );
+    if ( isdefined( ent_for_client ) )
+    {
+        println( "[bo3_rev][cscv3] client host localclient=" + localclientnum + " server_ent=" + ent_num + " client_ent=" + ent_for_client getentitynumber() );
+        return ent_for_client;
+    }
+
+    println( "[bo3_rev][cscv3] client host fallback localclient=" + localclientnum + " ent=" + ent_num );
+    return ent;
+}
+
+bo3_rev_v3_first_localclient()
+{
+    players = getlocalplayers();
+    if ( !isdefined( players ) || players.size <= 0 )
+        return 0;
+
+    return 0;
+}
+
+bo3_rev_v3_probe_origin(origin, x, y, z)
+{
+    return ( origin[0] + x, origin[1] + y, origin[2] + z );
+}
+
+bo3_rev_v3_servant_vortex_origin(origin)
+{
+    return bo3_rev_v3_probe_origin( origin, 0, 0, 24 );
+}
+
+bo3_rev_v3_servant_vortex_pull_lifetime()
+{
+    return 4.0;
+}
+
+bo3_rev_v3_servant_vortex_lifetime()
+{
+    return 6.0;
+}
+
+bo3_rev_v3_servant_vortex_stop_delay()
+{
+    return 0.25;
+}
+
+bo3_rev_v3_equipment_bridge_cb( localclientnum, oldval, newval, bnewent, binitialsnap, fieldname, bwasdemojump )
+{
+    println(
+        "[bo3_rev][cscv3] equipment bridge localclient=" + localclientnum
+        + " old=" + oldval
+        + " new=" + newval
+        + " ent=" + self getentitynumber()
+        + " model=" + self.model
+    );
+
+    if ( newval == 1 )
+    {
+        if ( !__SERVANT_ENABLE_PROJECTILE__ )
+            return;
+        self thread bo3_rev_v3_servant_projectile_fx_thread( localclientnum );
+        return;
+    }
+
+    if ( newval == 2 )
+    {
+        level thread bo3_rev_v3_servant_vortex_fx_thread( localclientnum, self.origin, self getentitynumber() );
+    }
+}
+
+bo3_rev_v3_spawn_local_anchor(localclientnum, origin)
+{
+    // Disabled as an active host path. A local script_model with setmodel("tag_origin")
+    // returns handles, but does not appear to provide a valid attachment host for T6 FX.
+    // Keep the helper as a logging stub in case we need it again.
+    println( "[bo3_rev][cscv3] local anchor bypass localclient=" + localclientnum + " origin=" + origin );
+    return undefined;
+
+    anchor = spawn( localclientnum, origin, "script_model" );
+    if ( !isdefined( anchor ) )
+    {
+        println( "[bo3_rev][cscv3] local anchor fail localclient=" + localclientnum + " origin=" + origin );
+        return undefined;
+    }
+
+    anchor setmodel( "tag_origin" );
+    println( "[bo3_rev][cscv3] local anchor ok localclient=" + localclientnum + " ent=" + anchor getentitynumber() + " origin=" + origin );
+    return anchor;
+}
+
+bo3_rev_v3_client_anchor_follow(parent)
+{
+    self endon( "death" );
+
+    while ( isdefined( parent ) )
+    {
+        self.origin = parent.origin;
+        wait 0.05;
+    }
+}
+
+bo3_rev_v3_servant_projectile_fx_thread(localclientnum)
+{
+    while ( !clienthassnapshot( localclientnum ) )
+        wait 0.05;
+
+    println( "[bo3_rev][cscv3] projectile fx thread localclient=" + localclientnum + " ent=" + self getentitynumber() );
+
+    fx_host = bo3_rev_v3_resolve_client_host( localclientnum, self );
+
+    trail = bo3_rev_v3_playfxontag_safe( localclientnum, "bo3_rev_v3_servant_projectile_trail", fx_host, "tag_origin" );
+    glow = bo3_rev_v3_playfxontag_safe( localclientnum, "bo3_rev_v3_servant_projectile_glow", fx_host, "tag_origin" );
+
+    self waittill( "entityshutdown" );
+
+    bo3_rev_v3_deletefx_safe( localclientnum, trail );
+    bo3_rev_v3_deletefx_safe( localclientnum, glow );
+}
+
+bo3_rev_v3_servant_vortex_fx_thread(localclientnum, bridge_origin, bridge_entnum)
+{
+    while ( !clienthassnapshot( localclientnum ) )
+        wait 0.05;
+
+    vortex_origin = bo3_rev_v3_servant_vortex_origin( bridge_origin );
+    println(
+        "[bo3_rev][cscv3] vortex fx thread localclient=" + localclientnum
+        + " ent=" + bridge_entnum
+        + " bridge_origin=" + bridge_origin
+        + " vortex_origin=" + vortex_origin
+    );
+
+    if ( __SERVANT_VORTEX_DEBUG_MARKERS__ )
+    {
+        debug_bridge = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_debug_marker", bridge_origin );
+        debug_vortex = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_debug_marker", vortex_origin );
+        println(
+            "[bo3_rev][cscv3] debug markers bridge_origin=" + bridge_origin
+            + " vortex_origin=" + vortex_origin
+            + " bridge_handle=" + debug_bridge
+            + " vortex_handle=" + debug_vortex
+        );
+    }
+
+    burst = -1;
+    shell = -1;
+    loop_fx = -1;
+    inner = -1;
+
+    if ( __SERVANT_ENABLE_VORTEX_BURST__ )
+        burst = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_servant_vortex_burst", vortex_origin );
+    if ( __SERVANT_ENABLE_VORTEX_SHELL__ )
+        shell = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_servant_vortex_shell", vortex_origin );
+    if ( __SERVANT_ENABLE_VORTEX_LOOP__ )
+        loop_fx = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_servant_vortex_loop", vortex_origin );
+    if ( __SERVANT_ENABLE_VORTEX_INNER__ )
+        inner = bo3_rev_v3_playfx_safe( localclientnum, "bo3_rev_v3_servant_vortex_inner", vortex_origin );
+
+    wait bo3_rev_v3_servant_vortex_lifetime();
+
+    bo3_rev_v3_deletefx_safe( localclientnum, burst );
+    bo3_rev_v3_deletefx_safe( localclientnum, shell );
+    bo3_rev_v3_deletefx_safe( localclientnum, loop_fx );
+    bo3_rev_v3_deletefx_safe( localclientnum, inner );
+
+    wait bo3_rev_v3_servant_vortex_stop_delay();
+
+    if ( isdefined( level._effect["bo3_rev_v3_servant_vortex_end"] ) && level._effect["bo3_rev_v3_servant_vortex_end"] )
+    {
+        end_origin = vortex_origin;
+        playfx( localclientnum, level._effect["bo3_rev_v3_servant_vortex_end"], end_origin, ( 0, 0, 1 ) );
+    }
+}

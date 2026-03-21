@@ -1,0 +1,461 @@
+{
+  "raw_fx_root": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx",
+  "root_effects": [
+    "zombie/fx_idgun_muz_1p_zmb",
+    "zombie/fx_idgun_muz_3p_zmb",
+    "zombie/fx_idgun_projectile_zod_zmb",
+    "zombie/fx_idgun_vortex_explo_zod_zmb",
+    "zombie/fx_idgun_vortex_zod_zmb"
+  ],
+  "resolved_effect_count": 11,
+  "missing_effects": [],
+  "all_visual_materials": [
+    "gfx_debris_clump_em",
+    "gfx_debris_trash_multiple_em",
+    "gfx_decal_exp_blast_01",
+    "gfx_decal_exp_blast_03",
+    "gfx_distort_ring_hvy",
+    "gfx_distort_ring_ripple",
+    "gfx_dust_gen_em",
+    "gfx_dust_gen_lit",
+    "gfx_fire_flame_base_1_anim_em_i1024",
+    "gfx_fire_flame_base_2_anim_em_i1024",
+    "gfx_fog_slow_lg_anim_em",
+    "gfx_fog_slow_lg_anim_em_i1024",
+    "gfx_fog_slow_md_anim_lit",
+    "gfx_fog_slow_sm_anim_lit",
+    "gfx_gel_splat_radial_em",
+    "gfx_gel_splat_side_em",
+    "gfx_gel_splat_spread_em",
+    "gfx_gel_splat_wide_em",
+    "gfx_gib_metal_01_lit",
+    "gfx_gib_metal_02_lit",
+    "gfx_light_phosphorous_em",
+    "gfx_light_phosphorous_em_i1024",
+    "gfx_shockwave_anim_em",
+    "gfx_shockwave_elec_anim_em_i2048",
+    "gfx_smk_puff_light_varied",
+    "gfx_smk_whisp_anim_em",
+    "gfx_spark_blink_anim_em",
+    "gfx_water_bubble_em",
+    "gfx_water_splash_em"
+  ],
+  "all_billboard_sprites": [
+    "gfx_debris_clump_em",
+    "gfx_distort_ring_hvy",
+    "gfx_distort_ring_ripple",
+    "gfx_dust_gen_em",
+    "gfx_dust_gen_lit",
+    "gfx_fire_flame_base_1_anim_em_i1024",
+    "gfx_fire_flame_base_2_anim_em_i1024",
+    "gfx_fog_slow_lg_anim_em",
+    "gfx_fog_slow_lg_anim_em_i1024",
+    "gfx_fog_slow_md_anim_lit",
+    "gfx_fog_slow_sm_anim_lit",
+    "gfx_gel_splat_radial_em",
+    "gfx_gel_splat_spread_em",
+    "gfx_gel_splat_wide_em",
+    "gfx_gib_metal_01_lit",
+    "gfx_gib_metal_02_lit",
+    "gfx_light_phosphorous_em",
+    "gfx_light_phosphorous_em_i1024",
+    "gfx_shockwave_anim_em",
+    "gfx_shockwave_elec_anim_em_i2048",
+    "gfx_smk_puff_light_varied",
+    "gfx_smk_whisp_anim_em",
+    "gfx_water_bubble_em",
+    "gfx_water_splash_em"
+  ],
+  "all_models": [],
+  "all_visual_types": [
+    "billboardSprite",
+    "decal",
+    "dynamicLight2",
+    "line",
+    "rotatedSprite",
+    "tail"
+  ],
+  "all_unsupported_visual_types": [],
+  "all_ignored_features": [
+    "dynamicLight2"
+  ],
+  "t6_compatibility": {
+    "supported_visual_types": [
+      "billboardSprite",
+      "cloud",
+      "decal",
+      "line",
+      "orientedSprite",
+      "rotatedSprite",
+      "tail"
+    ],
+    "experimental_visual_types": [
+      "trail"
+    ],
+    "unsupported_visual_types": [
+      "model",
+      "runner"
+    ],
+    "ignored_features": [
+      "dynamicLight2"
+    ],
+    "fatal_effects": [],
+    "warning_effects": [
+      {
+        "effect": "zombie/fx_idgun_hole_xl_zod_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      },
+      {
+        "effect": "zombie/fx_idgun_muz_1p_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      },
+      {
+        "effect": "zombie/fx_idgun_muz_3p_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      },
+      {
+        "effect": "zombie/fx_idgun_projectile_zod_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      },
+      {
+        "effect": "zombie/fx_idgun_vortex_explo_zod_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      },
+      {
+        "effect": "zombie/fx_idgun_vortex_zod_zmb",
+        "reasons": [
+          "ignored features: dynamicLight2"
+        ]
+      }
+    ]
+  },
+  "effects": {
+    "zombie/fx_idgun_ground_displace_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_ground_displace_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_fog_slow_lg_anim_em",
+        "gfx_gib_metal_01_lit",
+        "gfx_gib_metal_02_lit",
+        "gfx_shockwave_anim_em"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [],
+      "visual_types": [
+        "billboardSprite",
+        "rotatedSprite"
+      ]
+    },
+    "zombie/fx_idgun_hole_lg_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_hole_lg_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_debris_clump_em",
+        "gfx_dust_gen_em",
+        "gfx_dust_gen_lit"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [],
+      "visual_types": [
+        "billboardSprite"
+      ]
+    },
+    "zombie/fx_idgun_hole_md_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_hole_md_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_debris_clump_em",
+        "gfx_dust_gen_em",
+        "gfx_dust_gen_lit"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [],
+      "visual_types": [
+        "billboardSprite"
+      ]
+    },
+    "zombie/fx_idgun_hole_sm_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_hole_sm_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_debris_clump_em",
+        "gfx_dust_gen_em",
+        "gfx_dust_gen_lit"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [],
+      "visual_types": [
+        "billboardSprite"
+      ]
+    },
+    "zombie/fx_idgun_hole_xl_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_hole_xl_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_debris_clump_em",
+        "gfx_dust_gen_em",
+        "gfx_dust_gen_lit"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "dynamicLight2"
+      ]
+    },
+    "zombie/fx_idgun_hole_xsm_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_hole_xsm_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_debris_clump_em",
+        "gfx_dust_gen_em",
+        "gfx_dust_gen_lit"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [],
+      "visual_types": [
+        "billboardSprite"
+      ]
+    },
+    "zombie/fx_idgun_muz_1p_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_muz_1p_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_distort_ring_ripple",
+        "gfx_fog_slow_lg_anim_em_i1024",
+        "gfx_gel_splat_radial_em",
+        "gfx_gel_splat_spread_em",
+        "gfx_gel_splat_wide_em",
+        "gfx_light_phosphorous_em",
+        "gfx_shockwave_anim_em",
+        "gfx_shockwave_elec_anim_em_i2048"
+      ],
+      "line_materials": [
+        "gfx_gel_splat_side_em"
+      ],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "dynamicLight2",
+        "line"
+      ]
+    },
+    "zombie/fx_idgun_muz_3p_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_muz_3p_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_distort_ring_ripple",
+        "gfx_fog_slow_lg_anim_em_i1024",
+        "gfx_gel_splat_radial_em",
+        "gfx_gel_splat_spread_em",
+        "gfx_gel_splat_wide_em",
+        "gfx_light_phosphorous_em",
+        "gfx_shockwave_anim_em",
+        "gfx_shockwave_elec_anim_em_i2048"
+      ],
+      "line_materials": [
+        "gfx_gel_splat_side_em"
+      ],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "dynamicLight2",
+        "line"
+      ]
+    },
+    "zombie/fx_idgun_projectile_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_projectile_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_fire_flame_base_2_anim_em_i1024",
+        "gfx_fog_slow_lg_anim_em_i1024",
+        "gfx_light_phosphorous_em",
+        "gfx_light_phosphorous_em_i1024",
+        "gfx_shockwave_elec_anim_em_i2048"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "dynamicLight2"
+      ]
+    },
+    "zombie/fx_idgun_vortex_explo_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_vortex_explo_zod_zmb.efx",
+      "attachments": [],
+      "fx_on_impact": [
+        "zombie/fx_idgun_ground_displace_zod_zmb"
+      ],
+      "fx_on_death": [],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_distort_ring_ripple",
+        "gfx_fire_flame_base_1_anim_em_i1024",
+        "gfx_fire_flame_base_2_anim_em_i1024",
+        "gfx_fog_slow_lg_anim_em_i1024",
+        "gfx_light_phosphorous_em_i1024",
+        "gfx_shockwave_elec_anim_em_i2048",
+        "gfx_smk_whisp_anim_em",
+        "gfx_water_bubble_em",
+        "gfx_water_splash_em"
+      ],
+      "line_materials": [],
+      "tail_materials": [],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [
+        "gfx_decal_exp_blast_01",
+        "gfx_decal_exp_blast_03"
+      ],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "decal",
+        "dynamicLight2"
+      ]
+    },
+    "zombie/fx_idgun_vortex_zod_zmb": {
+      "file": "C:\\Users\\Ahmed\\Downloads\\hb21_elemental_bows_v1.0.0\\hb21_black_ops_3_fx_library_v2.1.0\\share\\raw\\fx\\zombie\\fx_idgun_vortex_zod_zmb.efx",
+      "attachments": [
+        "zombie/fx_idgun_hole_lg_zod_zmb",
+        "zombie/fx_idgun_hole_md_zod_zmb",
+        "zombie/fx_idgun_hole_sm_zod_zmb",
+        "zombie/fx_idgun_hole_xsm_zod_zmb"
+      ],
+      "fx_on_impact": [],
+      "fx_on_death": [
+        "zombie/fx_idgun_hole_xl_zod_zmb"
+      ],
+      "emissions": [],
+      "billboard_sprites": [
+        "gfx_distort_ring_hvy",
+        "gfx_fog_slow_md_anim_lit",
+        "gfx_fog_slow_sm_anim_lit",
+        "gfx_shockwave_elec_anim_em_i2048",
+        "gfx_smk_puff_light_varied"
+      ],
+      "line_materials": [],
+      "tail_materials": [
+        "gfx_debris_trash_multiple_em",
+        "gfx_dust_gen_lit",
+        "gfx_spark_blink_anim_em"
+      ],
+      "trail_materials": [],
+      "cloud_materials": [],
+      "decal_materials": [],
+      "models": [],
+      "unsupported_visual_types": [],
+      "ignored_features": [
+        "dynamicLight2"
+      ],
+      "visual_types": [
+        "billboardSprite",
+        "dynamicLight2",
+        "tail"
+      ]
+    }
+  }
+}

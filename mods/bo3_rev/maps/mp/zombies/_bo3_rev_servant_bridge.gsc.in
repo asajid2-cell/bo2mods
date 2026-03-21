@@ -1,0 +1,25 @@
+init()
+{
+    if ( isdefined( level.bo3_rev_servant_bridge_init ) )
+        return;
+
+    level.bo3_rev_servant_bridge_init = 1;
+    registerclientfield( "scriptmover", "bo3_rev_servant_projectile_fx", 14000, 1, "int" );
+    registerclientfield( "scriptmover", "bo3_rev_servant_vortex_fx", 14000, 1, "int" );
+}
+
+mark_projectile_anchor(anchor)
+{
+    if ( !isdefined( anchor ) )
+        return;
+
+    anchor setclientfield( "bo3_rev_servant_projectile_fx", 1 );
+}
+
+mark_vortex_anchor(anchor)
+{
+    if ( !isdefined( anchor ) )
+        return;
+
+    anchor setclientfield( "bo3_rev_servant_vortex_fx", 1 );
+}

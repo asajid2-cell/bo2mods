@@ -16,6 +16,7 @@ Debug-only x86 runtime probe for T6/Plutonium client startup.
   - `bo3_rev_debug_stock_glow`
   - `effect_26z423jf`
   - `fxt_light_glow_square`
+- Supports a narrower `render_opacity_focus` mode that only arms the render-table and submit-flags consumer traces, intended for investigating why a loaded effect renders with inconsistent opacity.
 
 ## Build
 
@@ -30,6 +31,15 @@ Inject into the actual BO2/T6 game process:
 ```powershell
 powershell -ExecutionPolicy Bypass -File native/fx_runtime_probe/inject_latest.ps1 -ProcessName t6zm.exe -Wait
 ```
+
+## Mode
+
+Write `native/fx_runtime_probe/active_probe_mode.txt` before launching:
+
+- `mode=safe`
+- `mode=render_opacity_focus`
+
+The restart wrapper will write this file for you.
 
 ## Log
 

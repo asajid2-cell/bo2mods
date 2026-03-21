@@ -1,0 +1,186 @@
+// T6 GSC SOURCE
+// Auto-generated override used to bridge Servant FX into the clientscript path.
+#using_animtree("zombie_cymbal_monkey");
+
+init()
+{
+    level.cymbal_monkey_name = "cymbal_monkey_zm";
+    level.cymbal_monkey_model = "weapon_zombie_monkey_bomb";
+
+    if ( getdvar( #"createfx" ) == "on" )
+        return;
+
+    scriptmodelsuseanimtree( #animtree );
+    bo3_rev_servant_client_init();
+}
+
+bo3_rev_servant_client_init()
+{
+    if ( isdefined( level.bo3_rev_servant_client_init ) )
+        return;
+
+    level.bo3_rev_servant_client_init = 1;
+    level.bo3_rev_servant_clientflag_projectile = 28;
+    level.bo3_rev_servant_clientflag_vortex = 29;
+    println( "[bo3_rev][csc] init build=__BUILD_TAG__" );
+
+    level._effect["bo3_rev_servant_projectile_trail"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_projectile_zod_zmb" );
+    level._effect["bo3_rev_servant_projectile_glow"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_xsm_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_shell"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_sm_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_loop"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_lg_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_glow"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_md_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_inner"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_xsm_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_burst"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_vortex_explo_zod_zmb" );
+    level._effect["bo3_rev_servant_vortex_end"] = bo3_rev_loadfx_safe( "zombie/fx_idgun_hole_xl_zod_zmb" );
+
+    registerclientfield( "scriptmover", "bo3_rev_servant_projectile_fx", 14000, 1, "int", ::bo3_rev_servant_projectile_clientfield_cb, 0 );
+    registerclientfield( "scriptmover", "bo3_rev_servant_vortex_fx", 14000, 1, "int", ::bo3_rev_servant_vortex_clientfield_cb, 0 );
+    register_clientflag_callback( "scriptmover", level.bo3_rev_servant_clientflag_projectile, ::bo3_rev_servant_projectile_callback );
+    register_clientflag_callback( "scriptmover", level.bo3_rev_servant_clientflag_vortex, ::bo3_rev_servant_vortex_callback );
+}
+
+bo3_rev_loadfx_safe(name)
+{
+    fx = loadfx( name );
+    if ( isdefined( fx ) && fx )
+        return fx;
+
+    return undefined;
+}
+
+bo3_rev_playfxontag_safe(localclientnum, key, ent, tag)
+{
+    if ( !isdefined( ent ) )
+        return -1;
+
+    if ( !isdefined( level._effect[key] ) || !level._effect[key] )
+        return -1;
+
+    return playfxontag( localclientnum, level._effect[key], ent, tag );
+}
+
+bo3_rev_deletefx_safe(localclientnum, fx_handle)
+{
+    if ( isdefined( fx_handle ) && fx_handle != -1 )
+        deletefx( localclientnum, fx_handle );
+}
+
+bo3_rev_spawn_local_anchor(localclientnum, origin)
+{
+    anchor = spawn( localclientnum, origin, "script_model" );
+    if ( !isdefined( anchor ) )
+        return undefined;
+
+    anchor setmodel( "tag_origin" );
+    return anchor;
+}
+
+bo3_rev_client_anchor_follow(parent)
+{
+    self endon( "death" );
+
+    while ( isdefined( parent ) )
+    {
+        self.origin = parent.origin;
+        wait 0.05;
+    }
+}
+
+bo3_rev_servant_projectile_callback(localclientnum, int_set, ent_new)
+{
+    println( "[bo3_rev][csc] projectile clientflag localclient=" + localclientnum + " int_set=" + int_set );
+    if ( !int_set )
+        return;
+
+    self thread bo3_rev_servant_projectile_fx_thread( localclientnum );
+}
+
+bo3_rev_servant_projectile_clientfield_cb(localclientnum, oldval, newval, bnewent, binitialsnap, fieldname, bwasdemojump)
+{
+    println( "[bo3_rev][csc] projectile clientfield localclient=" + localclientnum + " old=" + oldval + " new=" + newval );
+    if ( !newval )
+        return;
+
+    self thread bo3_rev_servant_projectile_fx_thread( localclientnum );
+}
+
+bo3_rev_servant_projectile_fx_thread(localclientnum)
+{
+    while ( !clienthassnapshot( localclientnum ) )
+        wait 0.05;
+
+    println( "[bo3_rev][csc] projectile fx thread localclient=" + localclientnum + " ent=" + self getentitynumber() );
+
+    fx_spot = bo3_rev_spawn_local_anchor( localclientnum, self.origin );
+    if ( isdefined( fx_spot ) )
+        fx_spot thread bo3_rev_client_anchor_follow( self );
+
+    fx_host = self;
+    if ( isdefined( fx_spot ) )
+        fx_host = fx_spot;
+
+    trail = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_projectile_trail", fx_host, "tag_origin" );
+    glow = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_projectile_glow", fx_host, "tag_origin" );
+
+    self waittill( "entityshutdown" );
+
+    bo3_rev_deletefx_safe( localclientnum, trail );
+    bo3_rev_deletefx_safe( localclientnum, glow );
+    if ( isdefined( fx_spot ) )
+        fx_spot delete();
+}
+
+bo3_rev_servant_vortex_callback(localclientnum, int_set, ent_new)
+{
+    println( "[bo3_rev][csc] vortex clientflag localclient=" + localclientnum + " int_set=" + int_set );
+    if ( !int_set )
+        return;
+
+    self thread bo3_rev_servant_vortex_fx_thread( localclientnum );
+}
+
+bo3_rev_servant_vortex_clientfield_cb(localclientnum, oldval, newval, bnewent, binitialsnap, fieldname, bwasdemojump)
+{
+    println( "[bo3_rev][csc] vortex clientfield localclient=" + localclientnum + " old=" + oldval + " new=" + newval );
+    if ( !newval )
+        return;
+
+    self thread bo3_rev_servant_vortex_fx_thread( localclientnum );
+}
+
+bo3_rev_servant_vortex_fx_thread(localclientnum)
+{
+    while ( !clienthassnapshot( localclientnum ) )
+        wait 0.05;
+
+    println( "[bo3_rev][csc] vortex fx thread localclient=" + localclientnum + " ent=" + self getentitynumber() );
+
+    fx_spot = bo3_rev_spawn_local_anchor( localclientnum, self.origin );
+    fx_host = self;
+    if ( isdefined( fx_spot ) )
+        fx_host = fx_spot;
+
+    bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_vortex_burst", fx_host, "tag_origin" );
+    shell = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_vortex_shell", fx_host, "tag_origin" );
+    loop_fx = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_vortex_loop", fx_host, "tag_origin" );
+    glow = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_vortex_glow", fx_host, "tag_origin" );
+    inner = bo3_rev_playfxontag_safe( localclientnum, "bo3_rev_servant_vortex_inner", fx_host, "tag_origin" );
+
+    self waittill( "entityshutdown" );
+
+    bo3_rev_deletefx_safe( localclientnum, shell );
+    bo3_rev_deletefx_safe( localclientnum, loop_fx );
+    bo3_rev_deletefx_safe( localclientnum, glow );
+    bo3_rev_deletefx_safe( localclientnum, inner );
+
+    if ( isdefined( level._effect["bo3_rev_servant_vortex_end"] ) && level._effect["bo3_rev_servant_vortex_end"] )
+    {
+        end_origin = self.origin;
+        if ( isdefined( fx_spot ) )
+            end_origin = fx_spot.origin;
+        playfx( localclientnum, level._effect["bo3_rev_servant_vortex_end"], end_origin, ( 0, 0, 1 ) );
+    }
+
+    if ( isdefined( fx_spot ) )
+        fx_spot delete();
+}

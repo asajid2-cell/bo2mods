@@ -10,18 +10,35 @@ The current active lane is `mods/bo3_rev`: porting the BO3 Apothicon Servant int
 
 ## Current state
 - The live donor shell is `mg08_zm`.
+- The FX bridge host is now `tag_origin`, not the visible `t6_wpn_zmb_mg08_world` bridge model.
 - The custom Servant viewmodel loads in-game without the old 160-bone crash.
 - The black-hole pull/kill logic works in BO2.
+- The BO3-derived vortex FX path now renders in-game on the real runtime lane.
+- The current BO3 FX contract uses namespaced `bo3rfx_*` materials/images to avoid leaking broken surfaces onto unrelated stock effects.
+- The current stable portal lane is the safe glow contract, not the stock phosphorous flare contract.
+- Repeated shots no longer silently no-op while an old vortex is active; new shots replace the old active vortex.
+- The current FX-loader checkpoint is "working with light polish debt", not "still blocked on loading".
+- The current live checkpoint build is `0321232501_4c7e1d`.
+- BO3 Servant gameplay parity work is now grounded in the local T7 source scripts.
 - Demo/admin commands work:
   - `.p`
   - `.round`
   - `.fast`
   - `.hits`
   - `.debug`
-- Remaining work is polish, not first proof:
+- Remaining work is now polish, not first proof:
+  - final portal consistency polish, especially slight direction/background-dependent fade
+  - visible lifetime polish on the layered hole
+  - phosphorous texture fidelity and softness
+  - final per-layer vortex semantics tuning
   - better animation parity
-  - better material/color fidelity
-  - better black-hole FX and presentation
+  - finish the BO3 gameplay parity port from the real T7 scripts
+
+## BO3 source parity
+The BO3 Servant / vortex source is now available locally for reference:
+- `C:\Users\Ahmed\Downloads\t7-source\scripts\zm\_zm_weap_idgun.gsc`
+- `C:\Users\Ahmed\Downloads\t7-source\scripts\shared\ai\zombie_vortex.gsc`
+- `C:\Users\Ahmed\Downloads\t7-source\scripts\zm\_zm_weap_idgun.csc`
 
 ## Repo role
 This repo is both:
@@ -44,6 +61,7 @@ This repo does not ship copyrighted BO2/BO3 game assets. You must provide your o
 - Docs index: `docs/README.md`
 - Current project status: `docs/status.md`
 - Build/deploy loop: `docs/how-to/build-and-deploy.md`
+- Runtime/probe safety notes: `docs/how-to/debug-runtime.md`
 
 ## Credits
 Docs structure uses the Diataxis framework: `docs/credit.md`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import json
 import re
@@ -8,6 +9,8 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
+
+from PIL import Image
 
 
 def resolve_path(path_value: str, repo_root: Path) -> Path:
@@ -42,7 +45,7 @@ def choose_techset(material_name: str, default_techset: str, unlit_techset: str)
     return default_techset
 
 
-def build_material_payload(material_name: str, techset_name: str, textures: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def default_material_payload(material_name: str, techset_name: str, textures: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "$schema": "http://openassettools.dev/schema/material.v1.json",
         "_game": "t6",
@@ -64,6 +67,68 @@ def build_material_payload(material_name: str, techset_name: str, textures: Sequ
         "textures": list(textures),
         "debugName": material_name,
     }
+
+
+def _texture_match_key(texture: Dict[str, Any]) -> str:
+    semantic = str(texture.get("semantic", "")).strip().lower()
+    if semantic:
+        return f"semantic:{semantic}"
+    name = str(texture.get("name", "")).strip().lower()
+    if name:
+        return f"name:{name}"
+    image = str(texture.get("image", "")).strip().lower()
+    return f"image:{image}"
+
+
+def merge_template_textures(
+    template_textures: Sequence[Dict[str, Any]],
+    generated_textures: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = [copy.deepcopy(texture) for texture in template_textures]
+    template_index = {_texture_match_key(texture): idx for idx, texture in enumerate(merged)}
+
+    for generated in generated_textures:
+        key = _texture_match_key(generated)
+        if key in template_index:
+            idx = template_index[key]
+            merged[idx]["image"] = generated.get("image", merged[idx].get("image", ""))
+            merged[idx]["isMatureContent"] = generated.get("isMatureContent", merged[idx].get("isMatureContent", False))
+            if generated.get("samplerState"):
+                merged[idx]["samplerState"] = copy.deepcopy(generated["samplerState"])
+            continue
+        merged.append(copy.deepcopy(generated))
+
+    return merged
+
+
+def build_material_payload(
+    material_name: str,
+    techset_name: str,
+    textures: Sequence[Dict[str, Any]],
+    contract_row: Dict[str, Any] | None = None,
+    repo_root: Path | None = None,
+) -> Dict[str, Any]:
+    template_payload: Dict[str, Any] | None = None
+    if contract_row and repo_root:
+        template_value = str(contract_row.get("template", "")).strip()
+        if template_value:
+            template_path = resolve_path(template_value, repo_root)
+            if template_path.exists():
+                template_payload = json.loads(template_path.read_text(encoding="utf-8"))
+
+    if template_payload:
+        payload = copy.deepcopy(template_payload)
+        payload["$schema"] = "http://openassettools.dev/schema/material.v1.json"
+        payload["_game"] = "t6"
+        payload["_type"] = "material"
+        payload["_version"] = 1
+        payload["cameraRegion"] = str(contract_row.get("cameraRegion", payload.get("cameraRegion", "none"))).strip() or "none"
+        payload["techniqueSet"] = str(contract_row.get("techniqueSet", techset_name)).strip() or techset_name
+        payload["textures"] = merge_template_textures(payload.get("textures", []), textures)
+        payload["debugName"] = material_name
+        return payload
+
+    return default_material_payload(material_name=material_name, techset_name=techset_name, textures=textures)
 
 
 def collect_material_names(blender_report_path: Path) -> List[str]:
@@ -212,6 +277,18 @@ def map_materials(bundle_ctx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def load_contract_rows(contract_report_path: Path) -> Dict[str, Dict[str, Any]]:
+    payload = json.loads(contract_report_path.read_text(encoding="utf-8"))
+    rows = payload.get("rows", []) if isinstance(payload, dict) else []
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        material_name = str(row.get("material", "")).strip()
+        if not material_name:
+            continue
+        out[material_name.lower()] = row
+    return out
+
+
 def make_sampler_state(image_props: Dict[str, Any]) -> Dict[str, Any]:
     no_mips = parse_bool_flag(image_props.get("noMipMaps", "0"))
     clamp_u = parse_bool_flag(image_props.get("clampU", "0"))
@@ -289,7 +366,20 @@ def _convert_to_iwi(
         if not texconv_path.exists():
             raise FileNotFoundError(f"texconv not found: {texconv_path}")
         source_tmp = tmp_root / f"{image_name_clean}{source_path.suffix.lower()}"
-        shutil.copy2(source_path, source_tmp)
+        try:
+            with Image.open(source_path) as pil_img:
+                if "A" not in pil_img.getbands():
+                    # RGB-only FX sprites like fxt_light_phosphorous silently lose
+                    # visibility when texconv invents a BC3 alpha channel. Expand
+                    # them to explicit opaque RGBA first so the T6 runtime sees
+                    # the intended emissive color data instead of fabricated alpha.
+                    source_tmp = tmp_root / f"{image_name_clean}_opaque.png"
+                    pil_img.convert("RGBA").save(source_tmp)
+                    dds_tmp = source_tmp.with_suffix(".dds")
+                else:
+                    shutil.copy2(source_path, source_tmp)
+        except Exception:
+            shutil.copy2(source_path, source_tmp)
         proc_texconv = subprocess.run(
             [str(texconv_path), "-y", "-f", "DXT5", "-o", str(tmp_root), str(source_tmp)],
             capture_output=True,
@@ -395,6 +485,11 @@ def main() -> None:
         help="Optional transfer/t7_bundle_report.json for manifest-driven image/material mapping.",
     )
     parser.add_argument(
+        "--contract-report",
+        default="",
+        help="Optional fx/material contract report JSON used to clone real T6 template material state per material.",
+    )
+    parser.add_argument(
         "--stage-images",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -445,11 +540,16 @@ def main() -> None:
     bundle_ctx: Dict[str, Any] = {}
     image_index: Dict[str, Dict[str, Any]] = {}
     material_index: Dict[str, Dict[str, Any]] = {}
+    contract_index: Dict[str, Dict[str, Any]] = {}
     if args.bundle_report:
         bundle_report_path = resolve_path(args.bundle_report, repo_root)
         bundle_ctx = resolve_bundle_context(bundle_report_path=bundle_report_path)
         image_index = map_images(bundle_ctx=bundle_ctx)
         material_index = map_materials(bundle_ctx=bundle_ctx)
+    if args.contract_report:
+        contract_report_path = resolve_path(args.contract_report, repo_root)
+        if contract_report_path.exists():
+            contract_index = load_contract_rows(contract_report_path)
 
     generated: List[Dict[str, str]] = []
     staged_images: List[Dict[str, Any]] = []
@@ -488,6 +588,7 @@ def main() -> None:
                 }
             )
 
+        contract_row = contract_index.get(material_name.lower())
         techset = choose_techset_for_material(
             material_name=material_name,
             texture_slots=texture_slots,
@@ -495,7 +596,15 @@ def main() -> None:
             unlit_techset=args.unlit_techset,
             lit_techset=args.lit_techset,
         )
-        payload = build_material_payload(material_name=material_name, techset_name=techset, textures=textures)
+        if contract_row and str(contract_row.get("techniqueSet", "")).strip():
+            techset = str(contract_row["techniqueSet"]).strip()
+        payload = build_material_payload(
+            material_name=material_name,
+            techset_name=techset,
+            textures=textures,
+            contract_row=contract_row,
+            repo_root=repo_root,
+        )
         dst = materials_root / f"{material_name}.json"
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

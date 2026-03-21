@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BO3 Rev Servant Port Dossier</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --paper: #fffaf2;
+      --ink: #231b14;
+      --muted: #6a5c4c;
+      --line: #d9cbb8;
+      --accent: #935d2b;
+      --accent-strong: #5e3410;
+      --accent-soft: #efe2d0;
+      --good: #1c6b3f;
+      --warn: #8a5a11;
+      --bad: #8b1e1e;
+      --shadow: 0 12px 36px rgba(46, 27, 10, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(147, 93, 43, 0.10), transparent 30%),
+        linear-gradient(180deg, #f8f2ea 0%, var(--bg) 100%);
+      line-height: 1.55;
+    }
+    a { color: var(--accent-strong); }
+    code, pre, kbd {
+      font-family: Consolas, "SFMono-Regular", "Liberation Mono", monospace;
+      font-size: 0.95em;
+    }
+    .shell {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 24px;
+    }
+    .sidebar {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      background: rgba(255, 250, 242, 0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+    }
+    .brand {
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 8px 0;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.7rem;
+      line-height: 1.1;
+    }
+    .brand p {
+      margin: 10px 0 0 0;
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+    .nav-group + .nav-group {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .nav-group h2 {
+      margin: 0 0 10px 0;
+      font-size: 0.92rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .nav-group a {
+      display: block;
+      padding: 8px 10px;
+      margin: 3px 0;
+      border-radius: 10px;
+      text-decoration: none;
+      color: var(--ink);
+    }
+    .nav-group a:hover { background: var(--accent-soft); }
+    .hero {
+      background: linear-gradient(145deg, rgba(94, 52, 16, 0.96), rgba(147, 93, 43, 0.9));
+      color: #fffaf2;
+      border-radius: 28px;
+      padding: 34px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -10% -35% 35%;
+      height: 260px;
+      background:
+        radial-gradient(circle, rgba(255, 194, 128, 0.38) 0%, rgba(255, 194, 128, 0.08) 34%, transparent 68%);
+      pointer-events: none;
+    }
+    .hero h2 {
+      margin: 0 0 12px 0;
+      font-size: clamp(2rem, 3vw, 3.2rem);
+      line-height: 0.98;
+      max-width: 12ch;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 70ch;
+      color: rgba(255, 250, 242, 0.9);
+      font-size: 1.06rem;
+    }
+    .hero-meta {
+      margin-top: 20px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .hero-card {
+      background: rgba(255, 250, 242, 0.08);
+      border: 1px solid rgba(255, 250, 242, 0.15);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .hero-card strong {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 250, 242, 0.7);
+      margin-bottom: 6px;
+    }
+    .hero-card span { font-size: 1rem; }
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 28px;
+      margin-top: 24px;
+      box-shadow: var(--shadow);
+    }
+    section h2 {
+      margin-top: 0;
+      font-size: 2rem;
+      line-height: 1.05;
+    }
+    section h3 {
+      margin-top: 28px;
+      font-size: 1.3rem;
+    }
+    section h4 {
+      margin-top: 20px;
+      font-size: 1.08rem;
+    }
+    .lede {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 74ch;
+    }
+    .card-grid, .columns {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      background: #fffdf8;
+    }
+    .card h3, .card h4 { margin-top: 0; }
+    .status-good { color: var(--good); }
+    .status-warn { color: var(--warn); }
+    .status-bad { color: var(--bad); }
+    ul, ol { padding-left: 22px; }
+    li + li { margin-top: 6px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .timeline {
+      position: relative;
+      margin-top: 20px;
+      padding-left: 26px;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 8px;
+      width: 2px;
+      background: linear-gradient(180deg, var(--accent), rgba(147, 93, 43, 0.18));
+    }
+    .step {
+      position: relative;
+      padding: 0 0 20px 14px;
+    }
+    .step::before {
+      content: "";
+      position: absolute;
+      top: 5px;
+      left: -23px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 3px solid var(--accent);
+    }
+    .step h3 { margin: 0 0 6px 0; }
+    .step .meta {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 8px;
+    }
+    pre {
+      background: #201911;
+      color: #f7ede1;
+      padding: 16px;
+      border-radius: 16px;
+      overflow: auto;
+      box-shadow: inset 0 0 0 1px rgba(255, 250, 242, 0.06);
+    }
+    .callout {
+      border-left: 5px solid var(--accent);
+      background: #f9efe2;
+      padding: 16px 18px;
+      border-radius: 0 14px 14px 0;
+      margin: 18px 0;
+    }
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: #f3e5d2;
+      border: 1px solid var(--line);
+      font-size: 0.85rem;
+    }
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 20px;
+    }
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; }
+      .hero-meta, .card-grid, .columns { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 760px) {
+      .shell { padding: 16px; }
+      .hero, section, .sidebar { padding: 20px; }
+      .hero-meta, .card-grid, .columns { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <p class="eyebrow">BO3 Rev Dossier</p>
+        <h1>Apothicon Servant Port</h1>
+        <p>A deep Diataxis documentation pass for the BO3-to-BO2/T6 Servant pipeline, focused on the current rendering gap.</p>
+      </div>
+      <nav class="nav-group">
+        <h2>Diataxis</h2>
+        <a href="#tutorial">Tutorial</a>
+        <a href="#how-to">How-to</a>
+        <a href="#reference">Reference</a>
+        <a href="#explanation">Explanation</a>
+      </nav>
+      <nav class="nav-group">
+        <h2>Project Map</h2>
+        <a href="#timeline">Timeline</a>
+        <a href="#failures">Issue Ledger</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#render-gap">Render Gap</a>
+        <a href="#functions">Function Reference</a>
+        <a href="#logs">Canonical Logs</a>
+        <a href="#next-steps">Next Steps</a>
+      </nav>
+      <nav class="nav-group">
+        <h2>Related Docs</h2>
+        <a href="./README.md">Docs Index</a>
+        <a href="./status.md">Status</a>
+        <a href="./explanation/history-and-findings.md">History and Findings</a>
+        <a href="./how-to/build-and-deploy.md">Build and Deploy</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <p class="eyebrow">Deep Technical Dossier</p>
+        <h2>Why the Servant FX still do not render</h2>
+        <p>This document consolidates the BO3 Rev Servant port into one place: current architecture, the exact failure timeline, the bridge experiments that were disproven, the surviving constraints, and the current model of the rendering gap. It is written to be a restart point for engineering, not just a narrative archive.</p>
+        <div class="hero-meta">
+          <div class="hero-card">
+            <strong>Latest Raw FX Build</strong>
+            <span><code>0317011234_485c81</code></span>
+          </div>
+          <div class="hero-card">
+            <strong>Donor Shell</strong>
+            <span><code>mg08_zm</code></span>
+          </div>
+          <div class="hero-card">
+            <strong>Current Gap</strong>
+            <span>Client-visible BO3 FX rendering</span>
+          </div>
+          <div class="hero-card">
+            <strong>Preferred Lane</strong>
+            <span>Mod-only, T6-native</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="tutorial">
+        <h2>Tutorial</h2>
+        <p class="lede">Use this section if you are re-entering the project cold and need to understand the current Servant lane before changing code.</p>
+        <div class="card-grid">
+          <article class="card">
+            <h3>1. Understand the target</h3>
+            <p>The target is not "make BO2 behave like T5." The real target is:</p>
+            <ul>
+              <li><strong>T7</strong> for the Servant's content, look, and intended behavior.</li>
+              <li><strong>T6</strong> for the engine contract, runtime semantics, client/server split, and script API.</li>
+              <li><strong>T5</strong> only as a conceptual reference when T6 lacks an obvious analogue.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>2. Understand the split</h3>
+            <p>The project separated into three lanes:</p>
+            <ul>
+              <li><strong>Shell lane</strong>: get a BO2 donor weapon accepted and playable.</li>
+              <li><strong>Model/material lane</strong>: get BO3 geometry and materials stable inside T6.</li>
+              <li><strong>Presentation lane</strong>: get BO3-style FX and animations visibly playing.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>3. Understand the current win state</h3>
+            <ul>
+              <li>The donor shell works.</li>
+              <li>The custom model path works.</li>
+              <li>The gameplay logic works.</li>
+              <li>The BO3 raw FX assets link.</li>
+              <li>The remaining blocker is presentation: effects still do not render visibly in-game.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>4. Understand the current failure</h3>
+            <p>The strongest current model is:</p>
+            <ul>
+              <li>the server creates bridge entities and calls the bridge path</li>
+              <li>the clientscript override loads and initializes</li>
+              <li>the client still never reaches the BO3 playback threads</li>
+              <li>therefore the gap is in client discovery/dispatch, not basic FX asset linkage</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="how-to">
+        <h2>How-to</h2>
+        <p class="lede">Use this section as the operational runbook for continuing the Servant FX lane.</p>
+        <div class="columns">
+          <div class="card">
+            <h3>Build and deploy</h3>
+            <ol>
+              <li>Run <code>python _build/run_bo3_rev_probe_case.py mg08_v2_bo3_weapon_only_rawfx_safeimg</code>.</li>
+              <li>Confirm the archived report in <code>_build/bo3_rev_probe_cases/mg08_v2_bo3_weapon_only_rawfx_safeimg/</code>.</li>
+              <li>Restart Plutonium completely before testing a new survival FF.</li>
+              <li>Confirm the first runtime log line contains the expected <code>build_tag</code>.</li>
+            </ol>
+          </div>
+          <div class="card">
+            <h3>What to look for in logs</h3>
+            <ul>
+              <li>Server init: <code>[bo3_rev][start] stage=init ... raw_fx=1 ... client_fx=1</code></li>
+              <li>Server bridge: <code>projectile_equipment_bridge</code> and <code>vortex_equipment_bridge</code></li>
+              <li>Client init: <code>[bo3_rev][csc] zm_transit main ...</code>, <code>register_client_fields</code>, <code>init build=...</code></li>
+              <li>Desired next signal: <code>[bo3_rev][csc] discovered ...</code> or <code>equipment bridge ...</code></li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>Current test criterion</strong><br>
+          The next meaningful success is not "the vortex looks perfect." It is "the client logs prove it discovered or dispatched a bridge entity and entered a BO3 FX playback thread."
+        </div>
+      </section>
+
+      <section id="reference">
+        <h2>Reference</h2>
+        <p class="lede">This is the "look it up" section: files, entrypoints, build cases, function-level responsibilities, and the current bridge surfaces.</p>
+
+        <h3 id="functions">Core file map</h3>
+        <table>
+          <thead>
+            <tr><th>Path</th><th>Role</th><th>Current significance</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>mods/bo3_rev/scripts/mod_i_am_mod.gsc.in</code></td>
+              <td>Server gameplay, weapon grant, Servant fire, vortex logic, server-side FX bridge creation.</td>
+              <td>Owns the server half of the current mod-only bridge.</td>
+            </tr>
+            <tr>
+              <td><code>mods/bo3_rev/clientscripts/mp/zm_transit.csc.in</code></td>
+              <td>Transit client override.</td>
+              <td>Owns the clientfield registration window and client FX init.</td>
+            </tr>
+            <tr>
+              <td><code>mods/bo3_rev/clientscripts/mp/zombies/_bo3_rev_servant_fx.csc.in</code></td>
+              <td>Dedicated Servant client FX script.</td>
+              <td>Owns local BO3 FX loading, discovery, callback handling, and client playback threads.</td>
+            </tr>
+            <tr>
+              <td><code>_build/build_bo3_rev_idg_probe.py</code></td>
+              <td>Primary build spine.</td>
+              <td>Renders templates, stages assets, links FF/IPAK, deploys to repo/AppData/base.</td>
+            </tr>
+            <tr>
+              <td><code>_build/run_bo3_rev_probe_case.py</code></td>
+              <td>Case runner.</td>
+              <td>Preferred entrypoint for reproducible probe builds.</td>
+            </tr>
+            <tr>
+              <td><code>_build/_tmp/OpenAssetTools/src/ObjLoading/Game/T6/Fx/LoaderFxT6.cpp</code></td>
+              <td>Custom OAT T6 raw FX importer.</td>
+              <td>Critical for BO3 raw <code>.efx</code> ingestion into native <code>FxEffectDef</code>.</td>
+            </tr>
+            <tr>
+              <td><code>t6-scripts-official/ZM1/Core/maps/mp/zombies/_zm_equipment.gsc</code></td>
+              <td>Stock BO2 equipment server bridge.</td>
+              <td>Current stock signaling surface under test.</td>
+            </tr>
+            <tr>
+              <td><code>t6-scripts-official/ZM1/Core/clientscripts/mp/zombies/_zm_equipment.csc</code></td>
+              <td>Stock BO2 equipment client callback path.</td>
+              <td>Current dispatch surface under test.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Build cases</h3>
+        <table>
+          <thead>
+            <tr><th>Case</th><th>Purpose</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>mg08_v2_bo3_weapon_only</code></td>
+              <td>Stable donor/model/gameplay lane.</td>
+              <td><span class="status-good">Working</span></td>
+            </tr>
+            <tr>
+              <td><code>mg08_v2_bo3_weapon_only_rawfx_safeimg</code></td>
+              <td>Primary BO3 raw FX lane.</td>
+              <td><span class="status-warn">Loads and links; visuals still blocked</span></td>
+            </tr>
+            <tr>
+              <td><code>mg08_v2_bo3_weapon_only_bo3anims_*</code></td>
+              <td>Animation-isolation lane.</td>
+              <td><span class="status-warn">Loads, but pose data remains wrong</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Current bridge function map</h3>
+        <table>
+          <thead>
+            <tr><th>Function</th><th>Location</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>bo3_rev_start()</code></td>
+              <td>Server GSC</td>
+              <td>Top-level Servant lane init, effect init, runtime logging, player watcher setup.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_projectile_fx()</code></td>
+              <td>Server GSC</td>
+              <td>Spawns projectile anchor and triggers client bridge for projectile FX.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_spawn_vortex()</code></td>
+              <td>Server GSC</td>
+              <td>Creates singularity logic entity and attempts to create a visual anchor for client playback.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_spawn_fx_anchor()</code></td>
+              <td>Server GSC</td>
+              <td>Current replicated bridge entity factory.</td>
+            </tr>
+            <tr>
+              <td><code>register_client_fields()</code></td>
+              <td>Transit CSC override</td>
+              <td>BO2-safe registration window where the Servant client FX script is initialized.</td>
+            </tr>
+            <tr>
+              <td><code>init()</code></td>
+              <td><code>_bo3_rev_servant_fx.csc.in</code></td>
+              <td>Loads BO3 FX, registers equipment override callback, and starts discovery loop.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_equipment_cb()</code></td>
+              <td>Client CSC</td>
+              <td>Desired stock equipment callback entrypoint. Not observed firing yet.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_discovery_loop()</code></td>
+              <td>Client CSC</td>
+              <td>New direct client discovery fallback that scans replicated entities by model.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_projectile_fx_thread()</code></td>
+              <td>Client CSC</td>
+              <td>Local projectile FX playback on the client.</td>
+            </tr>
+            <tr>
+              <td><code>bo3_rev_servant_vortex_fx_thread()</code></td>
+              <td>Client CSC</td>
+              <td>Local vortex FX playback on the client.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Canonical build tags</h3>
+        <div class="pill-list">
+          <span class="pill">0313133536_a21cca: full survival FF restored</span>
+          <span class="pill">0313161503_485c81: donor anims only, FX focus</span>
+          <span class="pill">0313234021_485c81: loose <code>fxt_*</code> contamination removed</span>
+          <span class="pill">0316045334_485c81: first dedicated client FX bridge pass</span>
+          <span class="pill">0316213551_485c81: mod-only discovery bridge pass</span>
+          <span class="pill">0317004838_485c81: equipment bridge succeeds server-side, still silent client-side</span>
+          <span class="pill">0317011234_485c81: world-model marker + client discovery loop</span>
+        </div>
+      </section>
+
+      <section id="explanation">
+        <h2>Explanation</h2>
+        <p class="lede">This section explains the project's logic, not just its steps. It captures what each failure proved and why the current rendering gap is narrower than it first appears.</p>
+
+        <h3 id="timeline">Timeline of major issues and findings</h3>
+        <div class="timeline">
+          <article class="step">
+            <h3>Fresh-name Servant identity failed</h3>
+            <div class="meta">Early lane - before donor-shell pivot</div>
+            <p>Attempts to register a true <code>apothicon_servant_zm</code> identity succeeded at the registration layer but still failed engine queries. The decisive runtime symptom was undefined clip/max data and failed give paths.</p>
+            <p><strong>What it proved:</strong> weapon identity was blocked in the normal mod lane. The project had to pivot to donor shells.</p>
+          </article>
+          <article class="step">
+            <h3><code>ray_gun_zm</code> proved to be a bad donor</h3>
+            <div class="meta">Donor isolation phase</div>
+            <p>The Ray Gun shell could take override values, but it repeatedly crashed on first-person DObj composition even with tiny or stock replacement models.</p>
+            <p><strong>What it proved:</strong> the crash was not simply "too many BO3 bones." The Ray Gun shell has hidden first-person baggage.</p>
+          </article>
+          <article class="step">
+            <h3><code>mg08_zm</code> became the working donor shell</h3>
+            <div class="meta">Shell stabilization</div>
+            <p>The project moved through simpler shells and landed on <code>mg08_zm</code> as the live carrier. This shell proved structurally compatible with the reduced BO3-derived weapon rig and gave the right silhouette for a heavy wonder weapon.</p>
+          </article>
+          <article class="step">
+            <h3>Material/IPAK contract problems were fixed</h3>
+            <div class="meta">Model/material lane</div>
+            <p>The weapon progressed from invisible to chrome to materially usable. The major breakthrough here was recognizing that image-backed BO3 surfaces required a correct runtime IPAK contract, not just staged material JSON.</p>
+          </article>
+          <article class="step">
+            <h3>The raw BO3 FX importer became real</h3>
+            <div class="meta">Raw FX lane</div>
+            <p>Local OAT work in <code>LoaderFxT6.cpp</code> made the raw BO3 Servant graph parsable and linkable into T6 <code>FxEffectDef</code> assets. At this point the problem stopped being "can we import BO3 FX?"</p>
+          </article>
+          <article class="step">
+            <h3>Loose <code>fxt_*</code> image overrides were poisoning runtime behavior</h3>
+            <div class="meta">Build <code>0313234021_485c81</code></div>
+            <p>Old loose FX images in AppData were removed. After cleanup, visible debug lightning started to appear again. This proved the runtime was sensitive to global FX image contamination.</p>
+          </article>
+          <article class="step">
+            <h3>Server-side FX playback alone was not enough</h3>
+            <div class="meta">Builds <code>031400*</code> through <code>031405*</code></div>
+            <p>Many builds proved that BO3 FX names loaded and server-side playback calls fired, but the visible BO3 projectile/vortex still did not appear. This pushed the investigation into the server/client presentation model.</p>
+          </article>
+          <article class="step">
+            <h3>T5-style bridge assumptions were disproven</h3>
+            <div class="meta">Builds <code>0316045334_485c81</code> to <code>0316211302_485c81</code></div>
+            <p>Two guessed bridge primitives were rejected by BO2 directly:</p>
+            <ul>
+              <li><code>setclientfield(...)</code> unresolved in raw/server GSC</li>
+              <li><code>register_clientflag_callback(...)</code> unresolved in T6 CSC</li>
+            </ul>
+            <p><strong>What it proved:</strong> the correct implementation must be T6-native, not T5-shaped.</p>
+          </article>
+          <article class="step">
+            <h3>Transit CSC override path was validated</h3>
+            <div class="meta">Builds <code>0316213551_485c81</code> onward</div>
+            <p>The client override <code>clientscripts/mp/zm_transit.csc</code> and dedicated Servant FX script both loaded successfully from the fastfile. That removed an earlier ambiguity about whether our clientscript lane was even active.</p>
+          </article>
+          <article class="step">
+            <h3>Stock equipment bridge still did not dispatch</h3>
+            <div class="meta">Build <code>0317004838_485c81</code></div>
+            <p>The server successfully created anchors and invoked the BO2 stock equipment bridge, but the client never printed a single <code>equipment bridge</code> callback line. This narrowed the problem to client dispatch or discovery.</p>
+          </article>
+          <article class="step">
+            <h3>Current phase: explicit client discovery fallback</h3>
+            <div class="meta">Build <code>0317011234_485c81</code></div>
+            <p>The newest pass no longer trusts the stock equipment callback alone. It also scans for replicated anchor models directly on the client.</p>
+            <p><strong>Current thesis:</strong> the remaining render blocker is the bridge entity being visible to the server path but not entering a client-visible dispatch surface.</p>
+          </article>
+        </div>
+
+        <h3 id="failures">Issue ledger</h3>
+        <table>
+          <thead>
+            <tr><th>Issue</th><th>Observed symptom</th><th>What it proved</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Fresh-name weapon identity</td>
+              <td><code>clip=&lt;undef&gt;</code>, <code>max=&lt;undef&gt;</code>, give path never wins</td>
+              <td>The engine weapon identity gate is blocked in this mod lane.</td>
+              <td><span class="status-good">Closed</span></td>
+            </tr>
+            <tr>
+              <td>Ray Gun donor crash</td>
+              <td><code>dobj ... has more than 160 bones</code></td>
+              <td>The issue is donor-shell composition, not only imported model size.</td>
+              <td><span class="status-good">Closed by donor change</span></td>
+            </tr>
+            <tr>
+              <td>Transit survival FF strip-down</td>
+              <td><code>Unresolved external: precache</code></td>
+              <td>The survival overlay was being rebuilt in the wrong shape.</td>
+              <td><span class="status-good">Closed</span></td>
+            </tr>
+            <tr>
+              <td>Loose FX image contamination</td>
+              <td>Server playback logs but no meaningful render; mixed BO2/BO3 behavior</td>
+              <td>Loose global <code>fxt_*</code> overrides can poison runtime effects.</td>
+              <td><span class="status-good">Closed</span></td>
+            </tr>
+            <tr>
+              <td>Server <code>setclientfield</code> bridge</td>
+              <td><code>Unresolved external: setclientfield</code></td>
+              <td>That builtin is not available in the raw/source lane we used.</td>
+              <td><span class="status-good">Disproven</span></td>
+            </tr>
+            <tr>
+              <td>T5 clientflag callback bridge</td>
+              <td><code>Unresolved external: register_clientflag_callback</code></td>
+              <td>T6 CSC does not expose that helper.</td>
+              <td><span class="status-good">Disproven</span></td>
+            </tr>
+            <tr>
+              <td>Equipment bridge dispatch</td>
+              <td>Server logs show bridge entities; client never logs callback entry</td>
+              <td>Dispatch still does not reach the local BO3 playback threads.</td>
+              <td><span class="status-bad">Open</span></td>
+            </tr>
+            <tr>
+              <td>Animation emitter correctness</td>
+              <td>Warped idle pose</td>
+              <td>The engine can bind custom anims, but emitted transform data is still wrong.</td>
+              <td><span class="status-warn">Deferred</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 id="architecture">Current architecture</h3>
+        <div class="columns">
+          <div class="card">
+            <h4>Server half</h4>
+            <ul>
+              <li><code>mod_i_am_mod.gsc.in</code> owns the donor shell, fire watcher, projectile spawn, and vortex logic.</li>
+              <li>It creates a replicated FX anchor entity for projectile and vortex visuals.</li>
+              <li>It attempts to signal BO2's stock equipment bridge via <code>maps\mp\zombies\_zm_equipment::signal_equipment_activated()</code>.</li>
+              <li>It also tags anchors with <code>targetname</code>, <code>script_noteworthy</code>, and <code>script_string</code>.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4>Client half</h4>
+            <ul>
+              <li><code>zm_transit.csc.in</code> initializes the Servant client FX script during the Transit clientfield registration window.</li>
+              <li><code>_bo3_rev_servant_fx.csc.in</code> loads imported BO3 FX assets locally.</li>
+              <li>It registers a stock equipment callback override keyed by model string.</li>
+              <li>It also now runs a model-discovery loop as a fallback path.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 id="render-gap">The current rendering gap</h3>
+        <div class="callout">
+          <strong>Current best model</strong><br>
+          The engine is no longer failing at BO3 raw FX linkage. It is failing at the boundary between replicated bridge entities and client-visible dispatch. The BO3 FX are loaded; the client playback threads are not being entered.
+        </div>
+        <h4>What we know with high confidence</h4>
+        <ul>
+          <li>The raw BO3 Servant FX names link and <code>loadfx()</code> successfully.</li>
+          <li>The Transit client override is live.</li>
+          <li>The dedicated Servant client FX script is live.</li>
+          <li>The server now creates bridge entities successfully.</li>
+          <li>The server now reaches the equipment bridge path successfully.</li>
+          <li>The client still does not log bridge callback entry.</li>
+        </ul>
+        <h4>Most likely remaining mismatches</h4>
+        <ol>
+          <li>The chosen stock bridge surface still expects a different entity archetype than our anchor.</li>
+          <li>The bridge marker model or hidden-state choice prevents client dispatch or discovery.</li>
+          <li>The replicated anchor exists server-side but is not client-visible in the way <code>_zm_equipment.csc</code> expects.</li>
+          <li>The stock equipment bridge is simply the wrong bridge surface for arbitrary Servant anchors, and a different T6-native clientfield path should be reused instead.</li>
+        </ol>
+        <h4>How far we are from visible BO3 FX</h4>
+        <p>We are no longer "far" in the sense of having multiple unsolved systems. The gap is narrower:</p>
+        <ul>
+          <li><strong>Shell/gameplay</strong>: good enough</li>
+          <li><strong>Model/material</strong>: good enough to keep iterating</li>
+          <li><strong>Raw FX import</strong>: good enough</li>
+          <li><strong>Server-to-client presentation bridge</strong>: still the hard blocker</li>
+        </ul>
+        <p>The project is one bridge-layer away from a meaningful BO3 FX render test.</p>
+      </section>
+
+      <section id="logs">
+        <h2>Canonical logs and errors</h2>
+        <p class="lede">These are the key error signatures and runtime traces that changed the architecture, not just the build count.</p>
+        <h3>Fatal bridge API errors</h3>
+        <pre>**** Unresolved external : "setclientfield" with 2 parameters in "scripts/mod_i_am_mod.gsc"</pre>
+        <p>This disproved the idea that raw/server GSC could directly author a custom clientfield bridge.</p>
+        <pre>**** Unresolved external : "register_clientflag_callback" with 3 parameters in "clientscripts/mp/zombies/_bo3_rev_servant_fx.csc"</pre>
+        <p>This disproved the T5-shaped clientflag callback bridge in BO2/T6 CSC.</p>
+        <h3>Old survival package failure</h3>
+        <pre>**** Unresolved external : "precache" with 0 parameters in "maps/mp/zm_transit.gsc"</pre>
+        <p>This was not an animation bug. It was a wrongly built survival FF lane that stripped stock script-tree expectations out of Transit.</p>
+        <h3>Current server bridge evidence</h3>
+        <pre>[bo3_rev][servant_fx] stage=projectile_equipment_bridge; build_tag=0317004838_485c81; targetname=bo3_rev_servant_projectile_anchor; ent=338; model=bo3_rev_v2_idg_view_0317004838_485c81
+[bo3_rev][servant_fx] stage=vortex_equipment_bridge; build_tag=0317004838_485c81; id=1; targetname=bo3_rev_servant_vortex_anchor; ent=340; origin=(1387.91, -641.211, 29.5869); model=bo3_rev_v2_idg_view_0317004838_485c81</pre>
+        <p>This proves the server created real bridge entities and invoked the stock equipment signaling path.</p>
+        <h3>Current missing client evidence</h3>
+        <pre>[bo3_rev][csc] zm_transit main build=0317004314_485c81
+[bo3_rev][csc] zm_transit register_client_fields build=0317004314_485c81
+[bo3_rev][csc] init build=0317004314_485c81</pre>
+        <p>These lines prove the clientscript lane loads. What is missing is any later line like:</p>
+        <pre>[bo3_rev][csc] equipment bridge ...
+[bo3_rev][csc] discovered ...
+[bo3_rev][csc] projectile fx thread ...
+[bo3_rev][csc] vortex fx thread ...</pre>
+      </section>
+
+      <section id="next-steps">
+        <h2>Next steps</h2>
+        <p class="lede">This is the recommended order from the current evidence, not a generic roadmap.</p>
+        <ol>
+          <li>Run and inspect <code>0317011234_485c81</code> specifically for model-discovery logs.</li>
+          <li>If discovery logs appear but there are still no visuals, move focus to local client playback and imported FX fidelity.</li>
+          <li>If discovery logs still do not appear, stop using the equipment bridge as the primary assumption and switch to a stock T6 clientfield path that is known to target an entity class we can reliably spawn and replicate.</li>
+          <li>Only after the bridge is proven alive should the project resume larger BO3 vortex fidelity work.</li>
+          <li>Keep the animation lane separate until the FX bridge is solved.</li>
+        </ol>
+        <div class="card-grid">
+          <article class="card">
+            <h3>What should not be retried blindly</h3>
+            <ul>
+              <li>Raw/source <code>setclientfield(...)</code> bridges</li>
+              <li>T5-style clientflag callback registration in CSC</li>
+              <li>Large BO3 FX graph changes before the client bridge proves it can enter playback threads</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>What remains genuinely promising</h3>
+            <ul>
+              <li>T6-native, mod-only bridge surfaces</li>
+              <li>Client discovery off replicated marker entities</li>
+              <li>BO3 raw FX import through the patched OAT T6 loader</li>
+              <li>The current donor/model/gameplay foundation</li>
+            </ul>
+          </article>
+        </div>
+        <p class="footer-note">Generated as a consolidation artifact for the current Servant FX lane. Update this dossier whenever the bridge model changes materially or the client finally reaches local BO3 playback.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

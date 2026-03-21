@@ -57,3 +57,62 @@ So the default workflow remains:
 - runtime logs
 
 not client injection.
+
+The newer FX runtime probe is useful, but the project learned another hard rule:
+- intrusive deep consumer-tracing builds can create fake startup crashes
+- normal render-polish testing should use the safe probe or no probe at all
+- probe work should now be reserved for new real regressions, not day-to-day visual tuning
+
+## 7. Full runtime-zone fidelity is its own barrier
+The project now has proof that:
+- minimal custom FF/IPAK packaging can be safe
+- clientscript ownership can be achieved on the full runtime lane
+- the rebuilt full `so_zsurvival_zm_transit.ff` can still crash before spawn
+
+That means there is a separate barrier beyond asset conversion:
+- faithfully rebuilding enough of the stock survival runtime zone for startup to complete
+
+This is not just an FX problem.
+It affects whether any client render probe can reach spawn at all.
+
+## 8. Ownership and render are different problems
+For a long time these were mixed together.
+
+The project now treats them separately:
+- ownership problem:
+  - does the engine actually execute our client helper?
+- render problem:
+  - if the helper executes and calls `playfx`, does the effect appear?
+
+Current state:
+- ownership: proven on the full runtime lane
+- render existence: proven on the full runtime lane
+- current remaining problem: fidelity and consistency, not basic visibility
+
+## 9. Loose global FX-image overrides are unsafe for this port
+The project now has concrete proof that staging BO3 FX images into the loose global:
+- `AppData\\Local\\Plutonium\\storage\\t6\\images`
+
+can push accepted BO3 `0x0D` image classes into a crashing runtime lane.
+
+This first showed up with:
+- `$identitynormalmap`
+
+and then with:
+- `fxt_debris_clump`
+
+That means:
+- packed/mod-lane BO3 FX images are acceptable
+- loose global BO3 FX-image overrides are not a safe default for this port
+
+## 10. Naming collisions were a real render barrier
+Translated BO3 surfaces under stock-looking names could leak onto unrelated stock zombie/fire/dirt effects.
+
+That is why the project moved to:
+- `bo3rfx_*` namespaced BO3 surfaces
+
+The cost:
+- a temporary step back in visibility while the old leaked path disappeared
+
+The payoff:
+- the current visible Servant lane is now the real BO3 surface path, not a polluted stock-override artifact

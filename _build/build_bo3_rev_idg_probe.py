@@ -136,6 +136,7 @@ BUILD_TAG_SEED = "|".join(
         "lowhand" if os.environ.get("ROGUE_FORCE_LOW_HANDMODEL", "0") not in ("0", "false", "False") else "basehand",
         "stockfxprobe" if USE_STOCK_FX_MATERIAL_PROBE else "nofxprobe",
         f"servantscope:{os.environ.get('ROGUE_SERVANT_FX_SCOPE', 'full').strip().lower() or 'full'}",
+        f"portalrendermode:{os.environ.get('ROGUE_PHOSPHOROUS_RENDER_MODE', 'safe_alpha').strip().lower() or 'safe_alpha'}",
         f"transplant:{FX_TRANSPLANT_TARGET or 'off'}:{FX_TRANSPLANT_STAGE or 'off'}",
     ]
 )
@@ -143,6 +144,7 @@ BUILD_TAG_PREFIX = datetime.now(timezone.utc).strftime("%m%d%H%M%S")
 BUILD_TAG = os.environ.get("ROGUE_BUILD_TAG", "").strip() or f"{BUILD_TAG_PREFIX}_{hashlib.sha1(BUILD_TAG_SEED.encode('utf-8')).hexdigest()[:6]}"
 MODEL_ASSET = f"{MODEL_ASSET_BASE}_{BUILD_TAG}" if GUN_MODEL_MODE == "custom" else MODEL_ASSET_BASE
 WORLD_MODEL_ASSET = f"{MODEL_ASSET}_world" if USE_T5_GERSH and GUN_MODEL_MODE == "custom" else ""
+BRIDGE_WORLD_MODEL_ASSET = os.environ.get("ROGUE_BRIDGE_WORLD_MODEL", "tag_origin").strip() or "tag_origin"
 VIEWHANDS_ASSET = "bo3_rev_idg_viewhands"
 BRIDGE_VIEWHANDS_ASSET = "bo3_rev_bridge_viewhands"
 WEAPON_ASSET = PROBE_SHELL_WEAPON
@@ -172,6 +174,7 @@ FX_EMISSIVE_TEMPLATE = ROOT / "_build" / "runtime_unlink_so_zsurvival_clean" / "
 FX_CLOUD_TEMPLATE = ROOT / "_build" / "runtime_unlink_so_zsurvival_clean" / "materials" / "gfx_fxt_debris_fire_ember_cloud_01.json"
 FX_DISTORT_TEMPLATE = ROOT / "_build" / "runtime_unlink_so_zsurvival_clean" / "materials" / "gfx_distortion_heat.json"
 FX_GLOW_TEMPLATE = ROOT / "zone_dump" / "materials" / "gfx_fxt_light_glow_square_gr.json"
+FX_GLOW_STABLE_TEMPLATE = ROOT / "zone_dump" / "materials" / "gfx_fxt_light_glow_z2.json"
 FX_GLOW_IMAGE_DDS = ROOT / "zone_dump" / "images" / "fxt_light_glow_square.dds"
 STOCK_FMT0D_DEBUG_MATERIAL_NAME = "ffprobe_stock_fmt0d_glow"
 STOCK_FMT0D_IMAGE_NAME = "fxt_debris_fire_ember_cloud_01"
@@ -189,6 +192,7 @@ PHOSPHOROUS_BLOOM_IMAGE_NAME = "fxt_light_phosphorous_bloom"
 PHOSPHOROUS_MASK_DEBUG_MATERIAL_NAME = "ffprobe_phosphorous_mask_glow"
 PHOSPHOROUS_MASK_IMAGE_NAME = "fxt_light_phosphorous_mask"
 PHOSPHOROUS_VARIANT_PREVIEW_DIR = ROOT / "_build" / "source_fx_previews"
+PHOSPHOROUS_MASK_SOURCE = BO3_FX_LIBRARY_ROOT / "texture_assets" / "waw" / "fx" / "fxt_light_phosphorous_mask.tif"
 PHOSPHOROUS_VARIANTS: dict[str, dict[str, str]] = {
     "native": {
         "asset": "zombie/fx_ffprobe_debug_orb_phosphorous_native",
@@ -575,8 +579,45 @@ SERVANT_FX_SCOPE = os.environ.get("ROGUE_SERVANT_FX_SCOPE", "full").strip().lowe
 SERVANT_VORTEX_DEBUG_MARKERS = os.environ.get(
     "ROGUE_SERVANT_VORTEX_DEBUG_MARKERS", "0"
 ) not in ("0", "false", "False")
+SERVANT_VORTEX_LAYER_MODE = os.environ.get(
+    "ROGUE_SERVANT_VORTEX_LAYER_MODE", "all"
+).strip().lower() or "all"
+PHOSPHOROUS_RENDER_MODE = os.environ.get(
+    "ROGUE_PHOSPHOROUS_RENDER_MODE", "safe_alpha"
+).strip().lower() or "safe_alpha"
 if SERVANT_FX_SCOPE not in {"full", "vortex_core"}:
     SERVANT_FX_SCOPE = "full"
+if SERVANT_VORTEX_LAYER_MODE not in {
+    "all",
+    "control_only",
+    "burst_vs_control",
+    "shell_vs_control",
+    "loop_vs_control",
+}:
+    SERVANT_VORTEX_LAYER_MODE = "all"
+if PHOSPHOROUS_RENDER_MODE not in {"safe_alpha", "flare_stock_trial"}:
+    PHOSPHOROUS_RENDER_MODE = "safe_alpha"
+
+
+def servant_vortex_layer_flags() -> dict[str, bool]:
+    if SERVANT_FX_SCOPE != "vortex_core":
+        return {"burst": True, "shell": True, "loop": True, "inner": True}
+
+    flags = {
+        "burst": False,
+        "shell": False,
+        "loop": False,
+        "inner": True,
+    }
+    if SERVANT_VORTEX_LAYER_MODE == "all":
+        flags.update({"burst": True, "shell": True, "loop": True})
+    elif SERVANT_VORTEX_LAYER_MODE == "burst_vs_control":
+        flags["burst"] = True
+    elif SERVANT_VORTEX_LAYER_MODE == "shell_vs_control":
+        flags["shell"] = True
+    elif SERVANT_VORTEX_LAYER_MODE == "loop_vs_control":
+        flags["loop"] = True
+    return flags
 
 if USE_DEDICATED_BO3_FX_LOAD and USE_BO3_IDG_ANIMS and BO3_FX_LOAD_ZONE_NAME == MOD_LOAD_ZONE_NAME:
     raise RuntimeError(
@@ -1008,6 +1049,7 @@ def bo3_servant_raw_fx_zone_names() -> list[str]:
             "zombie/fx_idgun_hole_sm_zod_zmb",
             "zombie/fx_idgun_hole_xsm_zod_zmb",
             "zombie/fx_idgun_hole_xl_zod_zmb",
+            "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os",
         ]
 
     names: list[str] = []
@@ -1065,6 +1107,7 @@ def bo3_servant_raw_fx_staged_names() -> list[str]:
                 "zombie/fx_idgun_hole_sm_zod_zmb",
                 "zombie/fx_idgun_hole_xsm_zod_zmb",
                 "zombie/fx_idgun_hole_xl_zod_zmb",
+                "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os",
             ]
         )
         return names
@@ -2046,6 +2089,14 @@ def write_debug_raw_fx() -> None:
         encoding="utf-8",
     )
     normalize_staged_raw_fx(zombie_root / "fx_bo3_rev_probe_phosphorous_i1024_os.efx")
+    (zombie_root / "fx_bo3_rev_probe_namespaced_phosphorous_os.efx").write_text(
+        build_layered_namespaced_probe_fx(
+            debug_template_os.replace('{name}', 'bo3_rev_probe_namespaced_phosphorous_os')
+            .replace('{material_name}', 'gfx_light_phosphorous_em_i1024')
+        ),
+        encoding="utf-8",
+    )
+    normalize_staged_raw_fx(zombie_root / "fx_bo3_rev_probe_namespaced_phosphorous_os.efx")
     (zombie_root / "fx_bo3_rev_probe_shockwave_i2048_os.efx").write_text(
         debug_template_os.replace('{name}', 'bo3_rev_probe_shockwave_i2048_os')
         .replace('{material_name}', 'gfx_shockwave_elec_anim_em_i2048'),
@@ -2076,6 +2127,109 @@ def normalize_staged_raw_fx(path: Path) -> None:
     normalized = normalize_placeholder_scale_graphs(raw_text)
     if normalized != raw_text:
         path.write_text(normalized, encoding="utf-8")
+
+
+def tune_namespaced_probe_fx(raw_text: str) -> str:
+    # Make the proven namespaced control shell feel like an actual FX layer:
+    # keep it one-shot and simple, but add roll/pulse/fade so it no longer reads
+    # like a static sticker. Keep the contract conservative so we do not lose the
+    # now-working render lane.
+    replacements = {
+        "\tangleVelRoll 0.000000 0.000000;\n": "\tangleVelRoll 22.000000 -22.000000;\n",
+        "\tinitialRot 0.000000 0.000000;\n": "\tinitialRot 0.000000 360.000000;\n",
+        "\tlifeSpanMsec 1200 0;\n": "\tlifeSpanMsec 6200 0;\n",
+        "\talphaDissolve 1.000000;\n": "\talphaDissolve 0.000000;\n",
+        "\tfalloffBeginAngle 65;\n": "\tfalloffBeginAngle 0;\n",
+        "\tfalloffEndAngle 85;\n": "\tfalloffEndAngle 180;\n",
+        "\tsizeGraph0 260.000000\n\t{\n\t\t{\n\t\t\t0.000000 1.000000\n\t\t\t1.000000 1.000000\n\t\t}\n": "\tsizeGraph0 220.000000\n\t{\n\t\t{\n\t\t\t0.000000 0.72\n\t\t\t0.300000 1.05\n\t\t\t0.650000 1.18\n\t\t\t1.000000 0.88\n\t\t}\n",
+        "\tsizeGraph1 260.000000\n\t{\n\t\t{\n\t\t\t0.000000 1.000000\n\t\t\t1.000000 1.000000\n\t\t}\n": "\tsizeGraph1 220.000000\n\t{\n\t\t{\n\t\t\t0.000000 0.72\n\t\t\t0.300000 1.05\n\t\t\t0.650000 1.18\n\t\t\t1.000000 0.88\n\t\t}\n",
+        "\talphaGraph 1\n\t{\n\t\t{\n\t\t\t0.000000 1.000000\n\t\t\t1.000000 0.850000\n\t\t}\n": "\talphaGraph 1\n\t{\n\t\t{\n\t\t\t0.000000 0.000000\n\t\t\t0.050000 0.88\n\t\t\t0.250000 1.000000\n\t\t\t0.850000 0.950000\n\t\t\t1.000000 0.800000\n\t\t}\n",
+    }
+    tuned = raw_text
+    for old, new in replacements.items():
+        tuned = tuned.replace(old, new)
+    return tuned
+
+
+def build_layered_namespaced_probe_fx(raw_text: str) -> str:
+    tuned = tune_namespaced_probe_fx(raw_text)
+    header, body = tuned.split("{", 1)
+    body = "{" + body
+
+    def variant(
+        name: str,
+        *,
+        size: float,
+        angle_vel: str,
+        initial_rot: str,
+        alpha_points: list[tuple[float, float]],
+        z_offset: float,
+    ) -> str:
+        block = body
+        block = block.replace('name "bo3_rev_probe_namespaced_phosphorous_os";', f'name "{name}";', 1)
+        block = block.replace("\tspawnOrgZ 0.000000 0.000000;\n", f"\tspawnOrgZ {z_offset:.6f} 0.000000;\n", 1)
+        block = block.replace("\tangleVelRoll 22.000000 -22.000000;\n", f"\tangleVelRoll {angle_vel};\n", 1)
+        block = block.replace("\tinitialRot 0.000000 360.000000;\n", f"\tinitialRot {initial_rot};\n", 1)
+        block = block.replace(
+            "\tsizeGraph0 220.000000\n\t{\n\t\t{\n\t\t\t0.000000 0.72\n\t\t\t0.300000 1.05\n\t\t\t0.650000 1.18\n\t\t\t1.000000 0.88\n\t\t}\n",
+            (
+                f"\tsizeGraph0 {size:.6f}\n\t{{\n\t\t{{\n"
+                "\t\t\t0.000000 0.72\n"
+                "\t\t\t0.300000 1.05\n"
+                "\t\t\t0.650000 1.18\n"
+                "\t\t\t1.000000 0.88\n"
+                "\t\t}\n"
+            ),
+            1,
+        )
+        block = block.replace(
+            "\tsizeGraph1 220.000000\n\t{\n\t\t{\n\t\t\t0.000000 0.72\n\t\t\t0.300000 1.05\n\t\t\t0.650000 1.18\n\t\t\t1.000000 0.88\n\t\t}\n",
+            (
+                f"\tsizeGraph1 {size:.6f}\n\t{{\n\t\t{{\n"
+                "\t\t\t0.000000 0.72\n"
+                "\t\t\t0.300000 1.05\n"
+                "\t\t\t0.650000 1.18\n"
+                "\t\t\t1.000000 0.88\n"
+                "\t\t}\n"
+            ),
+            1,
+        )
+        alpha_graph = "".join(f"\t\t\t{t:.6f} {a:.6f}\n" for t, a in alpha_points)
+        block = block.replace(
+            "\talphaGraph 1\n\t{\n\t\t{\n\t\t\t0.000000 0.000000\n\t\t\t0.100000 0.72\n\t\t\t0.650000 0.98\n\t\t\t1.000000 0.32\n\t\t}\n",
+            f"\talphaGraph 1\n\t{{\n\t\t{{\n{alpha_graph}\t\t}}\n",
+            1,
+        )
+        return block
+
+    layers = [
+        variant(
+            "bo3_rev_probe_namespaced_phosphorous_core",
+            size=205.0,
+            angle_vel="18.000000 -18.000000",
+            initial_rot="0.000000 360.000000",
+            alpha_points=[(0.0, 0.70), (0.05, 0.92), (0.25, 1.0), (0.85, 0.97), (1.0, 0.90)],
+            z_offset=0.0,
+        ),
+        variant(
+            "bo3_rev_probe_namespaced_phosphorous_mid",
+            size=230.0,
+            angle_vel="-11.000000 11.000000",
+            initial_rot="35.000000 395.000000",
+            alpha_points=[(0.0, 0.26), (0.05, 0.56), (0.25, 0.74), (0.85, 0.70), (1.0, 0.56)],
+            z_offset=4.0,
+        ),
+        variant(
+            "bo3_rev_probe_namespaced_phosphorous_outer",
+            size=255.0,
+            angle_vel="7.000000 -7.000000",
+            initial_rot="80.000000 440.000000",
+            alpha_points=[(0.0, 0.16), (0.04, 0.32), (0.25, 0.48), (0.85, 0.50), (1.0, 0.34)],
+            z_offset=-4.0,
+        ),
+    ]
+
+    return header + "".join(layers)
 
 
 RAW_FX_SAFE_EDITOR_FLAGS = {
@@ -4641,6 +4795,7 @@ def stage_namespaced_bo3_fx_surface_images(material_meta: dict[str, dict[str, ob
     seen: set[str] = set()
     for meta in material_meta.values():
         emitted_image_name = str(meta.get("emittedImageName", meta.get("colorMap", ""))).strip()
+        source_image_name = str(meta.get("sourceImageName", "")).strip()
         source_image_path = str(meta.get("sourceImagePath", "")).strip()
         if not emitted_image_name or not source_image_path or emitted_image_name in seen:
             continue
@@ -4651,7 +4806,14 @@ def stage_namespaced_bo3_fx_surface_images(material_meta: dict[str, dict[str, ob
                 f"(image={emitted_image_name})"
             )
         dst = IMAGES_DIR / f"{emitted_image_name}.iwi"
-        write_iwi_from_source_image(src, dst)
+        if source_image_name == "fxt_light_phosphorous" or emitted_image_name == "bo3rfx_fxt_light_phosphorous":
+            mask_img = Image.open(PHOSPHOROUS_MASK_SOURCE) if PHOSPHOROUS_MASK_SOURCE.exists() else None
+            processed = build_phosphorous_runtime_image(Image.open(src), mask_img)
+            PHOSPHOROUS_VARIANT_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            processed.save(PHOSPHOROUS_VARIANT_PREVIEW_DIR / f"{emitted_image_name}.png")
+            write_iwi_from_image(processed, dst)
+        else:
+            write_iwi_from_source_image(src, dst)
         staged_image_names.append(emitted_image_name)
         seen.add(emitted_image_name)
     return staged_image_names
@@ -4706,6 +4868,27 @@ def build_emissive_mask_image(img: Image.Image, *, brightness: float, contrast: 
     b = mask.point(lambda v: min(255, int(v * blue_scale)))
     a = mask.point(lambda v: 0 if v < 6 else min(255, int(v * 1.35)))
     return Image.merge("RGBA", (r, g, b, a))
+
+
+def build_phosphorous_runtime_image(color_img: Image.Image, mask_img: Image.Image | None = None) -> Image.Image:
+    target_size = (512, 512)
+    rgba = color_img.convert("RGBA").resize(target_size, Image.Resampling.LANCZOS)
+    rgb = Image.merge("RGB", rgba.split()[:3])
+    rgb = ImageEnhance.Color(rgb).enhance(1.14)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1.08)
+    rgb = ImageEnhance.Brightness(rgb).enhance(1.12)
+    rgb = rgb.filter(ImageFilter.GaussianBlur(radius=1.10))
+
+    if mask_img is None:
+        mask = rgb.convert("L")
+    else:
+        mask = mask_img.convert("L").resize(target_size, Image.Resampling.LANCZOS)
+
+    mask = ImageEnhance.Contrast(mask).enhance(1.15)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=2.6))
+    alpha = mask.point(lambda v: 0 if v < 3 else min(255, int(v * 1.65)))
+    rgb = Image.merge("RGB", tuple(ImageChops.multiply(channel, alpha) for channel in rgb.split()))
+    return Image.merge("RGBA", (*rgb.split(), alpha))
 
 
 def build_phosphorous_variant_image(img: Image.Image, mode: str) -> Image.Image:
@@ -5249,18 +5432,87 @@ def choose_fx_template(material_meta: dict[str, object]) -> Path:
 
 
 def build_safe_bo2_fx_materials(material_meta: dict[str, dict[str, object]]) -> None:
+    stable_shell_glow_materials = {
+        "bo3rfx_gfx_light_phosphorous_em_i1024",
+        "bo3rfx_gfx_dust_gen_lit",
+        "bo3rfx_gfx_dust_gen_em",
+        "bo3rfx_gfx_debris_clump_em",
+    }
     for material_name, meta in material_meta.items():
         color_map = str(meta.get("colorMap", "")).strip()
         if not color_map:
             continue
-        template = choose_fx_template(meta)
+        family = str(meta.get("family", "")).strip()
+        double_sided = material_name == "bo3rfx_gfx_light_phosphorous_em_i1024"
+        if family in {"billboard_additive_glow", "billboard_simple_alpha"} and material_name.startswith("bo3rfx_"):
+            double_sided = True
+        if material_name == "bo3rfx_gfx_light_phosphorous_em_i1024":
+            if PHOSPHOROUS_RENDER_MODE == "flare_stock_trial":
+                template = ROOT / "zone_dump" / "materials" / "gfx_fxt_light_flare_phosphorous_e10_z10.json"
+                technique_set = "effect_775wj8ww"
+                double_sided = False
+            else:
+                # Stay in a stock glow family, but avoid the square glow donor's
+                # stronger falloff-style contract. The z2 glow donor keeps the
+                # same broad render family while relying on feather params that
+                # are less likely to make the portal swing between vivid and faint.
+                template = FX_GLOW_STABLE_TEMPLATE
+                technique_set = "effect_50567j38"
+        elif material_name in stable_shell_glow_materials:
+            template = FX_GLOW_STABLE_TEMPLATE
+            technique_set = "effect_50567j38"
+        else:
+            template = choose_fx_template(meta)
+            technique_set = meta.get("techniqueSet", None)
         payload = clone_material_template(
             template,
             material_name,
             {"colorMap": color_map},
-            technique_set=meta.get("techniqueSet", None),
+            technique_set=technique_set,
             camera_region=str(meta.get("cameraRegion", "emissiveFx")),
+            double_sided=double_sided,
         )
+        if material_name in stable_shell_glow_materials:
+            payload["textureAtlas"] = {"columns": 1, "rows": 1}
+            payload["stateFlags"] = 21
+            payload["gameFlags"] = ["100", "1000"]
+            for idx, state in enumerate(payload.get("stateBits", [])):
+                if not isinstance(state, dict):
+                    continue
+                state.pop("stencilFront", None)
+                if material_name == "bo3rfx_gfx_light_phosphorous_em_i1024" and PHOSPHOROUS_RENDER_MODE == "flare_stock_trial":
+                    state["cullFace"] = "back"
+                else:
+                    if idx in {0, 2}:
+                        state["alphaTest"] = "gt0"
+                    state["cullFace"] = "none"
+                if material_name == "bo3rfx_gfx_light_phosphorous_em_i1024" and idx in {0, 2}:
+                    # The last remaining inconsistency is that the portal can
+                    # swing between vivid and faint depending on view direction
+                    # / background. The current donor path still uses additive
+                    # RGB with srcBlendRgb=one, which means alpha only gates the
+                    # pixel via alphaTest and does not actually modulate shell
+                    # intensity. Keep the additive family, but make the core
+                    # shell alpha-modulated so the phosphorous mask controls
+                    # visibility instead of behaving like an all-or-nothing card.
+                    state["srcBlendRgb"] = "srcalpha"
+                    state["dstBlendRgb"] = "one"
+                    state["blendOpRgb"] = "add"
+            if material_name != "bo3rfx_gfx_light_phosphorous_em_i1024" or PHOSPHOROUS_RENDER_MODE != "flare_stock_trial":
+                # The stock line pass reads as a hard rectangular outline on the
+                # translated phosphorous shell. Keep the additive shell passes,
+                # but disable the explicit line pass instead of collapsing to a
+                # single custom material contract again.
+                state_bits_entry = payload.get("stateBitsEntry")
+                if isinstance(state_bits_entry, list) and len(state_bits_entry) > 32:
+                    state_bits_entry[32] = -1
+            for tex in payload.get("textures", []):
+                if not isinstance(tex, dict):
+                    continue
+                sampler = tex.get("samplerState")
+                if isinstance(sampler, dict):
+                    sampler["filter"] = "linear"
+                    sampler["mipMap"] = "linear"
         dst = MATERIALS_DIR / f"{material_name}.json"
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -5651,6 +5903,7 @@ def stage_bo3_servant_fx() -> None:
             "zombie/fx_bo3_rev_debug_orb_os",
             "zombie/fx_bo3_rev_debug_orb_stock",
             "zombie/fx_bo3_rev_debug_orb_stock_os",
+            "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os",
             "zombie/fx_bo3_rev_probe_phosphorous_i1024_os",
             "zombie/fx_bo3_rev_probe_shockwave_i2048_os",
             "zombie/fx_bo3_rev_contract_test",
@@ -5680,6 +5933,12 @@ def stage_bo3_servant_fx() -> None:
             "bo3_rev_hole_md_custom_probe",
             "gfx_light_phosphorous_em",
         )
+
+    if SERVANT_FX_SCOPE == "vortex_core":
+        ns_probe_src = dst_root / "fx_bo3_rev_probe_namespaced_phosphorous_os.efx"
+        vortex_inner_dst = dst_root / "fx_idgun_hole_xsm_zod_zmb.efx"
+        if ns_probe_src.exists() and vortex_inner_dst.exists():
+            vortex_inner_dst.write_text(ns_probe_src.read_text(encoding="utf-8"), encoding="utf-8")
 
     # The runtime clientscript loads several subordinate Servant layers directly
     # (the hole_xsm/sm/md/lg/xl family), and some root FX also reference staged
@@ -6641,6 +6900,7 @@ def render_probe_script() -> None:
         "__PROBE_MODE__": GUN_MODEL_MODE,
         "__MODEL_ASSET__": resolved_gun_model(base_weapon_fields()),
         "__WORLD_MODEL_ASSET__": resolved_world_model(base_weapon_fields()),
+        "__BRIDGE_WORLD_MODEL_ASSET__": BRIDGE_WORLD_MODEL_ASSET,
         "__IS_TACTICAL__": "1" if uses_t5_gersh_assets() else "0",
         "__EXPECTED_CLIP__": EXPECTED_CLIP,
         "__EXPECTED_ENGINE_MAX__": EXPECTED_ENGINE_MAX,
@@ -6696,9 +6956,21 @@ def render_clientscript_template(template: Path, output: Path, work_output: Path
     rendered = rendered.replace("__BUILD_TAG__", BUILD_TAG)
     rendered = rendered.replace("__MODEL_ASSET__", resolved_gun_model(base_weapon_fields()))
     rendered = rendered.replace("__WORLD_MODEL_ASSET__", resolved_world_model(base_weapon_fields()))
+    rendered = rendered.replace("__BRIDGE_WORLD_MODEL_ASSET__", BRIDGE_WORLD_MODEL_ASSET)
     rendered = rendered.replace("__SERVANT_ENABLE_PROJECTILE__", "0" if SERVANT_FX_SCOPE == "vortex_core" else "1")
     rendered = rendered.replace("__SERVANT_VORTEX_DEBUG_MARKERS__", "1" if SERVANT_VORTEX_DEBUG_MARKERS else "0")
-    rendered = rendered.replace("__SERVANT_VORTEX_Z_OFFSET__", "0" if SERVANT_FX_SCOPE == "vortex_core" else "-72")
+    # Keep the rendered vortex out of the ground / near-camera plane. The
+    # current remaining consistency issue is strongest on close shots, where the
+    # portal is spawned effectively at the impact plane and can read as nearly
+    # invisible. Lifting the client render origin gives the layered shell room
+    # to stay readable without changing gameplay hit logic.
+    rendered = rendered.replace("__SERVANT_VORTEX_Z_OFFSET__", "24" if SERVANT_FX_SCOPE == "vortex_core" else "-48")
+    if template == SERVANT_CLIENTSCRIPT_TEMPLATE:
+        layer_flags = servant_vortex_layer_flags()
+        rendered = rendered.replace("__SERVANT_ENABLE_VORTEX_BURST__", "1" if layer_flags["burst"] else "0")
+        rendered = rendered.replace("__SERVANT_ENABLE_VORTEX_SHELL__", "1" if layer_flags["shell"] else "0")
+        rendered = rendered.replace("__SERVANT_ENABLE_VORTEX_LOOP__", "1" if layer_flags["loop"] else "0")
+        rendered = rendered.replace("__SERVANT_ENABLE_VORTEX_INNER__", "1" if layer_flags["inner"] else "0")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(rendered, encoding="utf-8")
     work_output.parent.mkdir(parents=True, exist_ok=True)
@@ -7279,6 +7551,7 @@ def build_debug_report() -> None:
             "watchlist": str(PROBE_WATCHLIST_PATH),
             "watch_entries": probe_watch_entries(),
             "servant_fx_scope": SERVANT_FX_SCOPE,
+            "servant_vortex_layer_mode": SERVANT_VORTEX_LAYER_MODE,
             "clientscript_templates": [
                 str(TRANSIT_CLIENTSCRIPT_TEMPLATE),
                 str(SERVANT_CLIENTSCRIPT_TEMPLATE),

@@ -15,7 +15,7 @@ bo3_rev_probe_weapon()
 
 bo3_rev_starter_weapon()
 {
-    return "mg08_zm";
+    return "m1911_zm";
 }
 
 bo3_rev_probe_mode()
@@ -25,12 +25,27 @@ bo3_rev_probe_mode()
 
 bo3_rev_probe_model_asset()
 {
-    return "bo3_rev_v2_idg_view_0312060433_e7b7b3";
+    return "bo3_rev_v2_idg_view_0321232501_4c7e1d";
+}
+
+bo3_rev_probe_world_model_asset()
+{
+    return "t6_wpn_zmb_mg08_world";
+}
+
+bo3_rev_bridge_world_model_asset()
+{
+    return "tag_origin";
 }
 
 bo3_rev_build_tag()
 {
-    return "0312060433_e7b7b3";
+    return "0321232501_4c7e1d";
+}
+
+bo3_rev_probe_is_tactical_grenade()
+{
+    return 0;
 }
 
 bo3_rev_demo_fast_spawn_delay()
@@ -58,9 +73,140 @@ bo3_rev_expected_hud_reserve()
     return 9;
 }
 
+bo3_rev_raw_fx_stage()
+{
+    return "full";
+}
+
+bo3_rev_use_raw_fx()
+{
+    return 1;
+}
+
+bo3_rev_use_raw_fx_muzzle()
+{
+    return 1;
+}
+
+bo3_rev_use_raw_fx_projectile()
+{
+    return 1;
+}
+
+bo3_rev_use_raw_fx_impact()
+{
+    return 1;
+}
+
+bo3_rev_use_raw_fx_vortex()
+{
+    return 1;
+}
+
+bo3_rev_use_raw_fx_strict()
+{
+    return 0;
+}
+
+bo3_rev_use_client_fx_bridge()
+{
+    return 1;
+}
+
+bo3_rev_servant_projectile_anchor_targetname()
+{
+    return "bo3_rev_servant_projectile_anchor";
+}
+
+bo3_rev_servant_vortex_anchor_targetname()
+{
+    return "bo3_rev_servant_vortex_anchor";
+}
+
+bo3_rev_servant_bridge_model_asset()
+{
+    world_asset = bo3_rev_bridge_world_model_asset();
+    if ( isdefined( world_asset ) && world_asset != "" )
+        return world_asset;
+
+    world_asset = bo3_rev_probe_world_model_asset();
+    if ( isdefined( world_asset ) && world_asset != "" )
+        return world_asset;
+
+    return bo3_rev_probe_model_asset();
+}
+
+bo3_rev_servant_projectile_bridge_model_asset()
+{
+    return bo3_rev_servant_bridge_model_asset();
+}
+
+bo3_rev_servant_vortex_bridge_model_asset()
+{
+    return bo3_rev_servant_bridge_model_asset();
+}
+
 bo3_rev_debug_enabled()
 {
     return getdvarint( "bo3_rev_debug" ) == 1;
+}
+
+bo3_rev_fx_valid(fx)
+{
+    return isdefined( fx ) && fx;
+}
+
+bo3_rev_loadfx_with_fallback(primary, fallback)
+{
+    fx = loadfx( primary );
+
+    if ( bo3_rev_fx_valid( fx ) )
+    {
+        bo3_rev_log_event(
+            "servant_fx",
+            "stage=loadfx_primary_ok"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";primary=" + primary
+            + ";fallback=" + fallback
+        );
+        return fx;
+    }
+
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=loadfx_primary_fail"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";primary=" + primary
+        + ";fallback=" + fallback
+        + ";strict=" + bo3_rev_use_raw_fx_strict()
+    );
+
+    if ( bo3_rev_use_raw_fx_strict() )
+        return undefined;
+
+    fx = loadfx( fallback );
+    if ( bo3_rev_fx_valid( fx ) )
+    {
+        bo3_rev_log_event(
+            "servant_fx",
+            "stage=loadfx_fallback_ok"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";primary=" + primary
+            + ";fallback=" + fallback
+        );
+    }
+    else
+    {
+        bo3_rev_log_event(
+            "servant_fx",
+            "stage=loadfx_fallback_fail"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";primary=" + primary
+            + ";fallback=" + fallback
+        );
+    }
+
+    return fx;
 }
 
 bo3_rev_start()
@@ -76,6 +222,9 @@ bo3_rev_start()
     setdvar( "cg_drawScriptUsage", "0" );
     bo3_rev_init_effects();
 
+    if ( bo3_rev_probe_is_tactical_grenade() )
+        level thread bo3_rev_gersh_emp_tuner();
+
     probe_weapon = bo3_rev_probe_weapon();
     starter_weapon = bo3_rev_starter_weapon();
 
@@ -89,6 +238,9 @@ bo3_rev_start()
         + ";starter=" + starter_weapon
         + ";mode=" + bo3_rev_probe_mode()
         + ";model=" + bo3_rev_probe_model_asset()
+        + ";raw_fx=" + bo3_rev_use_raw_fx()
+        + ";raw_fx_stage=" + bo3_rev_raw_fx_stage()
+        + ";client_fx=" + bo3_rev_use_client_fx_bridge()
         + ";loadout=" + starter_weapon + "," + probe_weapon
         + ";expect_clip=" + bo3_rev_expected_clip()
         + ";expect_max=" + bo3_rev_expected_engine_max()
@@ -139,7 +291,15 @@ bo3_rev_on_player_spawn()
             self thread bo3_rev_state_debug_watcher();
         }
 
-        if ( !isdefined( self.bo3_rev_servant_fire_watcher_started ) )
+        if ( bo3_rev_probe_is_tactical_grenade() )
+        {
+            if ( !isdefined( self.bo3_rev_gersh_throw_watcher_started ) )
+            {
+                self.bo3_rev_gersh_throw_watcher_started = 1;
+                self thread bo3_rev_gersh_throw_watcher();
+            }
+        }
+        else if ( !isdefined( self.bo3_rev_servant_fire_watcher_started ) )
         {
             self.bo3_rev_servant_fire_watcher_started = 1;
             self thread bo3_rev_servant_fire_watcher();
@@ -193,6 +353,30 @@ bo3_rev_grant_starting_loadout()
     gave_ok = bo3_rev_try_give_weapon( probe_weapon );
 
     bo3_rev_log_weapon_probe( self, "post_shell_give", probe_weapon );
+
+    if ( bo3_rev_probe_is_tactical_grenade() )
+    {
+        if ( self hasweapon( probe_weapon ) )
+        {
+            self maps\mp\zombies\_zm_utility::set_player_tactical_grenade( probe_weapon );
+            self bo3_rev_give_max_ammo( probe_weapon );
+        }
+
+        bo3_rev_log_player_state( self, "post_switch" );
+        bo3_rev_log_event(
+            "grant",
+            "weapon=" + probe_weapon
+            + ";starter=" + starter_weapon
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";gave_ok=" + gave_ok
+            + ";switch_ok=1"
+            + ";current=" + bo3_rev_safe_str( self getcurrentweapon() )
+            + ";expect_clip=" + bo3_rev_expected_clip()
+            + ";expect_max=" + bo3_rev_expected_engine_max()
+        );
+        self iprintln( "^2bo3_rev:^7 tactical probe active [" + bo3_rev_build_tag() + "]: " + probe_weapon + " HUD should read " + bo3_rev_expected_clip() );
+        return;
+    }
 
     if ( self hasweapon( probe_weapon ) && probe_weapon != "m1911_zm" && self hasweapon( "m1911_zm" ) )
     {
@@ -828,17 +1012,113 @@ bo3_rev_broadcast_command_message(text)
     }
 }
 
+bo3_rev_fx_sanity_test()
+{
+    return;
+}
+
+bo3_rev_gersh_emp_tuner()
+{
+    level endon( "game_ended" );
+
+    for ( ;; )
+    {
+        wait 0.25;
+
+        if ( !bo3_rev_probe_is_tactical_grenade() )
+            continue;
+
+        if ( !isdefined( level.zombie_vars ) )
+            continue;
+
+        level.zombie_vars["emp_stun_range"] = 1;
+        level.zombie_vars["emp_stun_time"] = 0;
+        level.zombie_vars["emp_perk_off_range"] = 1;
+        level.zombie_vars["emp_perk_off_time"] = 0;
+    }
+}
+
 bo3_rev_init_effects()
 {
     if ( !isdefined( level._effect ) )
         level._effect = [];
 
-    level._effect["bo3_rev_servant_vortex_loop"] = loadfx( "maps/zombie_tomb/fx_tomb_screecher_vortex" );
-    level._effect["bo3_rev_servant_vortex_glow"] = loadfx( "maps/zombie_tomb/fx_tomb_vortex_glow" );
-    level._effect["bo3_rev_servant_vortex_burst"] = loadfx( "maps/zombie_tomb/fx_tomb_ee_vortex" );
-    level._effect["bo3_rev_servant_vortex_end"] = loadfx( "maps/zombie/fx_zmb_blackhole_trap_end" );
-    level._effect["bo3_rev_servant_vortex_lightning"] = loadfx( "maps/zombie/fx_zombie_dog_lightning_spawn" );
-    level._effect["bo3_rev_servant_fire_smoke"] = loadfx( "weapon/thunder_gun/fx_thundergun_smoke_cloud" );
+    level._effect["bo3_rev_stock_control"] = undefined;
+    level._effect["bo3_rev_stock_control_near"] = undefined;
+    level._effect["bo3_rev_stock_control_loop"] = undefined;
+
+    if ( bo3_rev_use_raw_fx_muzzle() )
+    {
+        level._effect["bo3_rev_servant_muzzle_1p"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_muz_1p_zmb", "" );
+        level._effect["bo3_rev_servant_muzzle_3p"] = level._effect["bo3_rev_servant_muzzle_1p"];
+    }
+    else
+    {
+        level._effect["bo3_rev_servant_muzzle_1p"] = loadfx( "maps/zombie/fx_zmb_race_fireworks_burst_small" );
+        level._effect["bo3_rev_servant_muzzle_3p"] = loadfx( "maps/zombie/fx_zmb_race_fireworks_burst_small" );
+    }
+
+    if ( bo3_rev_use_raw_fx_projectile() )
+    {
+        level._effect["bo3_rev_servant_projectile_trail"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_projectile_zod_zmb", "" );
+        level._effect["bo3_rev_servant_projectile_glow"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_xsm_zod_zmb", "" );
+    }
+    else
+    {
+        level._effect["bo3_rev_servant_projectile_trail"] = loadfx( "maps/zombie/fx_zmb_race_fireworks_drop_trail" );
+        level._effect["bo3_rev_servant_projectile_glow"] = loadfx( "weapon/crossbow/fx_trail_crossbow_blink_red_os" );
+    }
+
+    if ( bo3_rev_use_raw_fx_impact() )
+        level._effect["bo3_rev_servant_projectile_explode"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_vortex_explo_zod_zmb", "" );
+    else
+        level._effect["bo3_rev_servant_projectile_explode"] = loadfx( "maps/zombie_tomb/fx_tomb_ee_vortex" );
+
+    if ( bo3_rev_use_raw_fx_vortex() )
+    {
+        level._effect["bo3_rev_servant_debug_orb"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_os"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_stock"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_stock_os"] = undefined;
+        level._effect["bo3_rev_contract_test"] = undefined;
+        level._effect["bo3_rev_servant_vortex_core"] = undefined;
+        level._effect["bo3_rev_servant_vortex_shell"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_sm_zod_zmb", "" );
+        level._effect["bo3_rev_servant_vortex_loop"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_lg_zod_zmb", "" );
+        level._effect["bo3_rev_servant_vortex_glow"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_md_zod_zmb", "" );
+        level._effect["bo3_rev_servant_vortex_inner"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_xsm_zod_zmb", "" );
+        level._effect["bo3_rev_servant_vortex_burst"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_vortex_explo_zod_zmb", "" );
+        level._effect["bo3_rev_servant_vortex_end"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_xl_zod_zmb", "" );
+    }
+    else
+    {
+        level._effect["bo3_rev_servant_debug_orb"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_os"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_stock"] = undefined;
+        level._effect["bo3_rev_servant_debug_orb_stock_os"] = undefined;
+        level._effect["bo3_rev_contract_test"] = undefined;
+        level._effect["bo3_rev_servant_vortex_core"] = undefined;
+        level._effect["bo3_rev_servant_vortex_shell"] = undefined;
+        level._effect["bo3_rev_servant_vortex_loop"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_lg_zod_zmb", "maps/zombie_tomb/fx_tomb_screecher_vortex" );
+        level._effect["bo3_rev_servant_vortex_glow"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_md_zod_zmb", "maps/zombie_tomb/fx_tomb_vortex_glow" );
+        level._effect["bo3_rev_servant_vortex_inner"] = undefined;
+        level._effect["bo3_rev_servant_vortex_burst"] = loadfx( "maps/zombie_tomb/fx_tomb_ee_vortex" );
+        level._effect["bo3_rev_servant_vortex_end"] = bo3_rev_loadfx_with_fallback( "zombie/fx_idgun_hole_xl_zod_zmb", "maps/zombie/fx_zmb_blackhole_trap_end" );
+    }
+    level._effect["bo3_rev_servant_vortex_lightning"] = undefined;
+    level._effect["bo3_rev_servant_fire_smoke"] = undefined;
+    level._effect["bo3_rev_servant_debug_orb"] = undefined;
+    level._effect["bo3_rev_servant_debug_orb_os"] = undefined;
+
+    if ( bo3_rev_probe_is_tactical_grenade() )
+    {
+        level._effect["bo3_rev_gersh_vortex_loop"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_looping", "maps/zombie_tomb/fx_tomb_screecher_vortex" );
+        level._effect["bo3_rev_gersh_vortex_glow"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_flare_marker", "maps/zombie_tomb/fx_tomb_vortex_glow" );
+        level._effect["bo3_rev_gersh_vortex_burst"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_flare_marker", "maps/zombie_tomb/fx_tomb_ee_vortex" );
+        level._effect["bo3_rev_gersh_vortex_horizon"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_implode", "maps/zombie/fx_zmb_blackhole_trap_end" );
+        level._effect["bo3_rev_gersh_vortex_exit"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_exit", "maps/zombie/fx_zmb_blackhole_trap_end" );
+        level._effect["bo3_rev_gersh_vortex_end"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_zmb_blackhole_trap_end", "maps/zombie/fx_zmb_blackhole_trap_end" );
+        level._effect["bo3_rev_gersh_vortex_pull"] = bo3_rev_loadfx_with_fallback( "maps/zombie/fx_blackhole_zombie_breakup", "maps/zombie/fx_zmb_blackhole_trap_end" );
+    }
 }
 
 bo3_rev_prepare_low_bone_viewmodel()
@@ -1086,14 +1366,40 @@ bo3_rev_servant_cooldown_ms()
 
 bo3_rev_servant_duration()
 {
-    // BO3 black_hole_bomb_zm uses fuseTime 4.0, and the vortex duration is
-    // driven directly from that fuse in _zm_weap_black_hole_bomb.gsc.
+    return bo3_rev_servant_effect_duration();
+}
+
+bo3_rev_servant_pull_duration()
+{
     return 4.0;
+}
+
+bo3_rev_servant_effect_duration()
+{
+    return 5.0;
+}
+
+bo3_rev_servant_effect_version()
+{
+    return 1;
+}
+
+bo3_rev_servant_explosion_delay()
+{
+    delay = ( bo3_rev_servant_effect_duration() - bo3_rev_servant_pull_duration() ) + 0.35;
+    if ( delay < 0.0 )
+        delay = 0.0;
+    return delay;
+}
+
+bo3_rev_servant_explosion_radius()
+{
+    return bo3_rev_servant_pull_radius() * 1.8;
 }
 
 bo3_rev_servant_pull_radius()
 {
-    return 384;
+    return 560;
 }
 
 bo3_rev_servant_kill_radius()
@@ -1106,14 +1412,157 @@ bo3_rev_servant_trace_distance()
     return 2200;
 }
 
+bo3_rev_servant_pull_tick()
+{
+    return 0.05;
+}
+
+bo3_rev_servant_outer_ring_radius()
+{
+    return 320;
+}
+
+bo3_rev_servant_lift_radius()
+{
+    return 152;
+}
+
 bo3_rev_servant_drag_step()
 {
-    return 72;
+    return 96;
+}
+
+bo3_rev_servant_air_drag_step()
+{
+    return 112;
 }
 
 bo3_rev_servant_drag_travel_time()
 {
-    return 0.10;
+    return 0.08;
+}
+
+bo3_rev_servant_pull_snap_radius()
+{
+    return 104;
+}
+
+bo3_rev_servant_drag_step_for_dist(dist_sq)
+{
+    dist = sqrt( dist_sq );
+
+    if ( dist <= 80 )
+        return 256;
+    if ( dist <= 128 )
+        return 216;
+    if ( dist <= 192 )
+        return 192;
+    if ( dist <= 288 )
+        return 156;
+    if ( dist <= 400 )
+        return 116;
+
+    return bo3_rev_servant_drag_step();
+}
+
+bo3_rev_servant_pull_center_height()
+{
+    return 48;
+}
+
+bo3_rev_servant_swirl_radius()
+{
+    return 52;
+}
+
+bo3_rev_servant_pull_center(vortex)
+{
+    center = vortex.origin;
+    if ( isdefined( vortex.bo3_rev_visual_origin ) )
+        center = vortex.bo3_rev_visual_origin;
+
+    return center + ( 0, 0, bo3_rev_servant_pull_center_height() );
+}
+
+bo3_rev_servant_pull_strength(vortex)
+{
+    if ( !isdefined( vortex ) || !isdefined( vortex.bo3_rev_spawn_ms ) )
+        return 1.0;
+
+    total_duration = bo3_rev_servant_pull_duration();
+    if ( isdefined( vortex.bo3_rev_pull_duration ) )
+        total_duration = vortex.bo3_rev_pull_duration;
+
+    total_ms = int( total_duration * 1000 );
+    if ( total_ms <= 0 )
+        return 1.0;
+
+    elapsed_ms = gettime() - vortex.bo3_rev_spawn_ms;
+    frac = elapsed_ms / total_ms;
+    if ( frac < 0.0 )
+        frac = 0.0;
+    if ( frac > 1.0 )
+        frac = 1.0;
+
+    return 0.65 + ( frac * 0.75 );
+}
+
+bo3_rev_servant_flat_tangent(dir)
+{
+    flat = vectornormalize( ( dir[0], dir[1], 0 ) );
+    if ( !isdefined( flat ) )
+        return ( 0, 0, 0 );
+
+    return ( 0 - flat[1], flat[0], 0 );
+}
+
+bo3_rev_servant_ground_pull_target(from, center, dist_2d_sq, strength)
+{
+    dist_2d = sqrt( dist_2d_sq );
+    dir = vectornormalize( center - from );
+    if ( !isdefined( dir ) )
+        return from;
+
+    flat_dir = vectornormalize( ( dir[0], dir[1], 0 ) );
+    if ( !isdefined( flat_dir ) )
+        flat_dir = ( 1, 0, 0 );
+
+    tangent = bo3_rev_servant_flat_tangent( flat_dir );
+    desired_ring = bo3_rev_servant_outer_ring_radius() * 0.45;
+    if ( dist_2d > bo3_rev_servant_outer_ring_radius() )
+        desired_ring = bo3_rev_servant_outer_ring_radius() * 0.72;
+
+    swirl = vectorscale( tangent, bo3_rev_servant_swirl_radius() * strength );
+    anchor = center - vectorscale( flat_dir, desired_ring );
+    target = anchor + swirl;
+
+    return bo3_rev_servant_step_toward_grounded( from, target, bo3_rev_servant_drag_step_for_dist( dist_2d_sq ) );
+}
+
+bo3_rev_servant_air_pull_target(from, center, dist_sq, dist_2d_sq, strength)
+{
+    dir = vectornormalize( center - from );
+    if ( !isdefined( dir ) )
+        return from;
+
+    step = bo3_rev_servant_air_drag_step() * strength;
+    if ( dist_sq <= ( bo3_rev_servant_pull_snap_radius() * bo3_rev_servant_pull_snap_radius() ) )
+        step = 256;
+
+    target = bo3_rev_servant_step_toward_air( from, center, step );
+
+    dist_2d = sqrt( dist_2d_sq );
+    lift_frac = 1.0 - ( dist_2d / bo3_rev_servant_lift_radius() );
+    if ( lift_frac < 0.0 )
+        lift_frac = 0.0;
+    if ( lift_frac > 1.0 )
+        lift_frac = 1.0;
+
+    target_z = from[2] + ( ( center[2] - from[2] ) * ( 0.35 + ( lift_frac * 0.85 * strength ) ) ) + ( lift_frac * 48 );
+    if ( target_z < from[2] )
+        target_z = from[2];
+
+    return ( target[0], target[1], target_z );
 }
 
 bo3_rev_servant_lightning_interval()
@@ -1124,6 +1573,336 @@ bo3_rev_servant_lightning_interval()
 bo3_rev_servant_lightning_height()
 {
     return 18;
+}
+
+bo3_rev_gersh_duration()
+{
+    return 4.0;
+}
+
+bo3_rev_gersh_outer_walk_radius()
+{
+    return 2056;
+}
+
+bo3_rev_gersh_inner_run_radius()
+{
+    return 1024;
+}
+
+bo3_rev_gersh_horizon_kill_radius()
+{
+    return 128;
+}
+
+bo3_rev_gersh_center_kill_radius()
+{
+    return 50;
+}
+
+bo3_rev_gersh_walk_step()
+{
+    return 72;
+}
+
+bo3_rev_gersh_run_step()
+{
+    return 128;
+}
+
+bo3_rev_gersh_throw_watcher()
+{
+    self endon( "disconnect" );
+
+    for ( ;; )
+    {
+        self waittill( "grenade_fire", grenade, weapname );
+
+        if ( !bo3_rev_is_zombies_map() )
+            continue;
+
+        if ( weapname != bo3_rev_probe_weapon() )
+            continue;
+
+        if ( !isdefined( grenade ) )
+            continue;
+
+        grenade.owner = self;
+        bo3_rev_log_event(
+            "gersh_throw",
+            "stage=fire"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";weapon=" + weapname
+            + ";origin=" + bo3_rev_safe_str( grenade.origin )
+        );
+
+        self thread bo3_rev_gersh_handle_grenade( grenade );
+    }
+}
+
+bo3_rev_gersh_handle_grenade(grenade)
+{
+    if ( !isdefined( grenade ) )
+        return;
+
+    model = bo3_rev_gersh_attach_throw_model( grenade );
+    grenade_origin = bo3_rev_gersh_wait_for_landing_origin( grenade, model );
+
+    if ( !isdefined( grenade_origin ) && isdefined( model ) )
+        grenade_origin = model.origin;
+
+    if ( !isdefined( grenade_origin ) && isdefined( grenade ) )
+        grenade_origin = grenade.origin;
+
+    if ( !isdefined( grenade_origin ) )
+        return;
+
+    if ( isdefined( model ) )
+    {
+        model.bo3_rev_persist_after_parent = 1;
+        model unlink();
+        model.origin = grenade_origin;
+        if ( isdefined( grenade ) )
+            model.angles = grenade.angles;
+    }
+
+    if ( isdefined( grenade ) )
+    {
+        if ( isdefined( grenade.damagearea ) )
+            grenade.damagearea delete();
+        grenade delete();
+    }
+
+    self thread bo3_rev_gersh_spawn_vortex( grenade_origin, model );
+}
+
+bo3_rev_gersh_attach_throw_model(grenade)
+{
+    if ( !isdefined( grenade ) )
+        return undefined;
+
+    if ( isdefined( grenade.bo3_rev_gersh_display ) )
+        return grenade.bo3_rev_gersh_display;
+
+    world_asset = bo3_rev_probe_world_model_asset();
+    if ( !isdefined( world_asset ) || world_asset == "" )
+        return undefined;
+
+    model = spawn( "script_model", grenade.origin );
+    if ( !isdefined( model ) )
+        return undefined;
+
+    model setmodel( world_asset );
+    model.angles = grenade.angles;
+    model linkto( grenade );
+    grenade.bo3_rev_gersh_display = model;
+    grenade hide();
+    model thread bo3_rev_follow_parent_cleanup( grenade );
+    return model;
+}
+
+bo3_rev_gersh_wait_for_landing_origin(grenade, model)
+{
+    if ( !isdefined( grenade ) )
+        return undefined;
+
+    velocity_sq = 10000 * 10000;
+    if ( isdefined( grenade.origin ) )
+        old_origin = grenade.origin;
+    else
+        old_origin = ( 0, 0, 0 );
+
+    timeout_at = gettime() + 4000;
+
+    while ( isdefined( grenade ) && gettime() < timeout_at )
+    {
+        wait 0.05;
+
+        if ( !isdefined( grenade ) )
+            break;
+
+        velocity_sq = distancesquared( grenade.origin, old_origin );
+        old_origin = grenade.origin;
+
+        if ( velocity_sq <= 4 )
+            return grenade.origin;
+    }
+
+    if ( isdefined( model ) )
+        return model.origin;
+
+    if ( isdefined( grenade ) )
+        return grenade.origin;
+
+    return undefined;
+}
+
+bo3_rev_gersh_spawn_vortex(origin, visual_model)
+{
+    vortex = spawn( "script_origin", origin );
+    if ( !isdefined( vortex ) )
+    {
+        if ( isdefined( visual_model ) )
+            visual_model delete();
+        return;
+    }
+
+    level.bo3_rev_servant_vortex_seq++;
+    vortex.bo3_rev_active = 1;
+    vortex.bo3_rev_id = level.bo3_rev_servant_vortex_seq;
+    vortex.bo3_rev_owner = self;
+    vortex.bo3_rev_weapon = bo3_rev_probe_weapon();
+    vortex.bo3_rev_pulls = 0;
+    vortex.bo3_rev_kills = 0;
+    vortex.bo3_rev_fx_anchor = bo3_rev_spawn_fx_anchor( origin );
+    vortex.bo3_rev_visual_model = visual_model;
+
+    bo3_rev_log_event(
+        "gersh_vortex",
+        "stage=spawn"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";id=" + vortex.bo3_rev_id
+        + ";origin=" + bo3_rev_safe_str( vortex.origin )
+        + ";duration=" + bo3_rev_gersh_duration()
+    );
+
+    if ( isdefined( vortex.bo3_rev_fx_anchor ) )
+    {
+        playfxontag( level._effect["bo3_rev_gersh_vortex_burst"], vortex.bo3_rev_fx_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_loop = bo3_rev_play_loop_fx_on_tag( "bo3_rev_gersh_vortex_loop", vortex.bo3_rev_fx_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_glow = bo3_rev_play_loop_fx_on_tag( "bo3_rev_gersh_vortex_glow", vortex.bo3_rev_fx_anchor, "tag_origin" );
+    }
+    else
+    {
+        vortex.bo3_rev_fx_loop = bo3_rev_spawn_loop_fx( "bo3_rev_gersh_vortex_loop", vortex.origin );
+        vortex.bo3_rev_fx_glow = bo3_rev_spawn_loop_fx( "bo3_rev_gersh_vortex_glow", vortex.origin );
+    }
+    vortex thread bo3_rev_gersh_vortex_loop();
+}
+
+bo3_rev_gersh_vortex_loop()
+{
+    self endon( "death" );
+
+    end_time = gettime() + int( bo3_rev_gersh_duration() * 1000 );
+
+    while ( gettime() < end_time && isdefined( self ) && self.bo3_rev_active )
+    {
+        bo3_rev_gersh_affect_zombies( self );
+        wait 0.10;
+    }
+
+    if ( isdefined( self ) )
+    {
+        self.bo3_rev_active = 0;
+        playfx( level._effect["bo3_rev_gersh_vortex_horizon"], self.origin );
+        playfx( level._effect["bo3_rev_gersh_vortex_exit"], self.origin );
+        playfx( level._effect["bo3_rev_gersh_vortex_end"], self.origin );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_loop );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_glow );
+        bo3_rev_cleanup_fx_anchor( self.bo3_rev_fx_anchor );
+        if ( isdefined( self.bo3_rev_visual_model ) )
+            self.bo3_rev_visual_model delete();
+
+        bo3_rev_log_event(
+            "gersh_vortex",
+            "stage=end"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";id=" + self.bo3_rev_id
+            + ";pulls=" + self.bo3_rev_pulls
+            + ";kills=" + self.bo3_rev_kills
+        );
+
+        self delete();
+    }
+}
+
+bo3_rev_gersh_affect_zombies(vortex)
+{
+    if ( !isdefined( vortex ) || !isdefined( vortex.bo3_rev_active ) || !vortex.bo3_rev_active )
+        return;
+
+    team = "axis";
+    if ( isdefined( level.zombie_team ) )
+        team = level.zombie_team;
+
+    zombies = getaispeciesarray( team, "all" );
+    if ( !isdefined( zombies ) || !isarray( zombies ) )
+        return;
+
+    pull_radius_sq = bo3_rev_gersh_outer_walk_radius() * bo3_rev_gersh_outer_walk_radius();
+    horizon_radius_sq = bo3_rev_gersh_horizon_kill_radius() * bo3_rev_gersh_horizon_kill_radius();
+    center_radius_sq = bo3_rev_gersh_center_kill_radius() * bo3_rev_gersh_center_kill_radius();
+
+    for ( i = 0; i < zombies.size; i++ )
+    {
+        zombie = zombies[i];
+
+        if ( !isdefined( zombie ) || !isalive( zombie ) )
+            continue;
+
+        dist_sq = distance2dsquared( zombie.origin, vortex.origin );
+
+        if ( dist_sq > pull_radius_sq )
+            continue;
+
+        if ( dist_sq <= center_radius_sq )
+        {
+            zombie bo3_rev_gersh_kill_zombie( vortex.bo3_rev_owner, vortex, "center" );
+            continue;
+        }
+
+        if ( dist_sq <= horizon_radius_sq )
+        {
+            zombie bo3_rev_gersh_kill_zombie( vortex.bo3_rev_owner, vortex, "horizon" );
+            continue;
+        }
+
+        zombie bo3_rev_gersh_pull_zombie_step( vortex, dist_sq );
+    }
+}
+
+bo3_rev_gersh_pull_zombie_step(vortex, dist_sq)
+{
+    if ( !isdefined( self ) || !isalive( self ) )
+        return;
+
+    if ( !isdefined( vortex ) || !isdefined( vortex.bo3_rev_active ) || !vortex.bo3_rev_active )
+        return;
+
+    if ( !isdefined( self.bo3_rev_gersh_pull_mark ) || self.bo3_rev_gersh_pull_mark != vortex.bo3_rev_id )
+    {
+        self.bo3_rev_gersh_pull_mark = vortex.bo3_rev_id;
+        vortex.bo3_rev_pulls++;
+    }
+
+    step = bo3_rev_gersh_walk_step();
+    inner_run_sq = bo3_rev_gersh_inner_run_radius() * bo3_rev_gersh_inner_run_radius();
+    if ( dist_sq <= inner_run_sq )
+        step = bo3_rev_gersh_run_step();
+
+    target = bo3_rev_servant_step_toward( self.origin, vortex.origin, step );
+    self setgoalpos( target );
+
+    if ( dist_sq <= inner_run_sq )
+        self forceteleport( target, self.angles );
+}
+
+bo3_rev_gersh_kill_zombie(owner, vortex, reason)
+{
+    if ( !isdefined( self ) || !isalive( self ) )
+        return;
+
+    if ( isdefined( self.bo3_rev_gersh_killed ) && self.bo3_rev_gersh_killed )
+        return;
+
+    self.bo3_rev_gersh_killed = 1;
+
+    if ( isdefined( vortex ) )
+        vortex.bo3_rev_kills++;
+
+    playfx( level._effect["bo3_rev_gersh_vortex_pull"], self.origin + ( 0, 0, 24 ) );
+    self dodamage( self.health + 1000, self.origin, owner, owner, "none", "MOD_CRUSH", 0, bo3_rev_probe_weapon() );
 }
 
 bo3_rev_servant_fire_watcher()
@@ -1146,14 +1925,17 @@ bo3_rev_servant_fire_watcher()
 
         if ( isdefined( self.bo3_rev_servant_active_vortex ) && isdefined( self.bo3_rev_servant_active_vortex.bo3_rev_active ) && self.bo3_rev_servant_active_vortex.bo3_rev_active )
         {
+            old_vortex = self.bo3_rev_servant_active_vortex;
             bo3_rev_log_event(
                 "servant_fire",
-                "stage=blocked_active"
+                "stage=replace_active"
                 + ";build_tag=" + bo3_rev_build_tag()
                 + ";weapon=" + bo3_rev_probe_weapon()
-                + ";vortex_id=" + bo3_rev_safe_str( self.bo3_rev_servant_active_vortex.bo3_rev_id )
+                + ";vortex_id=" + bo3_rev_safe_str( old_vortex.bo3_rev_id )
             );
-            continue;
+            old_vortex.bo3_rev_active = 0;
+            old_vortex notify( "bo3_rev_servant_stop" );
+            self.bo3_rev_servant_active_vortex = undefined;
         }
 
         self.bo3_rev_servant_last_fire_ms = now;
@@ -1163,20 +1945,39 @@ bo3_rev_servant_fire_watcher()
 
 bo3_rev_servant_fire_once()
 {
+    start = bo3_rev_servant_muzzle_origin();
     origin = bo3_rev_servant_trace_origin();
-    flash = self gettagorigin( "tag_flash" );
-    if ( isdefined( flash ) )
-        playfx( level._effect["bo3_rev_servant_fire_smoke"], flash - self getplayerviewheight() );
+    travel_time = bo3_rev_servant_projectile_travel_time( start, origin );
+    self bo3_rev_servant_play_muzzle_fx();
 
     bo3_rev_log_event(
         "servant_fire",
         "stage=trigger"
         + ";build_tag=" + bo3_rev_build_tag()
         + ";weapon=" + bo3_rev_probe_weapon()
+        + ";start=" + bo3_rev_safe_str( start )
         + ";origin=" + bo3_rev_safe_str( origin )
+        + ";travel=" + travel_time
     );
 
+    level thread bo3_rev_servant_projectile_fx( start, origin, travel_time );
+    wait travel_time;
     self thread bo3_rev_servant_spawn_vortex( origin );
+}
+
+bo3_rev_servant_adjust_vortex_origin(origin)
+{
+    // BO3 nudges the vortex up when the resolved point is effectively on the
+    // navmesh floor. T6 does not expose the exact same helper in our script
+    // lane, so approximate the same behavior with a short vertical trace.
+    floor_trace = bullettrace( origin + ( 0, 0, 36 ), origin + ( 0, 0, -48 ), 0, undefined );
+    if ( isdefined( floor_trace ) && isdefined( floor_trace["position"] ) )
+    {
+        if ( distance( origin, floor_trace["position"] ) < 41 )
+            origin = origin + ( 0, 0, 36 );
+    }
+
+    return origin;
 }
 
 bo3_rev_servant_trace_origin()
@@ -1191,11 +1992,134 @@ bo3_rev_servant_trace_origin()
     else
         origin = end;
 
-    floor_trace = bullettrace( origin + ( 0, 0, 48 ), origin + ( 0, 0, -256 ), 0, undefined );
-    if ( isdefined( floor_trace ) && isdefined( floor_trace["position"] ) )
-        origin = floor_trace["position"] + ( 0, 0, 16 );
+    normal = ( 0, 0, 1 );
+    if ( isdefined( trace ) && isdefined( trace["normal"] ) )
+        normal = trace["normal"];
+
+    origin = origin + vectorscale( normal, 20 );
+    origin = bo3_rev_servant_adjust_vortex_origin( origin );
 
     return origin;
+}
+
+bo3_rev_servant_projectile_speed()
+{
+    return 2500;
+}
+
+bo3_rev_servant_projectile_travel_time(start, finish)
+{
+    dist = distance( start, finish );
+    speed = bo3_rev_servant_projectile_speed();
+
+    if ( speed <= 0 )
+        return 0.08;
+
+    travel = dist / speed;
+    if ( travel < 0.08 )
+        travel = 0.08;
+    if ( travel > 1.50 )
+        travel = 1.50;
+    return travel;
+}
+
+bo3_rev_servant_muzzle_origin()
+{
+    flash = self gettagorigin( "tag_flash" );
+    if ( isdefined( flash ) )
+        return flash - self getplayerviewheight();
+
+    return self getweaponmuzzlepoint();
+}
+
+bo3_rev_servant_play_muzzle_fx()
+{
+    if ( !isdefined( level._effect["bo3_rev_servant_muzzle_1p"] ) )
+        return;
+
+    view_pos = bo3_rev_servant_muzzle_origin();
+    view_angles = self gettagangles( "tag_flash" );
+    if ( !isdefined( view_angles ) )
+        view_angles = self.angles;
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=muzzle_1p"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";origin=" + bo3_rev_safe_str( view_pos )
+    );
+    playfx(
+        level._effect["bo3_rev_servant_muzzle_1p"],
+        view_pos,
+        anglestoforward( view_angles ),
+        anglestoup( view_angles )
+    );
+}
+
+bo3_rev_servant_projectile_fx(start, finish, travel_time)
+{
+    explode_fx = level._effect["bo3_rev_servant_projectile_explode"];
+    anchor = bo3_rev_spawn_fx_anchor( start, bo3_rev_servant_projectile_bridge_model_asset() );
+    if ( !isdefined( anchor ) )
+    {
+        wait travel_time;
+        if ( isdefined( explode_fx ) )
+        {
+            bo3_rev_log_event(
+                "servant_fx",
+                "stage=projectile_explode_no_anchor"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";origin=" + bo3_rev_safe_str( finish )
+            );
+            playfx( explode_fx, finish );
+        }
+        return;
+    }
+
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=projectile_start"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";start=" + bo3_rev_safe_str( start )
+        + ";finish=" + bo3_rev_safe_str( finish )
+        + ";travel=" + travel_time
+    );
+
+    if ( bo3_rev_use_client_fx_bridge() )
+    {
+        bo3_rev_mark_fx_anchor( anchor, bo3_rev_servant_projectile_anchor_targetname() );
+        anchor maps\mp\zombies\_zm_equipment::signal_equipment_activated( 1 );
+        bo3_rev_log_event(
+            "servant_fx",
+            "stage=projectile_equipment_bridge"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";targetname=" + bo3_rev_servant_projectile_anchor_targetname()
+            + ";ent=" + anchor getentitynumber()
+            + ";model=" + bo3_rev_servant_projectile_bridge_model_asset()
+        );
+        anchor moveto( finish, travel_time );
+        wait travel_time;
+        wait 0.15;
+        bo3_rev_cleanup_fx_anchor( anchor );
+        return;
+    }
+
+    trail_fx = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_projectile_trail", anchor, "tag_origin" );
+    glow_fx = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_projectile_glow", anchor, "tag_origin" );
+    anchor moveto( finish, travel_time );
+    wait travel_time;
+    if ( isdefined( explode_fx ) )
+    {
+        bo3_rev_log_event(
+            "servant_fx",
+            "stage=projectile_explode"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";origin=" + bo3_rev_safe_str( finish )
+        );
+        playfx( explode_fx, finish );
+    }
+    bo3_rev_cleanup_loop_fx( trail_fx );
+    bo3_rev_cleanup_loop_fx( glow_fx );
+    bo3_rev_cleanup_fx_anchor( anchor );
 }
 
 bo3_rev_servant_spawn_vortex(origin)
@@ -1211,6 +2135,11 @@ bo3_rev_servant_spawn_vortex(origin)
     vortex.bo3_rev_weapon = bo3_rev_probe_weapon();
     vortex.bo3_rev_pulls = 0;
     vortex.bo3_rev_kills = 0;
+    vortex.bo3_rev_spawn_ms = gettime();
+    vortex.bo3_rev_pull_duration = bo3_rev_servant_pull_duration();
+    vortex.bo3_rev_effect_duration = bo3_rev_servant_effect_duration();
+    vortex.bo3_rev_explosion_radius = bo3_rev_servant_explosion_radius();
+    vortex.bo3_rev_effect_version = bo3_rev_servant_effect_version();
     self.bo3_rev_servant_active_vortex = vortex;
 
     bo3_rev_log_event(
@@ -1219,14 +2148,96 @@ bo3_rev_servant_spawn_vortex(origin)
         + ";build_tag=" + bo3_rev_build_tag()
         + ";id=" + vortex.bo3_rev_id
         + ";origin=" + bo3_rev_safe_str( vortex.origin )
-        + ";duration=" + bo3_rev_servant_duration()
+        + ";pull_duration=" + vortex.bo3_rev_pull_duration
+        + ";effect_duration=" + vortex.bo3_rev_effect_duration
+        + ";effect_version=" + vortex.bo3_rev_effect_version
     );
 
-    playfx( level._effect["bo3_rev_servant_vortex_burst"], vortex.origin );
-    vortex.bo3_rev_fx_loop = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_loop", vortex.origin );
-    vortex.bo3_rev_fx_glow = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_glow", vortex.origin );
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=vortex_burst"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";id=" + vortex.bo3_rev_id
+        + ";origin=" + bo3_rev_safe_str( vortex.origin )
+    );
 
-    vortex thread bo3_rev_servant_vortex_lightning_loop();
+    visual_origin = bo3_rev_servant_visual_fx_origin( vortex.origin );
+    vortex.bo3_rev_visual_origin = visual_origin;
+
+    if ( bo3_rev_use_client_fx_bridge() )
+    {
+        vortex.bo3_rev_fx_visual_anchor = bo3_rev_spawn_fx_anchor( visual_origin, bo3_rev_servant_vortex_bridge_model_asset() );
+        if ( isdefined( vortex.bo3_rev_fx_visual_anchor ) )
+        {
+            bo3_rev_mark_fx_anchor( vortex.bo3_rev_fx_visual_anchor, bo3_rev_servant_vortex_anchor_targetname() );
+            vortex.bo3_rev_fx_visual_anchor maps\mp\zombies\_zm_equipment::signal_equipment_activated( 2 );
+            bo3_rev_log_event(
+                "servant_fx",
+                "stage=vortex_equipment_bridge"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";id=" + vortex.bo3_rev_id
+                + ";targetname=" + bo3_rev_servant_vortex_anchor_targetname()
+                + ";ent=" + vortex.bo3_rev_fx_visual_anchor getentitynumber()
+                + ";origin=" + bo3_rev_safe_str( visual_origin )
+                + ";model=" + bo3_rev_servant_vortex_bridge_model_asset()
+            );
+        }
+        else
+        {
+            bo3_rev_log_event(
+                "servant_fx",
+                "stage=vortex_client_anchor_fail"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";id=" + vortex.bo3_rev_id
+                + ";origin=" + bo3_rev_safe_str( visual_origin )
+            );
+        }
+
+        if ( isdefined( level._effect["bo3_rev_servant_vortex_lightning"] ) )
+            vortex thread bo3_rev_servant_vortex_lightning_loop();
+        vortex thread bo3_rev_servant_vortex_loop();
+        return;
+    }
+
+    playfx( level._effect["bo3_rev_servant_vortex_burst"], visual_origin );
+    debug_origin = bo3_rev_debug_fx_origin( vortex.origin );
+    owner_debug_origin = debug_origin;
+    camera_debug_origin = debug_origin;
+    if ( isdefined( vortex.bo3_rev_owner ) && isplayer( vortex.bo3_rev_owner ) )
+    {
+        owner_debug_origin = bo3_rev_debug_fx_origin( vortex.bo3_rev_owner.origin );
+        camera_debug_origin = vortex.bo3_rev_owner getplayercamerapos() + vectorscale( anglestoforward( vortex.bo3_rev_owner getplayerangles() ), 64 );
+    }
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=debug_origin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";base=" + bo3_rev_safe_str( vortex.origin )
+        + ";visual=" + bo3_rev_safe_str( visual_origin )
+        + ";debug=" + bo3_rev_safe_str( debug_origin )
+        + ";owner_debug=" + bo3_rev_safe_str( owner_debug_origin )
+        + ";camera_debug=" + bo3_rev_safe_str( camera_debug_origin )
+    );
+    vortex.bo3_rev_fx_debug_anchor = undefined;
+    vortex.bo3_rev_fx_visual_anchor = bo3_rev_spawn_fx_anchor( visual_origin );
+    if ( isdefined( vortex.bo3_rev_fx_visual_anchor ) )
+    {
+        vortex.bo3_rev_fx_core = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_vortex_core", vortex.bo3_rev_fx_visual_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_shell = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_vortex_shell", vortex.bo3_rev_fx_visual_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_loop = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_vortex_loop", vortex.bo3_rev_fx_visual_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_glow = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_vortex_glow", vortex.bo3_rev_fx_visual_anchor, "tag_origin" );
+        vortex.bo3_rev_fx_inner = bo3_rev_play_loop_fx_on_tag( "bo3_rev_servant_vortex_inner", vortex.bo3_rev_fx_visual_anchor, "tag_origin" );
+    }
+    else
+    {
+        vortex.bo3_rev_fx_core = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_core", visual_origin );
+        vortex.bo3_rev_fx_shell = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_shell", visual_origin );
+        vortex.bo3_rev_fx_loop = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_loop", visual_origin );
+        vortex.bo3_rev_fx_glow = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_glow", visual_origin );
+        vortex.bo3_rev_fx_inner = bo3_rev_spawn_loop_fx( "bo3_rev_servant_vortex_inner", visual_origin );
+    }
+    vortex.bo3_rev_fx_debug = undefined;
+    vortex.bo3_rev_fx_debug_stock = undefined;
     vortex thread bo3_rev_servant_vortex_loop();
 }
 
@@ -1249,16 +2260,26 @@ bo3_rev_servant_vortex_loop()
 {
     self endon( "death" );
 
-    end_time = gettime() + int( bo3_rev_servant_duration() * 1000 );
+    pull_end_time = gettime() + int( self.bo3_rev_pull_duration * 1000 );
 
-    while ( gettime() < end_time && isdefined( self ) && self.bo3_rev_active )
+    while ( gettime() < pull_end_time && isdefined( self ) && self.bo3_rev_active )
     {
         bo3_rev_servant_affect_zombies( self );
-        wait 0.10;
+        wait bo3_rev_servant_pull_tick();
     }
 
     if ( isdefined( self ) )
     {
+        bo3_rev_servant_release_pulled_zombies( self );
+
+        if ( self.bo3_rev_active )
+        {
+            wait bo3_rev_servant_explosion_delay();
+
+            if ( isdefined( self ) && self.bo3_rev_active )
+                bo3_rev_servant_vortex_explosion( self );
+        }
+
         self.bo3_rev_active = 0;
         self notify( "bo3_rev_servant_stop" );
 
@@ -1274,9 +2295,22 @@ bo3_rev_servant_vortex_loop()
             + ";kills=" + self.bo3_rev_kills
         );
 
-        playfx( level._effect["bo3_rev_servant_vortex_end"], self.origin );
+        end_origin = self.origin;
+        if ( isdefined( self.bo3_rev_visual_origin ) )
+            end_origin = self.bo3_rev_visual_origin;
+
+        playfx( level._effect["bo3_rev_servant_vortex_end"], end_origin );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_core );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_shell );
         bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_loop );
         bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_glow );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_inner );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_debug );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_debug_stock );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_stock_control );
+        bo3_rev_cleanup_loop_fx( self.bo3_rev_fx_stock_control_camera );
+        bo3_rev_cleanup_fx_anchor( self.bo3_rev_fx_debug_anchor );
+        bo3_rev_cleanup_fx_anchor( self.bo3_rev_fx_visual_anchor );
         self delete();
     }
 }
@@ -1286,16 +2320,107 @@ bo3_rev_spawn_loop_fx(key, origin)
     if ( !isdefined( level._effect[key] ) )
         return undefined;
 
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=spawn_loop"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";key=" + key
+        + ";origin=" + bo3_rev_safe_str( origin )
+    );
+
     fx_ent = spawnfx( level._effect[key], origin );
     if ( isdefined( fx_ent ) )
         triggerfx( fx_ent );
     return fx_ent;
 }
 
+bo3_rev_debug_fx_origin(origin)
+{
+    return origin + ( 0, 0, 96 );
+}
+
+bo3_rev_servant_visual_fx_origin(origin)
+{
+    return origin + ( 0, 0, 24 );
+}
+
+bo3_rev_play_loop_fx_on_tag(key, ent, tag)
+{
+    if ( !isdefined( ent ) )
+        return undefined;
+
+    if ( !isdefined( level._effect[key] ) )
+        return undefined;
+
+    bo3_rev_log_event(
+        "servant_fx",
+        "stage=play_loop_on_tag"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";key=" + key
+        + ";tag=" + tag
+    );
+
+    return playfxontag( level._effect[key], ent, tag );
+}
+
+bo3_rev_spawn_fx_anchor(origin, model_asset)
+{
+    anchor = spawn( "script_model", origin );
+    if ( !isdefined( anchor ) )
+        return undefined;
+
+    if ( bo3_rev_use_client_fx_bridge() )
+    {
+        if ( !isdefined( model_asset ) || model_asset == "" )
+            model_asset = bo3_rev_servant_bridge_model_asset();
+
+        anchor setmodel( model_asset );
+    }
+    return anchor;
+}
+
+bo3_rev_mark_fx_anchor(anchor, targetname)
+{
+    if ( !isdefined( anchor ) )
+        return;
+
+    anchor.targetname = targetname;
+    anchor.script_noteworthy = "bo3_rev_servant_fx";
+    // Mirror the identity into script_string so the client can classify the
+    // marker even if targetname is not indexed for getentarray().
+    anchor.script_string = targetname;
+}
+
+bo3_rev_cleanup_fx_anchor(anchor)
+{
+    if ( isdefined( anchor ) )
+        anchor delete();
+}
+
 bo3_rev_cleanup_loop_fx(fx_ent)
 {
     if ( isdefined( fx_ent ) )
         fx_ent delete();
+}
+
+bo3_rev_follow_parent_cleanup(parent)
+{
+    self endon( "death" );
+
+    while ( true )
+    {
+        if ( !isdefined( parent ) )
+        {
+            if ( isdefined( self ) && isdefined( self.bo3_rev_persist_after_parent ) && self.bo3_rev_persist_after_parent )
+                return;
+
+            if ( isdefined( self ) )
+                self delete();
+            return;
+        }
+
+        wait 0.05;
+    }
 }
 
 bo3_rev_servant_affect_zombies(vortex)
@@ -1311,8 +2436,10 @@ bo3_rev_servant_affect_zombies(vortex)
     if ( !isdefined( zombies ) || !isarray( zombies ) )
         return;
 
+    center = bo3_rev_servant_pull_center( vortex );
     pull_radius_sq = bo3_rev_servant_pull_radius() * bo3_rev_servant_pull_radius();
     kill_radius_sq = bo3_rev_servant_kill_radius() * bo3_rev_servant_kill_radius();
+    strength = bo3_rev_servant_pull_strength( vortex );
 
     for ( i = 0; i < zombies.size; i++ )
     {
@@ -1321,9 +2448,11 @@ bo3_rev_servant_affect_zombies(vortex)
         if ( !isdefined( zombie ) || !isalive( zombie ) )
             continue;
 
-        dist_sq = distancesquared( zombie.origin, vortex.origin );
+        chest_origin = zombie.origin + ( 0, 0, 32 );
+        dist_sq = distancesquared( chest_origin, center );
+        dist_2d_sq = distance2dsquared( zombie.origin, center );
 
-        if ( dist_sq > pull_radius_sq )
+        if ( dist_2d_sq > pull_radius_sq )
             continue;
 
         if ( dist_sq <= kill_radius_sq )
@@ -1332,11 +2461,11 @@ bo3_rev_servant_affect_zombies(vortex)
             continue;
         }
 
-        zombie bo3_rev_servant_pull_zombie_step( vortex, vortex.bo3_rev_owner, dist_sq );
+        zombie bo3_rev_servant_pull_zombie_step( vortex, vortex.bo3_rev_owner, center, dist_sq, dist_2d_sq, strength );
     }
 }
 
-bo3_rev_servant_pull_zombie_step(vortex, owner, dist_sq)
+bo3_rev_servant_pull_zombie_step(vortex, owner, center, dist_sq, dist_2d_sq, strength)
 {
     if ( !isdefined( self ) || !isalive( self ) )
         return;
@@ -1350,15 +2479,88 @@ bo3_rev_servant_pull_zombie_step(vortex, owner, dist_sq)
         vortex.bo3_rev_pulls++;
     }
 
-    target = bo3_rev_servant_step_toward( self.origin, vortex.origin, bo3_rev_servant_drag_step() );
-    self setgoalpos( target );
+    ground_target = bo3_rev_servant_ground_pull_target( self.origin, center, dist_2d_sq, strength );
+    now = gettime();
+    target = ground_target;
+    lift_interval_ms = 180;
 
-    // Avoid per-zombie helper entities; only force the inner band inward.
-    if ( dist_sq <= ( bo3_rev_servant_pull_radius() * bo3_rev_servant_pull_radius() * 0.25 ) )
+    if ( dist_2d_sq <= ( bo3_rev_servant_lift_radius() * bo3_rev_servant_lift_radius() ) )
+    {
+        target = bo3_rev_servant_air_pull_target( self.origin, center, dist_sq, dist_2d_sq, strength );
+        lift_interval_ms = 140;
+
+        if ( dist_sq <= ( bo3_rev_servant_pull_snap_radius() * bo3_rev_servant_pull_snap_radius() ) )
+            lift_interval_ms = 45;
+        else if ( dist_sq <= ( bo3_rev_servant_lift_radius() * bo3_rev_servant_lift_radius() * 0.35 ) )
+            lift_interval_ms = 80;
+    }
+
+    if ( !isdefined( self.bo3_rev_servant_last_lift_ms ) || now - self.bo3_rev_servant_last_lift_ms >= lift_interval_ms )
+    {
+        self.bo3_rev_servant_last_lift_ms = now;
+        self.bo3_rev_servant_pull_state = 1;
         self forceteleport( target, self.angles );
+    }
 }
 
-bo3_rev_servant_step_toward(from, to, step)
+bo3_rev_servant_release_pulled_zombies(vortex)
+{
+    if ( !isdefined( vortex ) )
+        return;
+
+    team = "axis";
+    if ( isdefined( level.zombie_team ) )
+        team = level.zombie_team;
+
+    zombies = getaispeciesarray( team, "all" );
+    if ( !isdefined( zombies ) || !isarray( zombies ) )
+        return;
+
+    for ( i = 0; i < zombies.size; i++ )
+    {
+        zombie = zombies[i];
+        if ( !isdefined( zombie ) || !isalive( zombie ) )
+            continue;
+
+        if ( !isdefined( zombie.bo3_rev_servant_pull_mark ) || zombie.bo3_rev_servant_pull_mark != vortex.bo3_rev_id )
+            continue;
+
+        zombie.bo3_rev_servant_pull_mark = undefined;
+        zombie.bo3_rev_servant_last_lift_ms = undefined;
+        zombie.bo3_rev_servant_pull_state = undefined;
+        zombie setgoalpos( zombie.origin );
+    }
+}
+
+bo3_rev_servant_vortex_explosion(vortex)
+{
+    if ( !isdefined( vortex ) || !isdefined( vortex.bo3_rev_active ) || !vortex.bo3_rev_active )
+        return;
+
+    team = "axis";
+    if ( isdefined( level.zombie_team ) )
+        team = level.zombie_team;
+
+    zombies = getaispeciesarray( team, "all" );
+    if ( !isdefined( zombies ) || !isarray( zombies ) )
+        return;
+
+    radius_sq = vortex.bo3_rev_explosion_radius * vortex.bo3_rev_explosion_radius;
+
+    for ( i = 0; i < zombies.size; i++ )
+    {
+        zombie = zombies[i];
+        if ( !isdefined( zombie ) || !isalive( zombie ) )
+            continue;
+
+        if ( distancesquared( zombie.origin, vortex.origin ) > radius_sq )
+            continue;
+
+        zombie bo3_rev_servant_kill_zombie( vortex.bo3_rev_owner, vortex, "explosion" );
+    }
+}
+
+bo3_rev_servant_step_toward_grounded(from, to, step)
 {
     dir = vectornormalize( to - from );
     if ( !isdefined( dir ) )
@@ -1370,6 +2572,20 @@ bo3_rev_servant_step_toward(from, to, step)
         next = floor_trace["position"];
 
     return next;
+}
+
+bo3_rev_servant_step_toward_air(from, to, step)
+{
+    dir = vectornormalize( to - from );
+    if ( !isdefined( dir ) )
+        return from;
+
+    return from + vectorscale( dir, step );
+}
+
+bo3_rev_servant_step_toward(from, to, step)
+{
+    return bo3_rev_servant_step_toward_grounded( from, to, step );
 }
 
 bo3_rev_servant_kill_zombie(owner, vortex, reason)

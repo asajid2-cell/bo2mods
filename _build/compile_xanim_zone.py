@@ -19,6 +19,7 @@ import glob
 import math
 import argparse
 import copy
+import json
 from Crypto.Cipher import Salsa20
 
 # Prefer the proven XChunk writer implementation used by patch_zone_xanims.
@@ -79,13 +80,18 @@ PTR_FOLLOWING = 0xFFFFFFFF
 PTR_NULL = 0x00000000
 
 # Emit modes:
-#   static_pose -> write real static rot/trans channels from frame 0
-#   stub        -> write no channel data (diagnostic mode only)
-#   donor_clone -> copy known-good donor XAnimParts payloads (real curves)
-#   bo3_frames  -> emit BO3-driven keyframes for selected anims (idle first), fallback for others
+#   static_pose                -> write real static rot/trans channels from frame 0
+#   donor_template_static_pose -> keep donor header/section semantics and fill
+#                                 those stable slots with source frame-0 data
+#   donor_semantic_static_pose -> keep donor-like runtime semantics but rebuild
+#                                 names/category layout for the target rig
+#   stub                       -> write no channel data (diagnostic mode only)
+#   donor_clone                -> copy known-good donor XAnimParts payloads (real curves)
+#   bo3_frames                 -> emit BO3-driven keyframes for selected anims (idle first), fallback for others
 EMIT_MODE = "static_pose"
 # Diagnostics: when True, force zero-bone output regardless of source anim.
 DIAG_ZERO_BONES = False
+FORCE_IDENTITY_POSE = False
 # Stub/default toggles
 STUB_NUMFRAMES = 0
 STUB_IS_DEFAULT = 1
@@ -313,6 +319,7 @@ def parse_xanim_export(filepath):
         'framerate': 30,
         'numframes': 0,
         'frames': {},  # frame_num -> {part_idx -> {offset, rot_matrix}}
+        'local_basis_frames': {},
     }
 
     i = 0
@@ -366,6 +373,40 @@ def parse_xanim_export(filepath):
             anim['frames'][frame_num] = frame_data
         i += 1
 
+    basis_path = os.path.splitext(filepath)[0] + ".basis.json"
+    if os.path.exists(basis_path):
+        try:
+            with open(basis_path, "r", encoding="utf-8") as f:
+                basis_payload = json.load(f)
+            basis_parts = list(basis_payload.get("part_names") or [])
+            if basis_parts == list(anim["parts"]):
+                local_frames = {}
+                for frame_key, frame_parts in (basis_payload.get("frames") or {}).items():
+                    try:
+                        frame_idx = int(frame_key)
+                    except Exception:
+                        continue
+                    if not isinstance(frame_parts, dict):
+                        continue
+                    parsed_frame = {}
+                    for part_key, payload in frame_parts.items():
+                        try:
+                            part_idx = int(part_key)
+                        except Exception:
+                            continue
+                        if not isinstance(payload, dict):
+                            continue
+                        offset = payload.get("offset") or [0.0, 0.0, 0.0]
+                        quat = payload.get("quat") or [0.0, 0.0, 0.0, 1.0]
+                        parsed_frame[part_idx] = {
+                            "offset": [_sanitize_float(v) for v in offset[:3]],
+                            "quat": [_sanitize_float(v) for v in quat[:4]],
+                        }
+                    local_frames[frame_idx] = parsed_frame
+                anim["local_basis_frames"] = local_frames
+        except Exception as exc:
+            print(f"Warning: failed to load local-basis sidecar for {filepath}: {exc}")
+
     return anim
 
 
@@ -373,6 +414,13 @@ def _identity_bone_state():
     return {
         "offset": [0.0, 0.0, 0.0],
         "rot": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    }
+
+
+def _identity_local_basis_state():
+    return {
+        "offset": [0.0, 0.0, 0.0],
+        "quat": [0.0, 0.0, 0.0, 1.0],
     }
 
 
@@ -415,11 +463,64 @@ def ensure_anim_has_bones(anim, required_bones):
     return len(added_indices)
 
 
+def prune_anim_to_bones(anim, keep_bones):
+    """Drop PART/frame tracks not present in keep_bones and renumber densely."""
+    requested = [str(x).strip() for x in (keep_bones or []) if str(x).strip()]
+    if not requested:
+        return 0
+
+    keep_set = {name.lower() for name in requested}
+    old_parts = list(anim.get("parts") or [])
+    if not old_parts:
+        anim["numparts"] = 0
+        return 0
+
+    new_parts = []
+    remap = {}
+    removed = 0
+    for old_idx, name in enumerate(old_parts):
+        if str(name).strip().lower() in keep_set:
+            remap[old_idx] = len(new_parts)
+            new_parts.append(name)
+        else:
+            removed += 1
+
+    frames = anim.get("frames") or {}
+    for frame_idx, frame_data in list(frames.items()):
+        if not isinstance(frame_data, dict):
+            frames[frame_idx] = {}
+            continue
+        new_frame = {}
+        for old_idx, bone in frame_data.items():
+            if old_idx in remap:
+                new_frame[remap[old_idx]] = bone
+        frames[frame_idx] = new_frame
+
+    anim["parts"] = new_parts
+    anim["numparts"] = int(len(new_parts))
+    return removed
+
+
+def load_keep_bones_from_file(path):
+    if not path:
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        if isinstance(data.get("present_anim_bones"), list):
+            return [str(x).strip() for x in data["present_anim_bones"] if str(x).strip()]
+        if isinstance(data.get("joint_names"), list):
+            return [str(x).strip() for x in data["joint_names"] if str(x).strip()]
+    if isinstance(data, list):
+        return [str(x).strip() for x in data if str(x).strip()]
+    return []
+
+
 def neutralize_anim_root_tracks(anim, neutralize_bones):
     """Zero offset + identity rotation for selected bones across all frames."""
     if not neutralize_bones:
         return 0
-    if not anim.get("frames"):
+    if not anim.get("frames") and not anim.get("local_basis_frames"):
         return 0
 
     name_to_idx = {name: i for i, name in enumerate(anim.get("parts", []))}
@@ -434,6 +535,13 @@ def neutralize_anim_root_tracks(anim, neutralize_bones):
                 frame_data[pidx] = {}
             frame_data[pidx]["offset"] = [0.0, 0.0, 0.0]
             frame_data[pidx]["rot"] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            changed += 1
+    for _, frame_data in (anim.get("local_basis_frames") or {}).items():
+        for pidx in target_indices:
+            if pidx not in frame_data:
+                frame_data[pidx] = {}
+            frame_data[pidx]["offset"] = [0.0, 0.0, 0.0]
+            frame_data[pidx]["quat"] = [0.0, 0.0, 0.0, 1.0]
             changed += 1
     return changed
 
@@ -602,6 +710,23 @@ def _map_script_string(name, string_table):
     return string_table[name]
 
 
+def _read_donor_name_order(donor_header, donor_sections, donor_raw, donor_index_to_string):
+    if donor_header["names_ptr"] != PTR_FOLLOWING or "names" not in donor_sections:
+        return []
+    total = int(donor_header["boneCount"][9])
+    s = donor_sections["names"]
+    src = donor_raw[s["offset"]:s["offset"] + s["size"]]
+    if len(src) != total * 2:
+        raise RuntimeError("donor names section size mismatch")
+    out = []
+    for i in range(total):
+        donor_idx = struct.unpack_from("<H", src, i * 2)[0]
+        if donor_idx >= len(donor_index_to_string):
+            raise RuntimeError(f"donor name idx out of range: {donor_idx}")
+        out.append(donor_index_to_string[donor_idx])
+    return out
+
+
 def _copy_following_section(out, donor_raw, sections, key):
     if key not in sections:
         return
@@ -688,6 +813,333 @@ def _build_donor_clone_xanimparts_data(anim, string_table):
     return bytes(header), bytes(out)
 
 
+def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
+    if DONOR_CONTEXT is None:
+        raise RuntimeError("donor_template_static_pose mode: donor context not initialized")
+
+    target_name = anim["name"]
+    donor_name = _default_donor_asset_for_target(target_name)
+
+    if donor_name not in DONOR_CONTEXT["payloads"]:
+        if DONOR_FALLBACK_IDLE and DONOR_DEFAULT_ASSET in DONOR_CONTEXT["payloads"]:
+            donor_name = DONOR_DEFAULT_ASSET
+        else:
+            raise RuntimeError(f"donor template asset missing for target '{target_name}': {donor_name}")
+
+    donor_parsed = DONOR_CONTEXT["payloads"][donor_name]
+    donor_raw = DONOR_CONTEXT["raw"]
+    donor_header = donor_parsed["header"]
+    donor_sections = donor_parsed["sections"]
+    donor_index_to_string = DONOR_CONTEXT["index_to_string"]
+
+    donor_names = _read_donor_name_order(donor_header, donor_sections, donor_raw, donor_index_to_string)
+    total_bones = int(donor_header["boneCount"][9])
+    if len(donor_names) != total_bones:
+        raise RuntimeError("donor template names list mismatch")
+
+    donor_data_byte = b""
+    if donor_header["dataByte_ptr"] == PTR_FOLLOWING and "dataByte" in donor_sections:
+        s = donor_sections["dataByte"]
+        donor_data_byte = donor_raw[s["offset"]:s["offset"] + s["size"]]
+    if len(donor_data_byte) != int(donor_header["dataByteCount"]):
+        raise RuntimeError("donor template dataByte size mismatch")
+    if len(donor_data_byte) != total_bones:
+        raise RuntimeError(
+            f"donor template expects full dataByte permutation; got {len(donor_data_byte)} for {total_bones} bones"
+        )
+
+    donor_perm = [int(b) for b in donor_data_byte]
+    rotated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(1, 5)))
+    translated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(5, 8)))
+
+    if int(donor_header["dataShortCount"]) != rotated_count * 4:
+        raise RuntimeError(
+            f"donor template unsupported dataShort layout: count={donor_header['dataShortCount']} rotated={rotated_count}"
+        )
+    if int(donor_header["dataIntCount"]) != translated_count * 3:
+        raise RuntimeError(
+            f"donor template unsupported dataInt layout: count={donor_header['dataIntCount']} translated={translated_count}"
+        )
+
+    frame0 = _pick_frame(anim)
+    source_name_to_idx = {str(name).strip().lower(): idx for idx, name in enumerate(anim.get("parts", []))}
+
+    def source_state_for_name(name):
+        idx = source_name_to_idx.get(str(name).strip().lower())
+        if idx is None:
+            return None
+        return frame0.get(idx)
+
+    header_off = donor_parsed["header_offset"]
+    header = bytearray(donor_raw[header_off:header_off + 104])
+    struct.pack_into("<I", header, 0x00, PTR_FOLLOWING)
+
+    out = bytearray()
+    out.extend(target_name.encode("ascii", errors="ignore") + b"\x00")
+
+    # 1) names: preserve donor order exactly, remapped into the target string table
+    for sname in donor_names:
+        out.extend(struct.pack("<H", _map_script_string(sname, string_table)))
+
+    # 2) notify: preserve donor notify semantics verbatim, remapped into the target string table
+    if donor_header["notify_ptr"] == PTR_FOLLOWING and "notify" in donor_sections:
+        s = donor_sections["notify"]
+        src = donor_raw[s["offset"]:s["offset"] + s["size"]]
+        count = int(donor_header["notifyCount"])
+        if len(src) != count * 8:
+            raise RuntimeError(f"donor notify size mismatch for '{donor_name}'")
+        for i in range(count):
+            off = i * 8
+            donor_idx = struct.unpack_from("<H", src, off)[0]
+            if donor_idx >= len(donor_index_to_string):
+                raise RuntimeError(f"donor notify idx out of range in '{donor_name}': {donor_idx}")
+            sname = donor_index_to_string[donor_idx]
+            out.extend(struct.pack("<H", _map_script_string(sname, string_table)))
+            out.extend(src[off + 2:off + 8])
+
+    # 3) deltaPart: preserved as absent for this template lane
+
+    # 4) dataByte: donor category permutation stays intact
+    out.extend(donor_data_byte)
+
+    # 5) dataShort: donor rotated-set order, but pose sampled from the source anim
+    for donor_bone_idx in donor_perm[:rotated_count]:
+        bone_name = donor_names[donor_bone_idx]
+        bone = source_state_for_name(bone_name)
+        if bone:
+            rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+            rot_m_t = [
+                [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
+                [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
+                [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
+            ]
+            quat = rotation_matrix_to_quat(rot_m_t)
+        else:
+            quat = [0.0, 0.0, 0.0, 1.0]
+        for q in quat:
+            out.extend(struct.pack("<h", quat_to_int16(_sanitize_float(q))))
+
+    # 6) dataInt: donor translated-set order, but pose sampled from the source anim
+    for donor_bone_idx in donor_perm[:translated_count]:
+        bone_name = donor_names[donor_bone_idx]
+        bone = source_state_for_name(bone_name)
+        if bone:
+            off = bone.get("offset", [0.0, 0.0, 0.0])
+        else:
+            off = [0.0, 0.0, 0.0]
+        ox, oy, oz = (_sanitize_float(v) for v in off[:3])
+        out.extend(struct.pack("<f", ox))
+        out.extend(struct.pack("<f", oy))
+        out.extend(struct.pack("<f", oz))
+
+    return bytes(header), bytes(out)
+
+
+def _quat_near_identity(quat, eps=1e-4):
+    qx, qy, qz, qw = (_sanitize_float(v) for v in quat[:4])
+    return (
+        abs(qx) <= eps
+        and abs(qy) <= eps
+        and abs(qz) <= eps
+        and abs(qw - 1.0) <= eps
+    )
+
+
+def _offset_near_zero(offset, eps=1e-4):
+    ox, oy, oz = (_sanitize_float(v) for v in offset[:3])
+    return abs(ox) <= eps and abs(oy) <= eps and abs(oz) <= eps
+
+
+def _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=False):
+    if FORCE_IDENTITY_POSE:
+        return [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0]
+    local_basis_frames = anim.get("local_basis_frames") or {}
+    if local_basis_frames:
+        bone = _get_local_basis_bone_state(anim, 0, bone_idx)
+        off = [_sanitize_float(v) for v in (bone.get("offset") or [0.0, 0.0, 0.0])[:3]]
+        if zero_local_basis_offset:
+            off = [0.0, 0.0, 0.0]
+        quat = [_sanitize_float(v) for v in (bone.get("quat") or [0.0, 0.0, 0.0, 1.0])[:4]]
+        if len(quat) < 4:
+            quat = [0.0, 0.0, 0.0, 1.0]
+        return quat, off
+
+    frame0 = _pick_frame(anim)
+    bone = frame0.get(bone_idx)
+    if bone:
+        off = bone.get("offset", [0.0, 0.0, 0.0])
+        rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        rot_m_t = [
+            [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
+            [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
+            [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
+        ]
+        quat = rotation_matrix_to_quat(rot_m_t)
+    else:
+        off = [0.0, 0.0, 0.0]
+        quat = [0.0, 0.0, 0.0, 1.0]
+
+    quat = [_sanitize_float(v) for v in quat[:4]]
+    off = [_sanitize_float(v) for v in off[:3]]
+    return quat, off
+
+
+def _build_donor_semantic_static_pose_xanimparts_data(anim, string_table):
+    """
+    Emit a target-rig static pose using donor-style T6 weapon animation
+    semantics:
+      - assetType=1
+      - 2-frame header / 15Hz frequency
+      - donor-style notify payload
+      - full dataByte permutation where rotated bones are a prefix of
+        translated bones, and unanimated bones trail the permutation
+
+    This keeps the stable donor runtime contract but does not reuse the donor's
+    71-bone names table. It rebuilds the names and section counts for the actual
+    reduced Servant rig.
+    """
+    if DONOR_CONTEXT is None:
+        raise RuntimeError("donor_semantic_static_pose mode: donor context not initialized")
+
+    target_name = anim["name"]
+    donor_name = _default_donor_asset_for_target(target_name)
+    if donor_name not in DONOR_CONTEXT["payloads"]:
+        if DONOR_FALLBACK_IDLE and DONOR_DEFAULT_ASSET in DONOR_CONTEXT["payloads"]:
+            donor_name = DONOR_DEFAULT_ASSET
+        else:
+            raise RuntimeError(f"donor semantic asset missing for target '{target_name}': {donor_name}")
+
+    donor_parsed = DONOR_CONTEXT["payloads"][donor_name]
+    donor_raw = DONOR_CONTEXT["raw"]
+    donor_header = donor_parsed["header"]
+    donor_sections = donor_parsed["sections"]
+    donor_index_to_string = DONOR_CONTEXT["index_to_string"]
+
+    parts = list(anim.get("parts") or [])
+    num_bones = len(parts)
+    if DIAG_ZERO_BONES:
+        num_bones = 0
+        parts = []
+
+    if num_bones > 255:
+        raise RuntimeError("donor_semantic_static_pose currently supports <=255 bones only")
+
+    bone_string_indices = []
+    for bone_name in parts[:num_bones]:
+        if bone_name not in string_table:
+            string_table[bone_name] = len(string_table)
+        bone_string_indices.append(string_table[bone_name])
+
+    rotated_entries = []
+    translated_only_entries = []
+    none_entries = []
+    for bone_idx in range(num_bones):
+        quat, off = _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=True)
+        rot_animated = not _quat_near_identity(quat)
+        trans_animated = not _offset_near_zero(off)
+        entry = (bone_idx, quat, off)
+        if rot_animated:
+            rotated_entries.append(entry)
+        elif trans_animated:
+            translated_only_entries.append(entry)
+        else:
+            none_entries.append(entry)
+
+    ordered_entries = rotated_entries + translated_only_entries + none_entries
+    rotated_count = len(rotated_entries)
+    translated_count = len(rotated_entries) + len(translated_only_entries)
+    none_rotated_count = num_bones - rotated_count
+    none_translated_count = num_bones - translated_count
+
+    data_byte = bytearray()
+    data_short = bytearray()
+    data_int = bytearray()
+
+    for bone_idx, _quat, _off in ordered_entries:
+        data_byte.append(bone_idx & 0xFF)
+
+    for _bone_idx, quat, _off in ordered_entries[:rotated_count]:
+        for q in quat:
+            data_short.extend(struct.pack("<h", quat_to_int16(q)))
+
+    for _bone_idx, _quat, off in ordered_entries[:translated_count]:
+        data_int.extend(struct.pack("<f", off[0]))
+        data_int.extend(struct.pack("<f", off[1]))
+        data_int.extend(struct.pack("<f", off[2]))
+
+    notify_count = int(donor_header["notifyCount"])
+
+    header = bytearray(104)
+    struct.pack_into("<I", header, 0x00, PTR_FOLLOWING)
+    struct.pack_into("<H", header, 0x04, len(data_byte))
+    struct.pack_into("<H", header, 0x06, len(data_short) // 2)
+    struct.pack_into("<H", header, 0x08, len(data_int) // 4)
+    struct.pack_into("<H", header, 0x0A, 0)
+    struct.pack_into("<H", header, 0x0C, 0)
+    struct.pack_into("<H", header, 0x0E, 2)
+
+    header[0x10] = 0
+    header[0x11] = 0
+    header[0x12] = 0
+    header[0x13] = 0
+    struct.pack_into("<I", header, 0x14, 0)
+
+    for bc in range(10):
+        header[0x18 + bc] = 0
+    header[0x18 + 0] = none_rotated_count
+    header[0x18 + 4] = rotated_count
+    header[0x18 + 7] = translated_count
+    header[0x18 + 8] = none_translated_count
+    header[0x18 + 9] = num_bones
+
+    header[0x22] = notify_count
+    header[0x23] = 1
+    header[0x24] = 0
+
+    struct.pack_into("<I", header, 0x28, 0)
+    struct.pack_into("<I", header, 0x2C, 0)
+    struct.pack_into("<f", header, 0x30, 30.0)
+    struct.pack_into("<f", header, 0x34, 15.0)
+    struct.pack_into("<f", header, 0x38, 0.0)
+    struct.pack_into("<f", header, 0x3C, 0.0)
+
+    struct.pack_into("<I", header, 0x40, PTR_FOLLOWING if num_bones > 0 else PTR_NULL)
+    struct.pack_into("<I", header, 0x44, PTR_FOLLOWING if len(data_byte) > 0 else PTR_NULL)
+    struct.pack_into("<I", header, 0x48, PTR_FOLLOWING if len(data_short) > 0 else PTR_NULL)
+    struct.pack_into("<I", header, 0x4C, PTR_FOLLOWING if len(data_int) > 0 else PTR_NULL)
+    struct.pack_into("<I", header, 0x50, PTR_NULL)
+    struct.pack_into("<I", header, 0x54, PTR_NULL)
+    struct.pack_into("<I", header, 0x58, PTR_NULL)
+    struct.pack_into("<I", header, 0x5C, PTR_NULL)
+    struct.pack_into("<I", header, 0x60, PTR_FOLLOWING if notify_count > 0 else PTR_NULL)
+    struct.pack_into("<I", header, 0x64, PTR_NULL)
+
+    out = bytearray()
+    out.extend(target_name.encode("ascii", errors="ignore") + b"\x00")
+
+    for idx in bone_string_indices:
+        out.extend(struct.pack("<H", idx))
+
+    if notify_count > 0 and donor_header["notify_ptr"] == PTR_FOLLOWING and "notify" in donor_sections:
+        s = donor_sections["notify"]
+        src = donor_raw[s["offset"]:s["offset"] + s["size"]]
+        if len(src) != notify_count * 8:
+            raise RuntimeError(f"donor notify size mismatch for '{donor_name}'")
+        for i in range(notify_count):
+            off = i * 8
+            donor_idx = struct.unpack_from("<H", src, off)[0]
+            if donor_idx >= len(donor_index_to_string):
+                raise RuntimeError(f"donor notify idx out of range in '{donor_name}': {donor_idx}")
+            sname = donor_index_to_string[donor_idx]
+            out.extend(struct.pack("<H", _map_script_string(sname, string_table)))
+            out.extend(src[off + 2:off + 8])
+
+    out.extend(data_byte)
+    out.extend(data_short)
+    out.extend(data_int)
+    return bytes(header), bytes(out)
+
+
 def _pick_bo3_delta_part_index(anim):
     parts = list(anim.get("parts") or [])
     if not parts:
@@ -713,15 +1165,7 @@ def _compute_bo3_motion_score(anim, part_idx, numframes):
     offsets = []
     quats = []
     for frame_idx in range(numframes):
-        bone = _get_frame_bone_state(anim, frame_idx, part_idx)
-        off = bone.get("offset", [0.0, 0.0, 0.0])
-        rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        rot_m_t = [
-            [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
-            [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
-            [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
-        ]
-        q = rotation_matrix_to_quat(rot_m_t)
+        q, off = _get_emit_frame_quat_and_offset(anim, frame_idx, part_idx)
         offsets.append([
             _sanitize_float(off[0]),
             _sanitize_float(off[1]),
@@ -799,6 +1243,51 @@ def _get_frame_bone_state(anim, frame_idx, part_idx):
     return _identity_bone_state()
 
 
+def _get_local_basis_bone_state(anim, frame_idx, part_idx):
+    frames = anim.get("local_basis_frames") or {}
+    direct = frames.get(frame_idx, {})
+    if isinstance(direct, dict) and part_idx in direct:
+        return direct[part_idx]
+
+    for f in range(frame_idx - 1, -1, -1):
+        fd = frames.get(f, {})
+        if isinstance(fd, dict) and part_idx in fd:
+            return fd[part_idx]
+    max_frame = int(anim.get("numframes", 0) or 0)
+    for f in range(frame_idx + 1, max(1, max_frame)):
+        fd = frames.get(f, {})
+        if isinstance(fd, dict) and part_idx in fd:
+            return fd[part_idx]
+    return _identity_local_basis_state()
+
+
+def _get_emit_frame_quat_and_offset(anim, frame_idx, bone_idx, *, zero_local_basis_offset=False):
+    local_basis_frames = anim.get("local_basis_frames") or {}
+    if local_basis_frames:
+        bone = _get_local_basis_bone_state(anim, frame_idx, bone_idx)
+        off = [_sanitize_float(v) for v in (bone.get("offset") or [0.0, 0.0, 0.0])[:3]]
+        if zero_local_basis_offset:
+            off = [0.0, 0.0, 0.0]
+        quat = [_sanitize_float(v) for v in (bone.get("quat") or [0.0, 0.0, 0.0, 1.0])[:4]]
+        if len(quat) < 4:
+            quat = [0.0, 0.0, 0.0, 1.0]
+        return quat, off
+
+    bone = _get_frame_bone_state(anim, frame_idx, bone_idx)
+    off = bone.get("offset", [0.0, 0.0, 0.0])
+    rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    rot_m_t = [
+        [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
+        [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
+        [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
+    ]
+    quat = rotation_matrix_to_quat(rot_m_t)
+    return (
+        [_sanitize_float(v) for v in quat[:4]],
+        [_sanitize_float(v) for v in off[:3]],
+    )
+
+
 def _quantize_u16(v):
     return max(0, min(65535, int(round(float(v)))))
 
@@ -834,15 +1323,7 @@ def _build_bo3_idle_delta_part(anim, numframes):
     offsets = []
     quats = []
     for frame_idx in range(numframes):
-        bone = _get_frame_bone_state(anim, frame_idx, part_idx)
-        off = bone.get("offset", [0.0, 0.0, 0.0])
-        rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        rot_m_t = [
-            [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
-            [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
-            [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
-        ]
-        q = rotation_matrix_to_quat(rot_m_t)
+        q, off = _get_emit_frame_quat_and_offset(anim, frame_idx, part_idx)
         offsets.append([
             _sanitize_float(off[0]),
             _sanitize_float(off[1]),
@@ -940,7 +1421,6 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     if DIAG_ZERO_BONES:
         num_bones = 0
 
-    frame0 = _pick_frame(anim)
     bone_string_indices = []
     rot_quats_i16 = []
     trans_vec_f32 = []
@@ -952,19 +1432,7 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
             string_table[bone_name] = len(string_table)
         bone_string_indices.append(string_table[bone_name])
 
-        bone = frame0.get(bone_idx)
-        if bone:
-            off = bone.get("offset", [0.0, 0.0, 0.0])
-            rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-            rot_m_t = [
-                [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
-                [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
-                [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
-            ]
-            quat = rotation_matrix_to_quat(rot_m_t)
-        else:
-            off = [0.0, 0.0, 0.0]
-            quat = [0.0, 0.0, 0.0, 1.0]
+        quat, off = _get_emit_frame_quat_and_offset(anim, 0, bone_idx)
 
         qx, qy, qz, qw = (_sanitize_float(v) for v in quat)
         ox, oy, oz = (_sanitize_float(v) for v in off[:3])
@@ -1236,8 +1704,6 @@ def _build_static_pose_xanimparts_data(anim, string_table):
     if DIAG_ZERO_BONES:
         num_bones = 0
 
-    frame0 = _pick_frame(anim)
-
     bone_string_indices = []
     for bone_name in parts[:num_bones]:
         if bone_name not in string_table:
@@ -1251,21 +1717,7 @@ def _build_static_pose_xanimparts_data(anim, string_table):
     trans_bone_ids_u16 = []
 
     for bone_idx in range(num_bones):
-        bone = frame0.get(bone_idx)
-        if bone:
-            off = bone.get('offset', [0.0, 0.0, 0.0])
-            rot_m = bone.get('rot', [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-            # xanim_export rows are basis vectors (R^T); transpose to get R
-            rot_m_t = [
-                [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
-                [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
-                [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
-            ]
-            quat = rotation_matrix_to_quat(rot_m_t)
-        else:
-            off = [0.0, 0.0, 0.0]
-            quat = [0.0, 0.0, 0.0, 1.0]
-
+        quat, off = _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=True)
         qx, qy, qz, qw = (_sanitize_float(v) for v in quat)
         ox, oy, oz = (_sanitize_float(v) for v in off[:3])
 
@@ -1377,6 +1829,10 @@ def _build_static_pose_xanimparts_data(anim, string_table):
 def build_xanimparts_data(anim, string_table):
     if EMIT_MODE == "stub":
         return _build_stub_xanimparts_data(anim, string_table)
+    if EMIT_MODE == "donor_template_static_pose":
+        return _build_donor_template_static_pose_xanimparts_data(anim, string_table)
+    if EMIT_MODE == "donor_semantic_static_pose":
+        return _build_donor_semantic_static_pose_xanimparts_data(anim, string_table)
     if EMIT_MODE == "donor_clone":
         return _build_donor_clone_xanimparts_data(anim, string_table)
     if EMIT_MODE == "bo3_frames":
@@ -1551,9 +2007,9 @@ def parse_args():
     )
     parser.add_argument(
         "--emit-mode",
-        choices=["static_pose", "stub", "donor_clone", "bo3_frames"],
+        choices=["static_pose", "donor_template_static_pose", "donor_semantic_static_pose", "stub", "donor_clone", "bo3_frames"],
         default="static_pose",
-        help="Animation emit mode: static_pose writes frame-0 static channels; stub writes no channels; donor_clone copies real donor payloads; bo3_frames emits idle keyframes + fallback mode for others.",
+        help="Animation emit mode: static_pose writes frame-0 static channels; donor_template_static_pose keeps donor runtime semantics while filling static source pose; donor_semantic_static_pose uses donor-safe weapon semantics with target-rig names; stub writes no channels; donor_clone copies real donor payloads; bo3_frames emits idle keyframes + fallback mode for others.",
     )
     parser.add_argument(
         "--donor-ff",
@@ -1623,6 +2079,11 @@ def parse_args():
         help="Force zero bones for diagnostics.",
     )
     parser.add_argument(
+        "--force-identity-pose",
+        action="store_true",
+        help="Force all emitted static-pose channels to identity rotation and zero translation.",
+    )
+    parser.add_argument(
         "--stub-numframes",
         type=int,
         default=0,
@@ -1653,6 +2114,11 @@ def parse_args():
         help="Bone names to inject into PART/frame data when missing.",
     )
     parser.add_argument(
+        "--keep-bones-file",
+        default="",
+        help="JSON file containing allowed target bone names (present_anim_bones or joint_names).",
+    )
+    parser.add_argument(
         "--no-semantic-fill",
         action="store_true",
         help="Disable semantic state fill (missing/empty required states from idle).",
@@ -1661,7 +2127,7 @@ def parse_args():
 
 
 def main():
-    global EMIT_MODE, DIAG_ZERO_BONES, STUB_NUMFRAMES, STUB_IS_DEFAULT, BONE_COUNT_PROFILE, NEUTRALIZE_BONES
+    global EMIT_MODE, DIAG_ZERO_BONES, FORCE_IDENTITY_POSE, STUB_NUMFRAMES, STUB_IS_DEFAULT, BONE_COUNT_PROFILE, NEUTRALIZE_BONES
     global DONOR_FF, DONOR_ZONE_NAME, DONOR_DEFAULT_ASSET, DONOR_OVERRIDE_MAP, DONOR_CONTEXT
     global DONOR_FALLBACK_IDLE, DONOR_MAP_HITS, DONOR_MAP_FALLBACKS, REQUIRE_NO_DONOR_FALLBACK
     global BO3_FRAMES_TARGETS, BO3_FRAMES_FALLBACK_MODE, BO3_ROOT_BONE_PRIORITY
@@ -1670,6 +2136,7 @@ def main():
     args = parse_args()
     EMIT_MODE = str(args.emit_mode)
     DIAG_ZERO_BONES = bool(args.diag_zero_bones)
+    FORCE_IDENTITY_POSE = bool(args.force_identity_pose)
     STUB_NUMFRAMES = max(0, int(args.stub_numframes))
     STUB_IS_DEFAULT = bool(args.stub_is_default)
     BONE_COUNT_PROFILE = str(args.bone_count_profile)
@@ -1688,6 +2155,7 @@ def main():
     BO3_ROOT_BONE_PRIORITY = [str(x).strip() for x in (args.bo3_root_bone_priority or []) if str(x).strip()]
     BO3_NONROOT_BONE_PRIORITY = [str(x).strip() for x in (args.bo3_nonroot_bone_priority or []) if str(x).strip()]
     BO3_MOTION_BONE_REPORT_TOP = max(1, int(args.bo3_motion_bone_report_top))
+    keep_bones = load_keep_bones_from_file(args.keep_bones_file) if str(args.keep_bones_file).strip() else []
 
     xanim_dir = os.path.abspath(args.xanim_dir)
     output_dir = os.path.abspath(args.output_dir)
@@ -1708,10 +2176,11 @@ def main():
     print(f"  emit_mode={EMIT_MODE}")
     print(f"  stub_numframes={STUB_NUMFRAMES}")
     print(f"  stub_is_default={1 if STUB_IS_DEFAULT else 0}")
-    print(f"  diag_zero_bones={1 if DIAG_ZERO_BONES else 0}\n")
+    print(f"  diag_zero_bones={1 if DIAG_ZERO_BONES else 0}")
+    print(f"  force_identity_pose={1 if FORCE_IDENTITY_POSE else 0}\n")
     print(f"  bone_count_profile={BONE_COUNT_PROFILE}\n")
     print(f"  crypto_seed={crypto_seed}\n")
-    if EMIT_MODE in ("donor_clone", "bo3_frames"):
+    if EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose", "bo3_frames"):
         print(f"  donor_ff={DONOR_FF}")
         print(f"  donor_zone_name={DONOR_ZONE_NAME}")
         print(f"  donor_asset={DONOR_DEFAULT_ASSET}")
@@ -1732,6 +2201,12 @@ def main():
     if NEUTRALIZE_BONES:
         print(f"  neutralize_bones={sorted(NEUTRALIZE_BONES)}\n")
     ensure_bones = [str(x).strip() for x in (args.ensure_bones or []) if str(x).strip()]
+    if keep_bones:
+        keep_bone_set = {name.lower() for name in keep_bones}
+        ensure_bones = [name for name in ensure_bones if name.lower() in keep_bone_set]
+        NEUTRALIZE_BONES = {name for name in NEUTRALIZE_BONES if name.lower() in keep_bone_set}
+        print(f"  keep_bones_file={args.keep_bones_file}")
+        print(f"  keep_bone_count={len(keep_bones)}\n")
     if ensure_bones:
         print(f"  ensure_bones={sorted(set(ensure_bones))}\n")
 
@@ -1740,9 +2215,12 @@ def main():
     anims_by_name = {}
     max_parts = 0
     total_neutralized = 0
+    total_pruned = 0
     for filepath in files:
         name = os.path.basename(filepath)
         anim = parse_xanim_export(filepath)
+        if keep_bones:
+            total_pruned += prune_anim_to_bones(anim, keep_bones)
         anims_by_name[anim["name"]] = anim
         nf = anim['numframes']
         if anim['numparts'] > max_parts:
@@ -1774,10 +2252,12 @@ def main():
         anims.append(anim)
 
     print(f"\n  Canonical vm skeleton size: {max_parts} bones")
+    if keep_bones:
+        print(f"  Pruned bone tracks: {total_pruned}")
     if NEUTRALIZE_BONES:
         print(f"  Neutralized track writes: {total_neutralized}")
 
-    if EMIT_MODE == "donor_clone" or (EMIT_MODE == "bo3_frames" and BO3_FRAMES_FALLBACK_MODE == "donor_clone"):
+    if EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose") or (EMIT_MODE == "bo3_frames" and BO3_FRAMES_FALLBACK_MODE == "donor_clone"):
         needed_donor_assets = set([DONOR_DEFAULT_ASSET])
         for anim in anims:
             if EMIT_MODE == "bo3_frames" and anim["name"] in BO3_FRAMES_TARGETS:
@@ -1806,7 +2286,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     file_size = write_zone_file(raw_data, zone_name, output_ff, crypto_seed=crypto_seed)
     print(f"  Output: {output_ff} ({file_size:,} bytes)")
-    if EMIT_MODE == "donor_clone" or (EMIT_MODE == "bo3_frames" and BO3_FRAMES_FALLBACK_MODE == "donor_clone"):
+    if EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose") or (EMIT_MODE == "bo3_frames" and BO3_FRAMES_FALLBACK_MODE == "donor_clone"):
         print(f"  donor_clone mapped={DONOR_MAP_HITS} fallback={DONOR_MAP_FALLBACKS}")
         if REQUIRE_NO_DONOR_FALLBACK and DONOR_MAP_FALLBACKS > 0:
             print("ERROR: donor fallback used while --require-no-donor-fallback is enabled")

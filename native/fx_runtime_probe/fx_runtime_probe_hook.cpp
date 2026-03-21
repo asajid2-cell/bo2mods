@@ -39,11 +39,18 @@ constexpr DWORD kConsumerRenderTableMatchBranchRva = 0x0037C24A;
 constexpr DWORD kConsumerRenderTableNonZeroBranchRva = 0x0037C2BB;
 constexpr int kConsumerStepTraceInstructions = 12;
 constexpr DWORD kTouchTraceDelayMs = 15000;
+constexpr DWORD kTouchTraceDelayMsOpacityFocus = 2000;
 constexpr DWORD kConsumerArmInitialDelayMs = 5000;
 constexpr DWORD kConsumerArmRetryDelayMs = 5000;
 constexpr int kConsumerArmMaxAttempts = 4;
 constexpr size_t kTouchTraceChunkSize = 0x10000;
 constexpr size_t kTouchTraceMaxPages = 128;
+
+enum class ProbeMode
+{
+    Safe,
+    RenderOpacityFocus,
+};
 
 struct SavedRegisters
 {
@@ -78,6 +85,7 @@ struct AssetTrace
     size_t total_read {};
     int read_calls {};
     bool logged_first {};
+    bool opacity_focus_armed {};
 };
 
 struct CallerSelection
@@ -135,6 +143,8 @@ std::mutex g_state_mutex;
 FILE* g_log_file = nullptr;
 std::atomic<unsigned long> g_log_seq {0};
 std::atomic<unsigned long long> g_next_trace_id {1};
+std::atomic<bool> g_opacity_focus_consumers_armed {false};
+std::atomic<bool> g_opacity_focus_rearm_pending {false};
 
 std::vector<ModuleInfoLite> g_modules;
 std::unordered_set<std::string> g_watch_images;
@@ -160,12 +170,14 @@ decltype(&CloseHandle) g_real_close_handle = nullptr;
 void* g_return_trace_thunk = nullptr;
 std::atomic<bool> g_touch_trace_started {false};
 std::atomic<bool> g_touch_trace_complete {false};
+ProbeMode g_probe_mode = ProbeMode::Safe;
 
 HANDLE WINAPI hook_create_file_a(LPCSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
 HANDLE WINAPI hook_create_file_w(LPCWSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
 BOOL WINAPI hook_read_file(HANDLE handle, LPVOID buffer, DWORD bytes_to_read, LPDWORD bytes_read, LPOVERLAPPED overlapped);
 BOOL WINAPI hook_close_handle(HANDLE handle);
 int arm_consumer_exec_traces();
+void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits);
 
 std::string narrow_from_wide(const std::wstring& value)
 {
@@ -254,6 +266,25 @@ std::string sanitize_comma_iwi_path(const std::string& path)
     return dir + file_name;
 }
 
+bool is_opacity_focus_target(const std::string& label, const std::string& text)
+{
+    const std::string l = to_lower_copy(label);
+    const std::string t = to_lower_copy(text);
+    if (l == "material" && t == "bo3rfx_gfx_light_phosphorous_em_i1024")
+        return true;
+    if (l == "image" && (t == "bo3rfx_fxt_light_phosphorous" || t == ",bo3rfx_fxt_light_phosphorous" || t == "fxt_light_phosphorous" || t == ",fxt_light_phosphorous"))
+        return true;
+    if (l == "techset" && t == "effect_26z423jf")
+        return true;
+    return false;
+}
+
+bool is_opacity_focus_image(const std::string& image)
+{
+    const std::string t = to_lower_copy(image);
+    return t == "bo3rfx_fxt_light_phosphorous" || t == "fxt_light_phosphorous";
+}
+
 std::string module_relative_path(const wchar_t* suffix)
 {
     wchar_t self_path[MAX_PATH] {};
@@ -264,6 +295,28 @@ std::string module_relative_path(const wchar_t* suffix)
         path.resize(slash + 1);
     path += suffix;
     return narrow_from_wide(path);
+}
+
+const char* probe_mode_name()
+{
+    switch (g_probe_mode)
+    {
+    case ProbeMode::RenderOpacityFocus:
+        return "render_opacity_focus";
+    case ProbeMode::Safe:
+    default:
+        return "safe";
+    }
+}
+
+DWORD touch_trace_delay_ms()
+{
+    return g_probe_mode == ProbeMode::RenderOpacityFocus ? kTouchTraceDelayMsOpacityFocus : kTouchTraceDelayMs;
+}
+
+DWORD consumer_arm_initial_delay_ms()
+{
+    return g_probe_mode == ProbeMode::RenderOpacityFocus ? kTouchTraceDelayMsOpacityFocus : kConsumerArmInitialDelayMs;
 }
 
 void log_line(const char* fmt, ...)
@@ -464,6 +517,37 @@ void enumerate_modules()
     }
 }
 
+void load_probe_mode()
+{
+    const std::string mode_path = module_relative_path(L"..\\..\\..\\active_probe_mode.txt");
+    FILE* file = std::fopen(mode_path.c_str(), "rb");
+    if (!file)
+    {
+        g_probe_mode = ProbeMode::Safe;
+        log_line("probe_mode path=%s value=%s source=default", mode_path.c_str(), probe_mode_name());
+        return;
+    }
+
+    char buffer[128] {};
+    const size_t count = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+    std::fclose(file);
+    std::string value(buffer, count);
+    value = to_lower_copy(value);
+    value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) {
+        return c == '\r' || c == '\n' || c == ' ' || c == '\t';
+    }), value.end());
+    const size_t eq = value.find('=');
+    if (eq != std::string::npos)
+        value = value.substr(eq + 1);
+
+    if (value == "render_opacity_focus")
+        g_probe_mode = ProbeMode::RenderOpacityFocus;
+    else
+        g_probe_mode = ProbeMode::Safe;
+
+    log_line("probe_mode path=%s value=%s source=file", mode_path.c_str(), probe_mode_name());
+}
+
 void load_watchlist()
 {
     const std::string watch_path = module_relative_path(L"..\\..\\..\\active_probe_watchlist.txt");
@@ -623,6 +707,18 @@ std::vector<std::pair<std::string, std::string>> build_touch_needles()
     for (const auto& techset : g_watch_techsets)
         needles.emplace_back("techset", techset);
 
+    if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+    {
+        std::vector<std::pair<std::string, std::string>> filtered;
+        filtered.reserve(needles.size());
+        for (const auto& needle : needles)
+        {
+            if (is_opacity_focus_target(needle.first, needle.second))
+                filtered.push_back(needle);
+        }
+        return filtered;
+    }
+
     return needles;
 }
 
@@ -664,7 +760,7 @@ void arm_touch_trace_pages()
     log_line("touch_trace_armed targets=%u pages=%u delay_ms=%lu",
         static_cast<unsigned>(g_touch_targets.size()),
         static_cast<unsigned>(g_touch_pages.size()),
-        static_cast<unsigned long>(kTouchTraceDelayMs));
+        static_cast<unsigned long>(touch_trace_delay_ms()));
 }
 
 void scan_touch_targets()
@@ -748,12 +844,19 @@ void scan_touch_targets()
 DWORD WINAPI touch_trace_thread(void*)
 {
     g_touch_trace_started = true;
-    log_line("touch_trace_thread delay_ms=%lu", static_cast<unsigned long>(kTouchTraceDelayMs));
-    Sleep(kTouchTraceDelayMs);
+    log_line("touch_trace_thread delay_ms=%lu", static_cast<unsigned long>(touch_trace_delay_ms()));
+    Sleep(touch_trace_delay_ms());
+    if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+    {
+        log_line("touch_trace_skipped mode=%s reason=stability", probe_mode_name());
+        g_touch_trace_complete = true;
+        return 0;
+    }
     enumerate_modules();
     scan_touch_targets();
     arm_touch_trace_pages();
-    arm_consumer_exec_traces();
+    if (g_probe_mode != ProbeMode::RenderOpacityFocus)
+        arm_consumer_exec_traces();
     g_touch_trace_complete = true;
     return 0;
 }
@@ -761,10 +864,10 @@ DWORD WINAPI touch_trace_thread(void*)
 DWORD WINAPI consumer_arm_thread(void*)
 {
     log_line("consumer_arm_thread delay_ms=%lu retry_ms=%lu max_attempts=%d",
-        static_cast<unsigned long>(kConsumerArmInitialDelayMs),
+        static_cast<unsigned long>(consumer_arm_initial_delay_ms()),
         static_cast<unsigned long>(kConsumerArmRetryDelayMs),
         kConsumerArmMaxAttempts);
-    Sleep(kConsumerArmInitialDelayMs);
+    Sleep(consumer_arm_initial_delay_ms());
     for (int attempt = 1; attempt <= kConsumerArmMaxAttempts; ++attempt)
     {
         enumerate_modules();
@@ -794,6 +897,39 @@ const char* consumer_label_for_addr(uintptr_t addr)
     if (addr == rva_to_va(kConsumerSubmitFlagsRva))
         return "consumer_submit_flags";
     return nullptr;
+}
+
+void arm_opacity_focus_consumers_locked(unsigned long long trace_id, const std::string& path)
+{
+    arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), trace_id, path, 12);
+    g_opacity_focus_consumers_armed = true;
+    log_line("opacity_focus_arm trace=%llu path=%s render_table=0x%08lX submit_flags=disabled",
+        trace_id,
+        path.c_str(),
+        static_cast<unsigned long>(rva_to_va(kConsumerRenderTableRva)));
+}
+
+void arm_opacity_focus_consumers(unsigned long long trace_id, const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    arm_opacity_focus_consumers_locked(trace_id, path);
+}
+
+DWORD WINAPI opacity_focus_fallback_thread(void*)
+{
+    const DWORD delay_ms = std::max<DWORD>(consumer_arm_initial_delay_ms() + 4000, 6000);
+    log_line("opacity_focus_fallback_thread delay_ms=%lu", static_cast<unsigned long>(delay_ms));
+    Sleep(delay_ms);
+    if (g_opacity_focus_consumers_armed.load())
+    {
+        log_line("opacity_focus_fallback_skipped reason=already_armed");
+        return 0;
+    }
+    enumerate_modules();
+    const unsigned long long trace_id = g_next_trace_id++;
+    arm_opacity_focus_consumers(trace_id, "opacity_focus_fallback");
+    log_line("opacity_focus_fallback_armed trace=%llu", trace_id);
+    return 0;
 }
 
 std::string join_touch_targets(const std::vector<size_t>& indices)
@@ -888,6 +1024,26 @@ void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_
     arm_exec_trace_locked(label, addr, trace_id, path, max_hits);
 }
 
+DWORD WINAPI opacity_focus_rearm_thread(void*)
+{
+    Sleep(250);
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    const uintptr_t addr = rva_to_va(kConsumerRenderTableRva);
+    auto it = g_exec_traces.find(addr);
+    if (it != g_exec_traces.end() && !it->second.armed && it->second.hits < it->second.max_hits)
+    {
+        patch_byte(it->second.addr, 0xCC, nullptr);
+        it->second.armed = true;
+        log_line("opacity_focus_rearm label=%s addr=0x%08lX hit=%d max_hits=%d",
+            it->second.label.c_str(),
+            static_cast<unsigned long>(it->second.addr),
+            it->second.hits,
+            it->second.max_hits);
+    }
+    g_opacity_focus_rearm_pending = false;
+    return 0;
+}
+
 int arm_consumer_exec_traces()
 {
     std::lock_guard<std::mutex> lock(g_state_mutex);
@@ -909,6 +1065,12 @@ int arm_consumer_exec_traces()
     int armed_count = 0;
     for (const auto& spec : specs)
     {
+        if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+        {
+            const std::string label = spec.label;
+            if (label != "consumer_render_table" && label != "consumer_submit_flags")
+                continue;
+        }
         const uintptr_t addr = rva_to_va(spec.rva);
         if (!bytes_match(addr, spec.bytes, spec.size))
         {
@@ -922,6 +1084,69 @@ int arm_consumer_exec_traces()
         armed_count += 1;
     }
     return armed_count;
+}
+
+void log_consumer_render_state(const char* label, const CONTEXT& ctx)
+{
+    if (!label)
+        return;
+
+    if (std::strcmp(label, "consumer_render_table") == 0 ||
+        std::strcmp(label, "consumer_render_table_zero_path") == 0 ||
+        std::strcmp(label, "consumer_render_table_compare") == 0 ||
+        std::strcmp(label, "consumer_render_table_match_branch") == 0 ||
+        std::strcmp(label, "consumer_render_table_nonzero_branch") == 0)
+    {
+        log_line("render_state label=%s esi_minus_e0=0x%08lX esi=0x%08lX esi_plus_8=0x%08lX eax=0x%08lX eax_plus_4=0x%08lX",
+            label,
+            ctx.Esi >= 0xE0 ? ctx.Esi - 0xE0 : 0,
+            ctx.Esi,
+            ctx.Esi + 8,
+            ctx.Eax,
+            ctx.Eax + 4);
+        if (ctx.Esi >= 0xE0)
+            log_pointer_info("render_state_esi_minus_e0", ctx.Esi - 0xE0);
+        log_pointer_info("render_state_esi", ctx.Esi);
+        log_pointer_info("render_state_esi_plus_8", ctx.Esi + 8);
+        log_pointer_info("render_state_eax", ctx.Eax);
+
+        if (std::strcmp(label, "consumer_render_table") == 0)
+        {
+            WORD esi_word = 0;
+            DWORD table_value = 0;
+            DWORD esi_plus_8 = 0;
+            const bool have_esi_word = safe_copy_memory(ctx.Esi, &esi_word, sizeof(esi_word));
+            const bool have_table_value = safe_copy_memory(ctx.Eax, &table_value, sizeof(table_value));
+            const bool have_esi_plus_8 = safe_copy_memory(ctx.Esi + 8, &esi_plus_8, sizeof(esi_plus_8));
+            const bool zero_lane = have_esi_word && esi_word == 0;
+            const bool compare_match = zero_lane && have_table_value && have_esi_plus_8 && table_value == esi_plus_8;
+            log_line("render_branch_infer label=%s esi_word=0x%04X zero_lane=%d table_value=0x%08lX esi_plus_8_value=0x%08lX compare_match=%d inferred=%s",
+                label,
+                static_cast<unsigned>(esi_word),
+                zero_lane ? 1 : 0,
+                static_cast<unsigned long>(table_value),
+                static_cast<unsigned long>(esi_plus_8),
+                compare_match ? 1 : 0,
+                !zero_lane ? "nonzero_branch" : (compare_match ? "zero_compare_match" : "zero_compare_miss"));
+        }
+    }
+
+    if (std::strcmp(label, "consumer_submit_flags") == 0)
+    {
+        const uintptr_t flag_addr = ctx.Esi >= 0xE0 ? (ctx.Esi - 0xE0) : 0;
+        DWORD flags = 0;
+        if (flag_addr)
+            safe_copy_memory(flag_addr, &flags, sizeof(flags));
+        log_line("render_submit_flags label=%s flag_addr=0x%08lX flags=0x%08lX test_mask=0x00002000 masked=0x%08lX",
+            label,
+            static_cast<unsigned long>(flag_addr),
+            static_cast<unsigned long>(flags),
+            static_cast<unsigned long>(flags & 0x00002000u));
+        if (flag_addr)
+            log_pointer_info("render_submit_flag_addr", flag_addr);
+        log_pointer_info("render_submit_esi", ctx.Esi);
+        log_pointer_info("render_submit_eax", ctx.Eax);
+    }
 }
 
 void arm_branch_traces_after_return(bool success, unsigned long long trace_id, const std::string& path)
@@ -1150,26 +1375,42 @@ BOOL WINAPI hook_read_file(HANDLE handle, LPVOID buffer, DWORD bytes_to_read, LP
 {
     const BOOL ok = g_real_read_file(handle, buffer, bytes_to_read, bytes_read, overlapped);
     const uintptr_t key = reinterpret_cast<uintptr_t>(handle);
-    std::lock_guard<std::mutex> lock(g_state_mutex);
-    auto it = g_active_handles.find(key);
-    if (it == g_active_handles.end())
-        return ok;
+    bool should_arm_opacity_focus = false;
+    unsigned long long opacity_trace_id = 0;
+    std::string opacity_path;
+    {
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        auto it = g_active_handles.find(key);
+        if (it == g_active_handles.end())
+            return ok;
 
-    AssetTrace& trace = it->second;
-    const DWORD got = bytes_read ? *bytes_read : 0;
-    trace.total_read += got;
-    trace.read_calls += 1;
-    log_line("asset_read trace=%llu handle=0x%08lX ok=%d requested=%lu read=%lu total=%zu calls=%d image=%s resolved=%s",
-        trace.trace_id, static_cast<unsigned long>(key), ok ? 1 : 0, bytes_to_read, got, trace.total_read, trace.read_calls, trace.image.c_str(), trace.resolved.c_str());
-    if (got && !trace.logged_first)
-    {
-        log_line("asset_read_first trace=%llu image=%s bytes=%lu prefix=%s", trace.trace_id, trace.image.c_str(), got, hex_prefix(buffer, got).c_str());
-        trace.logged_first = true;
+        AssetTrace& trace = it->second;
+        const DWORD got = bytes_read ? *bytes_read : 0;
+        trace.total_read += got;
+        trace.read_calls += 1;
+        log_line("asset_read trace=%llu handle=0x%08lX ok=%d requested=%lu read=%lu total=%zu calls=%d image=%s resolved=%s",
+            trace.trace_id, static_cast<unsigned long>(key), ok ? 1 : 0, bytes_to_read, got, trace.total_read, trace.read_calls, trace.image.c_str(), trace.resolved.c_str());
+        if (got && !trace.logged_first)
+        {
+            log_line("asset_read_first trace=%llu image=%s bytes=%lu prefix=%s", trace.trace_id, trace.image.c_str(), got, hex_prefix(buffer, got).c_str());
+            trace.logged_first = true;
+            if (g_probe_mode == ProbeMode::RenderOpacityFocus && is_opacity_focus_image(trace.image) && !trace.opacity_focus_armed)
+            {
+                trace.opacity_focus_armed = true;
+                should_arm_opacity_focus = true;
+                opacity_trace_id = trace.trace_id;
+                opacity_path = "opacity_focus_asset:" + trace.image;
+            }
+        }
+        else if (got)
+        {
+            log_line("asset_read_sample trace=%llu image=%s bytes=%lu prefix=%s", trace.trace_id, trace.image.c_str(), got, hex_prefix(buffer, got).c_str());
+        }
     }
-    else if (got)
-    {
-        log_line("asset_read_sample trace=%llu image=%s bytes=%lu prefix=%s", trace.trace_id, trace.image.c_str(), got, hex_prefix(buffer, got).c_str());
-    }
+
+    if (should_arm_opacity_focus)
+        arm_opacity_focus_consumers(opacity_trace_id, opacity_path);
+
     return ok;
 }
 
@@ -1243,6 +1484,7 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             static_cast<unsigned long>(fault_addr),
             ctx.Eip,
             static_cast<unsigned>(page_it->second.size()));
+        bool should_arm_opacity_focus = false;
         for (size_t index : page_it->second)
         {
             if (index >= g_touch_targets.size())
@@ -1253,10 +1495,18 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                 target.text.c_str(),
                 static_cast<unsigned long>(target.addr),
                 target.hit ? 1 : 0);
+            if (g_probe_mode == ProbeMode::RenderOpacityFocus && is_opacity_focus_target(target.label, target.text))
+                should_arm_opacity_focus = true;
         }
         log_register_block(ctx);
         log_bytes_around("touch_trace_eip bytes", ctx.Eip);
         log_backtrace_frames("touch_trace", 0, 10);
+        if (should_arm_opacity_focus)
+        {
+            const unsigned long long trace_id = g_next_trace_id++;
+            const std::string path = "opacity_focus:" + join_touch_targets(page_it->second);
+            arm_opacity_focus_consumers_locked(trace_id, path);
+        }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
@@ -1279,7 +1529,13 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         point.armed = false;
         point.hits += 1;
         g_tls_rearm_addr = 0;
-        const bool should_rearm = point.max_hits > 1 && point.hits < point.max_hits;
+        bool should_rearm = point.max_hits > 1 && point.hits < point.max_hits;
+        const bool delayed_opacity_rearm =
+            g_probe_mode == ProbeMode::RenderOpacityFocus &&
+            point.label == "consumer_render_table" &&
+            should_rearm;
+        if (delayed_opacity_rearm)
+            should_rearm = false;
         if (should_rearm)
         {
             g_tls_rearm_addr = point.addr;
@@ -1299,18 +1555,36 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_pointer_info("edi", ctx.Edi);
         log_pointer_info("ebp", ctx.Ebp);
         log_pointer_info("esp", ctx.Esp);
+        log_consumer_render_state(point.label.c_str(), ctx);
 
         if (point.label == "consumer_render_table")
         {
-            arm_exec_trace_locked("consumer_render_table_zero_path", rva_to_va(kConsumerRenderTableZeroPathRva), point.trace_id, point.path);
-            arm_exec_trace_locked("consumer_render_table_compare", rva_to_va(kConsumerRenderTableCompareRva), point.trace_id, point.path);
-            arm_exec_trace_locked("consumer_render_table_match_branch", rva_to_va(kConsumerRenderTableMatchBranchRva), point.trace_id, point.path);
-            arm_exec_trace_locked("consumer_render_table_nonzero_branch", rva_to_va(kConsumerRenderTableNonZeroBranchRva), point.trace_id, point.path);
-            log_line("branch_trace_request kind=consumer_render_table target1=0x%08lX target2=0x%08lX target3=0x%08lX target4=0x%08lX",
-                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableZeroPathRva)),
-                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableCompareRva)),
-                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableMatchBranchRva)),
-                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableNonZeroBranchRva)));
+            if (g_probe_mode != ProbeMode::RenderOpacityFocus)
+            {
+                arm_exec_trace_locked("consumer_render_table_zero_path", rva_to_va(kConsumerRenderTableZeroPathRva), point.trace_id, point.path);
+                arm_exec_trace_locked("consumer_render_table_compare", rva_to_va(kConsumerRenderTableCompareRva), point.trace_id, point.path);
+                arm_exec_trace_locked("consumer_render_table_match_branch", rva_to_va(kConsumerRenderTableMatchBranchRva), point.trace_id, point.path);
+                arm_exec_trace_locked("consumer_render_table_nonzero_branch", rva_to_va(kConsumerRenderTableNonZeroBranchRva), point.trace_id, point.path);
+                log_line("branch_trace_request kind=consumer_render_table target1=0x%08lX target2=0x%08lX target3=0x%08lX target4=0x%08lX",
+                    static_cast<unsigned long>(rva_to_va(kConsumerRenderTableZeroPathRva)),
+                    static_cast<unsigned long>(rva_to_va(kConsumerRenderTableCompareRva)),
+                    static_cast<unsigned long>(rva_to_va(kConsumerRenderTableMatchBranchRva)),
+                    static_cast<unsigned long>(rva_to_va(kConsumerRenderTableNonZeroBranchRva)));
+            }
+            else if (delayed_opacity_rearm && !g_opacity_focus_rearm_pending.exchange(true))
+            {
+                HANDLE rearm_thread = CreateThread(nullptr, 0, opacity_focus_rearm_thread, nullptr, 0, nullptr);
+                if (rearm_thread)
+                {
+                    log_line("opacity_focus_rearm_thread_started hit=%d max_hits=%d", point.hits, point.max_hits);
+                    CloseHandle(rearm_thread);
+                }
+                else
+                {
+                    g_opacity_focus_rearm_pending = false;
+                    log_line("opacity_focus_rearm_thread_failed gle=%lu", GetLastError());
+                }
+            }
         }
 
         if (point.label == "special_open_success_class1_continue")
@@ -1423,6 +1697,7 @@ DWORD WINAPI init_thread(void*)
     log_line("system_page_size=0x%08lX", static_cast<unsigned long>(g_system_info.dwPageSize));
 
     enumerate_modules();
+    load_probe_mode();
     load_watchlist();
 
     g_real_create_file_a = reinterpret_cast<decltype(g_real_create_file_a)>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CreateFileA"));
@@ -1444,15 +1719,32 @@ DWORD WINAPI init_thread(void*)
     {
         log_line("touch_trace_thread_failed gle=%lu", GetLastError());
     }
-    HANDLE consumer_thread = CreateThread(nullptr, 0, consumer_arm_thread, nullptr, 0, nullptr);
-    if (consumer_thread)
+    if (g_probe_mode == ProbeMode::RenderOpacityFocus)
     {
-        log_line("consumer_arm_thread_started");
-        CloseHandle(consumer_thread);
+        log_line("consumer_arm_thread_skipped mode=%s reason=asset_gated", probe_mode_name());
+        HANDLE opacity_thread = CreateThread(nullptr, 0, opacity_focus_fallback_thread, nullptr, 0, nullptr);
+        if (opacity_thread)
+        {
+            log_line("opacity_focus_fallback_thread_started");
+            CloseHandle(opacity_thread);
+        }
+        else
+        {
+            log_line("opacity_focus_fallback_thread_failed gle=%lu", GetLastError());
+        }
     }
     else
     {
-        log_line("consumer_arm_thread_failed gle=%lu", GetLastError());
+        HANDLE consumer_thread = CreateThread(nullptr, 0, consumer_arm_thread, nullptr, 0, nullptr);
+        if (consumer_thread)
+        {
+            log_line("consumer_arm_thread_started");
+            CloseHandle(consumer_thread);
+        }
+        else
+        {
+            log_line("consumer_arm_thread_failed gle=%lu", GetLastError());
+        }
     }
     log_line("hook_install_complete installed=0");
     return 0;
