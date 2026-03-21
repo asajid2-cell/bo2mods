@@ -68,6 +68,7 @@ FX_STRUCTURE_REWRITE_REPORT = FX_SURFACE_BUNDLE_ROOT / "fx_structure_rewrite_rep
 FX_GRAPH_REPORT = ROOT / "_build" / "bo3_idgun_fx_graph.json"
 FX_ANALYZER = ROOT / "_build" / "analyze_bo3_idgun_fx.py"
 T7_TEXTURE_ASSET_ROOT = Path(r"Z:\Games\T7 Assets V2.5 (2)\T7 Assets V2.5\T7 Assets\texture_assets")
+FX_SURFACE_NAMESPACE_PREFIX = "bo3rfx_"
 
 MOD_NAME = "bo3_rev"
 MOD_ZONE_NAME = "mod"
@@ -232,7 +233,12 @@ FX_FAMILY_SPECS: dict[str, dict[str, object]] = {
         "template": FX_GLOW_TEMPLATE,
         "camera_region": "emissiveFx",
         "default_technique_set": "effect_26z423jf",
-        "image_policy": "preserve_translator_output",
+        # The probe now shows the translated BO3 glow-family images landing in a
+        # different render-table lane than the working stock control. Keep these
+        # materials on the stock glow template, but normalize the translated IWI
+        # header into the older BC3-compatible path instead of preserving the raw
+        # translator output.
+        "image_policy": "normalize_bc3_header_if_present",
         "stock_refs": ["gfx_fxt_light_glow_square_gr"],
         "notes": "Pure emissive additive glow cards and orb hotspots.",
     },
@@ -248,7 +254,7 @@ FX_FAMILY_SPECS: dict[str, dict[str, object]] = {
         "template": FX_SIMPLE_ALPHA_TEMPLATE,
         "camera_region": "emissiveFx",
         "default_technique_set": "effect_842ee834",
-        "image_policy": "preserve_translator_output",
+        "image_policy": "normalize_bc3_header_if_present",
         "stock_refs": ["gfx_fxt_env_water_ripple"],
         "notes": "Masked translucent sprites and ripple-style cards.",
     },
@@ -256,7 +262,7 @@ FX_FAMILY_SPECS: dict[str, dict[str, object]] = {
         "template": FX_DISTORT_TEMPLATE,
         "camera_region": "emissiveFx",
         "default_technique_set": "distortion_81587199",
-        "image_policy": "preserve_translator_output",
+        "image_policy": "normalize_bc3_header_if_present",
         "stock_refs": ["gfx_distortion_heat"],
         "notes": "Heat-haze and refraction shells that need distortion semantics.",
     },
@@ -264,7 +270,7 @@ FX_FAMILY_SPECS: dict[str, dict[str, object]] = {
         "template": FX_BURST_TEMPLATE,
         "camera_region": "emissiveFx",
         "default_technique_set": "effect_z0z25860",
-        "image_policy": "preserve_translator_output",
+        "image_policy": "normalize_bc3_header_if_present",
         "stock_refs": ["gfx_fxt_exp_ember_omni"],
         "notes": "Short-lived flashes, ember bursts, and electric hits.",
     },
@@ -285,6 +291,8 @@ FX_FAMILY_SPECS: dict[str, dict[str, object]] = {
         "notes": "Lit debris, impact shards, and dust-like sprite payloads.",
     },
 }
+BO3_FX_SURFACE_MATERIAL_REMAP: dict[str, str] = {}
+BO3_FX_SURFACE_IMAGE_REMAP: dict[str, str] = {}
 IDG_SURFACE_IMAGE_FILES = {
     "i_wpn_t7_zmb_zod_idg_ammo_c": "i_wpn_t7_zmb_zod_idg_ammo_c.png",
     "i_wpn_t7_zmb_zod_idg_ammo_n": "i_wpn_t7_zmb_zod_idg_ammo_n.png",
@@ -3035,6 +3043,9 @@ def rewrite_bo3_servant_raw_fx(path: Path) -> None:
         original_block = block
         rewrite_log: list[str] = []
 
+        if BO3_FX_SURFACE_MATERIAL_REMAP:
+            block = _raw_fx_replace_material_refs(block, BO3_FX_SURFACE_MATERIAL_REMAP, rewrite_log)
+
         if USE_STOCK_FX_MATERIAL_PROBE:
             material_probe_replacements = RAW_FX_STOCK_MATERIAL_PROBE_MAP.get(path.stem)
             if material_probe_replacements:
@@ -4613,6 +4624,39 @@ def write_iwi_from_image(img: Image.Image, dst_iwi: Path, *, force_format: int =
         create_iwi(width, height, mips, force_format if force_format is not None else iwi_format, dst_iwi)
 
 
+def write_iwi_from_source_image(src_image: Path, dst_iwi: Path, *, force_format: int = IWI_FORMAT_DXT5) -> None:
+    suffix = src_image.suffix.lower()
+    if suffix == ".iwi":
+        shutil.copy2(src_image, dst_iwi)
+        return
+    if suffix == ".dds":
+        write_iwi_from_dds(src_image, dst_iwi)
+        return
+    img = Image.open(src_image).convert("RGBA")
+    write_iwi_from_image(img, dst_iwi, force_format=force_format)
+
+
+def stage_namespaced_bo3_fx_surface_images(material_meta: dict[str, dict[str, object]]) -> list[str]:
+    staged_image_names: list[str] = []
+    seen: set[str] = set()
+    for meta in material_meta.values():
+        emitted_image_name = str(meta.get("emittedImageName", meta.get("colorMap", ""))).strip()
+        source_image_path = str(meta.get("sourceImagePath", "")).strip()
+        if not emitted_image_name or not source_image_path or emitted_image_name in seen:
+            continue
+        src = Path(source_image_path)
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Missing BO3 FX source image for namespaced stage: {src} "
+                f"(image={emitted_image_name})"
+            )
+        dst = IMAGES_DIR / f"{emitted_image_name}.iwi"
+        write_iwi_from_source_image(src, dst)
+        staged_image_names.append(emitted_image_name)
+        seen.add(emitted_image_name)
+    return staged_image_names
+
+
 def grade_diffuse_image(
     img: Image.Image,
     *,
@@ -5025,7 +5069,18 @@ def build_safe_bo2_idg_materials(material_names: list[str]) -> None:
         dst.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def namespace_fx_surface_material_name(material_name: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9_]", "_", material_name.strip())
+    return f"{FX_SURFACE_NAMESPACE_PREFIX}{clean}"
+
+
+def namespace_fx_surface_image_name(image_name: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9_$]", "_", image_name.strip())
+    return f"{FX_SURFACE_NAMESPACE_PREFIX}{clean}"
+
+
 def build_bo3_fx_surface_bundle(material_names: list[str]) -> tuple[Path, dict[str, dict[str, object]]]:
+    global BO3_FX_SURFACE_MATERIAL_REMAP, BO3_FX_SURFACE_IMAGE_REMAP
     if FX_SURFACE_BUNDLE_ROOT.exists():
         shutil.rmtree(FX_SURFACE_BUNDLE_ROOT)
     staged_root = FX_SURFACE_BUNDLE_ROOT / "staged"
@@ -5039,25 +5094,33 @@ def build_bo3_fx_surface_bundle(material_names: list[str]) -> tuple[Path, dict[s
     image_names: list[str] = []
     material_meta: dict[str, dict[str, object]] = {}
     image_meta_by_name: dict[str, dict[str, object]] = {}
+    BO3_FX_SURFACE_MATERIAL_REMAP = {}
+    BO3_FX_SURFACE_IMAGE_REMAP = {}
 
     for material_name in material_names:
         if material_name == "gfx_debug_missing_fx":
+            emitted_material_name = namespace_fx_surface_material_name(material_name)
+            emitted_image_name = namespace_fx_surface_image_name("fxt_debris_clump")
+            BO3_FX_SURFACE_MATERIAL_REMAP[material_name] = emitted_material_name
+            BO3_FX_SURFACE_IMAGE_REMAP["fxt_debris_clump"] = emitted_image_name
             material_entries.append(
                 {
-                    "name": material_name,
+                    "name": emitted_material_name,
                     "gdf": "material.gdf",
-                    "props": {"colorMap": "fxt_debris_clump"},
+                    "props": {"colorMap": emitted_image_name},
                 }
             )
-            material_meta[material_name] = {
-                "materialName": material_name,
+            material_meta[emitted_material_name] = {
+                "materialName": emitted_material_name,
+                "sourceMaterialName": material_name,
                 "materialType": "effect_lit_blend",
-                "colorMap": "fxt_debris_clump",
+                "colorMap": emitted_image_name,
+                "sourceColorMap": "fxt_debris_clump",
                 "sourceGdt": "material.gdf",
-                "hb21MaterialProps": {"colorMap": "fxt_debris_clump"},
+                "hb21MaterialProps": {"colorMap": emitted_image_name},
             }
-            if "fxt_debris_clump" not in image_names:
-                image_names.append("fxt_debris_clump")
+            if emitted_image_name not in image_names:
+                image_names.append(emitted_image_name)
             continue
         resolved = resolve_hb21_entry(material_name, index)
         if str(resolved.get("gdf", "")).lower() != "material.gdf":
@@ -5067,32 +5130,41 @@ def build_bo3_fx_surface_bundle(material_names: list[str]) -> tuple[Path, dict[s
         color_map = str(props.get("colorMap", "")).strip()
         if not color_map or color_map.startswith("$"):
             raise RuntimeError(f"HB21 FX material '{material_name}' has no usable colorMap")
+        emitted_material_name = namespace_fx_surface_material_name(material_name)
+        emitted_image_name = BO3_FX_SURFACE_IMAGE_REMAP.setdefault(color_map, namespace_fx_surface_image_name(color_map))
+        BO3_FX_SURFACE_MATERIAL_REMAP[material_name] = emitted_material_name
         material_entries.append(
             {
-                "name": material_name,
+                "name": emitted_material_name,
                 "gdf": "material.gdf",
-                "props": {"colorMap": color_map},
+                "props": {"colorMap": emitted_image_name},
             }
         )
-        material_meta[material_name] = {
-            "materialName": material_name,
+        material_meta[emitted_material_name] = {
+            "materialName": emitted_material_name,
+            "sourceMaterialName": material_name,
             "materialType": str(props.get("materialType", "")).strip(),
-            "colorMap": color_map,
+            "colorMap": emitted_image_name,
+            "sourceColorMap": color_map,
             "sourceGdt": str(resolved.get("source_gdt", "")),
             "hb21MaterialProps": {str(key): str(value) for key, value in props.items()},
         }
-        if color_map not in image_names:
-            image_names.append(color_map)
+        if emitted_image_name not in image_names:
+            image_names.append(emitted_image_name)
 
     for image_name in image_names:
-        resolved = resolve_hb21_entry(image_name, index)
+        source_image_name = next(
+            (src for src, emitted in BO3_FX_SURFACE_IMAGE_REMAP.items() if emitted == image_name),
+            image_name,
+        )
+        resolved = resolve_hb21_entry(source_image_name, index)
         if str(resolved.get("gdf", "")).lower() != "image.gdf":
-            raise RuntimeError(f"HB21 FX image '{image_name}' did not resolve to image.gdf")
+            raise RuntimeError(f"HB21 FX image '{source_image_name}' did not resolve to image.gdf")
         props = resolved.get("props", {})
         assert isinstance(props, dict)
         base_image = str(props.get("baseImage", "")).strip()
         if not base_image:
-            raise RuntimeError(f"HB21 FX image '{image_name}' missing baseImage")
+            raise RuntimeError(f"HB21 FX image '{source_image_name}' missing baseImage")
         src, relative = resolve_hb21_file_path(base_image)
         dst = staged_root / Path(relative)
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -5113,6 +5185,8 @@ def build_bo3_fx_surface_bundle(material_names: list[str]) -> tuple[Path, dict[s
             }
         )
         image_meta_by_name[image_name] = {
+            "sourceImageName": source_image_name,
+            "sourceImagePath": str(src),
             "hb21ImageProps": {str(key): str(value) for key, value in props.items()},
             "baseImageRelative": relative,
             "sourceGdt": str(resolved.get("source_gdt", "")),
@@ -5123,6 +5197,10 @@ def build_bo3_fx_surface_bundle(material_names: list[str]) -> tuple[Path, dict[s
         image_meta = image_meta_by_name.get(color_map, {})
         meta["hb21ImageProps"] = dict(image_meta.get("hb21ImageProps", {}))
         meta["baseImageRelative"] = str(image_meta.get("baseImageRelative", ""))
+        meta["emittedMaterialName"] = material_name
+        meta["emittedImageName"] = color_map
+        meta["sourceImageName"] = str(image_meta.get("sourceImageName", meta.get("sourceColorMap", "")))
+        meta["sourceImagePath"] = str(image_meta.get("sourceImagePath", ""))
 
     write_json(manifest_dir / "materials.json", material_entries)
     write_json(manifest_dir / "images.json", image_entries)
@@ -5479,20 +5557,8 @@ def stage_bo3_servant_fx_surfaces() -> None:
     )
 
     translation = json.loads(FX_SURFACE_TRANSLATION_REPORT.read_text(encoding="utf-8"))
-    translated_root = FX_SURFACE_PROJECT_ROOT / "zone_raw" / FX_SURFACE_PROJECT_NAME
-    translated_images = translated_root / "images"
-    staged_images = sorted(
-        {
-            str(item.get("image", "")).strip()
-            for item in translation.get("staged_images", [])
-            if str(item.get("image", "")).strip()
-        }
-    )
+    staged_images = stage_namespaced_bo3_fx_surface_images(material_meta)
     for image_name in staged_images:
-        src = translated_images / f"{image_name}.iwi"
-        if not src.exists():
-            raise FileNotFoundError(f"Translated FX image missing: {src}")
-        shutil.copy2(src, IMAGES_DIR / src.name)
         STAGED_FX_IMAGE_NAMES.append(image_name)
         if image_name not in STAGED_IMAGE_NAMES:
             STAGED_IMAGE_NAMES.append(image_name)
@@ -5503,6 +5569,12 @@ def stage_bo3_servant_fx_surfaces() -> None:
         normalize_t6_iwi_headers(header_fix_images)
 
     build_safe_bo2_fx_materials(material_meta)
+    for fx_name in STAGED_FX_NAMES:
+        if not fx_name.startswith("zombie/"):
+            continue
+        fx_path = FX_DIR / "zombie" / f"{fx_name.split('/', 1)[1]}.efx"
+        if fx_path.exists():
+            rewrite_bo3_servant_raw_fx(fx_path)
     stage_passthrough_fx_material_images(passthrough_material_names)
     stage_fx_runtime_support_images()
     STAGED_FX_IMAGE_NAMES = sorted(set(STAGED_FX_IMAGE_NAMES))
