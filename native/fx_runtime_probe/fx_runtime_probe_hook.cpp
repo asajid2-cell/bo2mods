@@ -33,6 +33,10 @@ constexpr DWORD kConsumerImageClassMapRva = 0x003446B6;
 constexpr DWORD kConsumerAssetClassLookupRva = 0x00341C36;
 constexpr DWORD kConsumerRenderTableRva = 0x0037C239;
 constexpr DWORD kConsumerSubmitFlagsRva = 0x001F1C30;
+constexpr DWORD kConsumerRenderTableZeroPathRva = 0x0037C245;
+constexpr DWORD kConsumerRenderTableCompareRva = 0x0037C248;
+constexpr DWORD kConsumerRenderTableMatchBranchRva = 0x0037C24A;
+constexpr DWORD kConsumerRenderTableNonZeroBranchRva = 0x0037C2BB;
 constexpr int kConsumerStepTraceInstructions = 12;
 constexpr DWORD kTouchTraceDelayMs = 15000;
 constexpr size_t kTouchTraceChunkSize = 0x10000;
@@ -1227,12 +1231,6 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_register_block(ctx);
         log_bytes_around("touch_trace_eip bytes", ctx.Eip);
         log_backtrace_frames("touch_trace", 0, 10);
-        const char* consumer_label = consumer_label_for_addr(static_cast<uintptr_t>(ctx.Eip));
-        if (consumer_label)
-        {
-            begin_step_trace_locked(GetCurrentThreadId(), consumer_label, 0, join_touch_targets(page_it->second), static_cast<uintptr_t>(ctx.Eip), kConsumerStepTraceInstructions);
-            ctx.EFlags |= 0x100u;
-        }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
@@ -1276,10 +1274,17 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_pointer_info("ebp", ctx.Ebp);
         log_pointer_info("esp", ctx.Esp);
 
-        if (std::strncmp(point.label.c_str(), "consumer_", 9) == 0)
+        if (point.label == "consumer_render_table")
         {
-            begin_step_trace_locked(GetCurrentThreadId(), point.label.c_str(), point.trace_id, point.path, point.addr, kConsumerStepTraceInstructions);
-            ctx.EFlags |= 0x100u;
+            arm_exec_trace_locked("consumer_render_table_zero_path", rva_to_va(kConsumerRenderTableZeroPathRva), point.trace_id, point.path);
+            arm_exec_trace_locked("consumer_render_table_compare", rva_to_va(kConsumerRenderTableCompareRva), point.trace_id, point.path);
+            arm_exec_trace_locked("consumer_render_table_match_branch", rva_to_va(kConsumerRenderTableMatchBranchRva), point.trace_id, point.path);
+            arm_exec_trace_locked("consumer_render_table_nonzero_branch", rva_to_va(kConsumerRenderTableNonZeroBranchRva), point.trace_id, point.path);
+            log_line("branch_trace_request kind=consumer_render_table target1=0x%08lX target2=0x%08lX target3=0x%08lX target4=0x%08lX",
+                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableZeroPathRva)),
+                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableCompareRva)),
+                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableMatchBranchRva)),
+                static_cast<unsigned long>(rva_to_va(kConsumerRenderTableNonZeroBranchRva)));
         }
 
         if (point.label == "special_open_success_class1_continue")
