@@ -39,6 +39,9 @@ constexpr DWORD kConsumerRenderTableMatchBranchRva = 0x0037C24A;
 constexpr DWORD kConsumerRenderTableNonZeroBranchRva = 0x0037C2BB;
 constexpr int kConsumerStepTraceInstructions = 12;
 constexpr DWORD kTouchTraceDelayMs = 15000;
+constexpr DWORD kConsumerArmInitialDelayMs = 5000;
+constexpr DWORD kConsumerArmRetryDelayMs = 5000;
+constexpr int kConsumerArmMaxAttempts = 4;
 constexpr size_t kTouchTraceChunkSize = 0x10000;
 constexpr size_t kTouchTraceMaxPages = 128;
 
@@ -162,7 +165,7 @@ HANDLE WINAPI hook_create_file_a(LPCSTR file_name, DWORD desired_access, DWORD s
 HANDLE WINAPI hook_create_file_w(LPCWSTR file_name, DWORD desired_access, DWORD share_mode, LPSECURITY_ATTRIBUTES sa, DWORD creation_disposition, DWORD flags, HANDLE template_file);
 BOOL WINAPI hook_read_file(HANDLE handle, LPVOID buffer, DWORD bytes_to_read, LPDWORD bytes_read, LPOVERLAPPED overlapped);
 BOOL WINAPI hook_close_handle(HANDLE handle);
-void arm_consumer_exec_traces();
+int arm_consumer_exec_traces();
 
 std::string narrow_from_wide(const std::wstring& value)
 {
@@ -755,6 +758,26 @@ DWORD WINAPI touch_trace_thread(void*)
     return 0;
 }
 
+DWORD WINAPI consumer_arm_thread(void*)
+{
+    log_line("consumer_arm_thread delay_ms=%lu retry_ms=%lu max_attempts=%d",
+        static_cast<unsigned long>(kConsumerArmInitialDelayMs),
+        static_cast<unsigned long>(kConsumerArmRetryDelayMs),
+        kConsumerArmMaxAttempts);
+    Sleep(kConsumerArmInitialDelayMs);
+    for (int attempt = 1; attempt <= kConsumerArmMaxAttempts; ++attempt)
+    {
+        enumerate_modules();
+        const int armed = arm_consumer_exec_traces();
+        log_line("consumer_arm_attempt attempt=%d armed=%d", attempt, armed);
+        if (armed > 0)
+            break;
+        if (attempt < kConsumerArmMaxAttempts)
+            Sleep(kConsumerArmRetryDelayMs);
+    }
+    return 0;
+}
+
 uintptr_t rva_to_va(DWORD rva)
 {
     return g_main_base + rva;
@@ -865,7 +888,7 @@ void arm_exec_trace(const char* label, uintptr_t addr, unsigned long long trace_
     arm_exec_trace_locked(label, addr, trace_id, path, max_hits);
 }
 
-void arm_consumer_exec_traces()
+int arm_consumer_exec_traces()
 {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     struct ConsumerSpec
@@ -883,6 +906,7 @@ void arm_consumer_exec_traces()
         {"consumer_submit_flags", kConsumerSubmitFlagsRva, {0xF7, 0x86, 0x20, 0xFF, 0xFF, 0xFF, 0x00, 0x20, 0x00, 0x00}, 10},
     };
 
+    int armed_count = 0;
     for (const auto& spec : specs)
     {
         const uintptr_t addr = rva_to_va(spec.rva);
@@ -895,7 +919,9 @@ void arm_consumer_exec_traces()
             continue;
         }
         arm_exec_trace_locked(spec.label, addr, 0, "consumer_probe");
+        armed_count += 1;
     }
+    return armed_count;
 }
 
 void arm_branch_traces_after_return(bool success, unsigned long long trace_id, const std::string& path)
@@ -1407,7 +1433,6 @@ DWORD WINAPI init_thread(void*)
 
     AddVectoredExceptionHandler(1, probe_veh);
     install_file_hooks();
-    arm_consumer_exec_traces();
     log_line("guard_watches=disabled");
     HANDLE touch_thread = CreateThread(nullptr, 0, touch_trace_thread, nullptr, 0, nullptr);
     if (touch_thread)
@@ -1418,6 +1443,16 @@ DWORD WINAPI init_thread(void*)
     else
     {
         log_line("touch_trace_thread_failed gle=%lu", GetLastError());
+    }
+    HANDLE consumer_thread = CreateThread(nullptr, 0, consumer_arm_thread, nullptr, 0, nullptr);
+    if (consumer_thread)
+    {
+        log_line("consumer_arm_thread_started");
+        CloseHandle(consumer_thread);
+    }
+    else
+    {
+        log_line("consumer_arm_thread_failed gle=%lu", GetLastError());
     }
     log_line("hook_install_complete installed=0");
     return 0;
