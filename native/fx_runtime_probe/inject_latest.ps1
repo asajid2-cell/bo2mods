@@ -9,9 +9,25 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $binDir = Join-Path $root "bin\x86\$Configuration"
-$dll = Get-ChildItem $binDir -Filter "fx_runtime_probe_hook*.dll" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+$dll = $null
 $injector = Join-Path $binDir "fx_runtime_probe_injector.exe"
 $latestBuildJson = Join-Path $binDir "fx_runtime_probe_latest_build.json"
+
+if (Test-Path $latestBuildJson) {
+    try {
+        $meta = Get-Content $latestBuildJson -Raw | ConvertFrom-Json
+        if ($meta.dll_path -and (Test-Path $meta.dll_path)) {
+            $dll = (Resolve-Path $meta.dll_path).Path
+        }
+    } catch {
+    }
+}
+
+if (-not $dll) {
+    $dll = Get-ChildItem $binDir -Filter "fx_runtime_probe_hook*.dll" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
 
 if (-not $dll -or -not (Test-Path $injector)) {
     throw "Missing built binaries. Run build_x86.ps1 first."
