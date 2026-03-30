@@ -37,9 +37,17 @@ constexpr DWORD kConsumerRenderTableZeroPathRva = 0x0037C245;
 constexpr DWORD kConsumerRenderTableCompareRva = 0x0037C248;
 constexpr DWORD kConsumerRenderTableMatchBranchRva = 0x0037C24A;
 constexpr DWORD kConsumerRenderTableNonZeroBranchRva = 0x0037C2BB;
+constexpr DWORD kXanimResolverCompareRva = 0x236D85DD;
+constexpr DWORD kXanimResolverNullBranchFallthroughRva = 0x236D8640;
+constexpr DWORD kXanimResolverNullBranchTakenRva = 0x236D869A;
 constexpr int kConsumerStepTraceInstructions = 12;
+constexpr int kXanimStepTraceInstructions = 24;
+constexpr int kXanimFallthroughStepTraceInstructions = 96;
+constexpr int kXanimPostFallthroughStepTraceInstructions = 96;
 constexpr DWORD kTouchTraceDelayMs = 15000;
 constexpr DWORD kTouchTraceDelayMsOpacityFocus = 2000;
+constexpr DWORD kXanimResolverArmRetryDelayMs = 500;
+constexpr int kXanimResolverArmMaxAttempts = 6;
 constexpr DWORD kConsumerArmInitialDelayMs = 5000;
 constexpr DWORD kConsumerArmRetryDelayMs = 5000;
 constexpr int kConsumerArmMaxAttempts = 4;
@@ -50,6 +58,7 @@ enum class ProbeMode
 {
     Safe,
     RenderOpacityFocus,
+    XanimFocus,
 };
 
 struct SavedRegisters
@@ -132,6 +141,7 @@ struct StepTraceState
     std::string path;
     uintptr_t last_eip {};
     int steps_remaining {};
+    int total_steps {};
 };
 
 HMODULE g_self = nullptr;
@@ -145,12 +155,15 @@ std::atomic<unsigned long> g_log_seq {0};
 std::atomic<unsigned long long> g_next_trace_id {1};
 std::atomic<bool> g_opacity_focus_consumers_armed {false};
 std::atomic<bool> g_opacity_focus_rearm_pending {false};
+std::atomic<bool> g_xanim_focus_rearm_pending {false};
+std::atomic<bool> g_xanim_post_fallthrough_trace_started {false};
 
 std::vector<ModuleInfoLite> g_modules;
 std::unordered_set<std::string> g_watch_images;
 std::unordered_set<std::string> g_watch_files;
 std::unordered_set<std::string> g_watch_materials;
 std::unordered_set<std::string> g_watch_techsets;
+std::unordered_set<std::string> g_watch_xanims;
 
 std::unordered_map<uintptr_t, AssetTrace> g_active_handles;
 std::unordered_map<DWORD, ReturnTraceState> g_return_states;
@@ -178,6 +191,8 @@ BOOL WINAPI hook_read_file(HANDLE handle, LPVOID buffer, DWORD bytes_to_read, LP
 BOOL WINAPI hook_close_handle(HANDLE handle);
 int arm_consumer_exec_traces();
 void arm_exec_trace_locked(const char* label, uintptr_t addr, unsigned long long trace_id, const std::string& path, int max_hits);
+bool region_is_readable(const MEMORY_BASIC_INFORMATION& mbi);
+const char* module_name_for_addr(uintptr_t value, unsigned long* rva_out);
 
 std::string narrow_from_wide(const std::wstring& value)
 {
@@ -237,6 +252,40 @@ unsigned long main_module_rva(uintptr_t addr)
     return static_cast<unsigned long>(addr - g_main_base);
 }
 
+bool is_probe_module_addr(uintptr_t addr)
+{
+    if (!g_self)
+        return false;
+    for (const auto& module : g_modules)
+    {
+        if (module.base != g_self)
+            continue;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(module.base);
+        return addr >= base && addr < base + module.size;
+    }
+
+    const uintptr_t base = reinterpret_cast<uintptr_t>(g_self);
+    MEMORY_BASIC_INFORMATION mbi {};
+    if (!VirtualQuery(reinterpret_cast<void*>(base), &mbi, sizeof(mbi)))
+        return false;
+    return addr >= base && addr < base + mbi.RegionSize;
+}
+
+bool is_runtime_candidate_code_addr(uintptr_t addr)
+{
+    unsigned long rva = 0;
+    const char* module_name = module_name_for_addr(addr, &rva);
+    if (is_probe_module_addr(addr))
+        return false;
+    if (std::strcmp(module_name, "ntdll.dll") == 0)
+        return false;
+    if (std::strcmp(module_name, "kernel32.dll") == 0)
+        return false;
+    if (std::strcmp(module_name, "kernelbase.dll") == 0)
+        return false;
+    return true;
+}
+
 bool path_is_watched_file(const std::string& path)
 {
     const std::string file_name = base_name_of(to_lower_copy(path));
@@ -285,6 +334,29 @@ bool is_opacity_focus_image(const std::string& image)
     return t == "bo3rfx_fxt_light_phosphorous" || t == "fxt_light_phosphorous";
 }
 
+bool is_xanim_focus_target(const std::string& label, const std::string& text)
+{
+    return to_lower_copy(label) == "xanim";
+}
+
+void seed_default_xanim_watchlist()
+{
+    if (!g_watch_xanims.empty())
+        return;
+
+    g_watch_xanims.insert("vm_zod_id_gun_idle");
+    g_watch_xanims.insert("vm_zod_id_gun_first_raise");
+    g_watch_xanims.insert("vm_zod_id_gun_fire");
+    g_watch_xanims.insert("viewmodel_zomb_mg08_idle");
+    g_watch_xanims.insert("viewmodel_zomb_mg08_first_raise");
+    g_watch_xanims.insert("viewmodel_zomb_mg08_fire");
+    g_watch_xanims.insert("viewmodel_zomb_mg08_pullout");
+    g_watch_xanims.insert("viewmodel_zomb_mg08_putaway");
+    g_watch_xanims.insert("viewmodel_minigun_t6_idle");
+    g_watch_xanims.insert("viewmodel_minigun_t6_fire");
+    g_watch_xanims.insert("viewmodel_minigun_t6_pullout");
+}
+
 std::string module_relative_path(const wchar_t* suffix)
 {
     wchar_t self_path[MAX_PATH] {};
@@ -301,6 +373,8 @@ const char* probe_mode_name()
 {
     switch (g_probe_mode)
     {
+    case ProbeMode::XanimFocus:
+        return "xanim_focus";
     case ProbeMode::RenderOpacityFocus:
         return "render_opacity_focus";
     case ProbeMode::Safe:
@@ -311,7 +385,11 @@ const char* probe_mode_name()
 
 DWORD touch_trace_delay_ms()
 {
-    return g_probe_mode == ProbeMode::RenderOpacityFocus ? kTouchTraceDelayMsOpacityFocus : kTouchTraceDelayMs;
+    if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+        return kTouchTraceDelayMsOpacityFocus;
+    if (g_probe_mode == ProbeMode::XanimFocus)
+        return 2000;
+    return kTouchTraceDelayMs;
 }
 
 DWORD consumer_arm_initial_delay_ms()
@@ -443,6 +521,156 @@ const char* module_name_for_addr(uintptr_t value, unsigned long* rva_out = nullp
     return "<unknown>";
 }
 
+std::string safe_read_ascii_string(uintptr_t addr, size_t max_chars = 96)
+{
+    if (!addr || max_chars == 0)
+        return {};
+
+    MEMORY_BASIC_INFORMATION mbi {};
+    if (!VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)))
+        return {};
+    if (!region_is_readable(mbi))
+        return {};
+
+    std::string out;
+    out.reserve(max_chars);
+    for (size_t i = 0; i < max_chars; ++i)
+    {
+        char c = 0;
+        if (!safe_copy_memory(addr + i, &c, sizeof(c)))
+            break;
+        if (c == '\0')
+            break;
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc > 0x7E)
+            return {};
+        out.push_back(c);
+    }
+
+    if (out.size() < 3)
+        return {};
+    return out;
+}
+
+void log_string_if_present(const char* name, uintptr_t addr)
+{
+    const std::string text = safe_read_ascii_string(addr);
+    if (!text.empty())
+        log_line("%s str=%s", name, text.c_str());
+}
+
+void log_stack_string_candidates(const CONTEXT& ctx, int slots = 8)
+{
+    if (!ctx.Esp)
+        return;
+
+    for (int i = 0; i < slots; ++i)
+    {
+        const uintptr_t slot_addr = ctx.Esp + static_cast<uintptr_t>(i * sizeof(DWORD));
+        DWORD value = 0;
+        if (!safe_copy_memory(slot_addr, &value, sizeof(value)))
+            continue;
+        const std::string text = safe_read_ascii_string(value);
+        if (text.empty())
+            continue;
+        log_line("stack_str slot=%d stack=0x%08lX ptr=0x%08lX text=%s",
+            i,
+            static_cast<unsigned long>(slot_addr),
+            static_cast<unsigned long>(value),
+            text.c_str());
+    }
+}
+
+void log_xanim_focus_context(const CONTEXT& ctx, const std::vector<size_t>& indices)
+{
+    std::string target_list;
+    for (size_t i = 0; i < indices.size(); ++i)
+    {
+        if (indices[i] >= g_touch_targets.size())
+            continue;
+        if (!target_list.empty())
+            target_list += ",";
+        target_list += g_touch_targets[indices[i]].text;
+    }
+    log_line("xanim_focus targets=%s", target_list.c_str());
+    log_pointer_info("xanim_eax", ctx.Eax);
+    log_pointer_info("xanim_ebx", ctx.Ebx);
+    log_pointer_info("xanim_ecx", ctx.Ecx);
+    log_pointer_info("xanim_edx", ctx.Edx);
+    log_pointer_info("xanim_esi", ctx.Esi);
+    log_pointer_info("xanim_edi", ctx.Edi);
+    log_pointer_info("xanim_ebp", ctx.Ebp);
+    log_pointer_info("xanim_esp", ctx.Esp);
+    log_string_if_present("xanim_eax", ctx.Eax);
+    log_string_if_present("xanim_ebx", ctx.Ebx);
+    log_string_if_present("xanim_ecx", ctx.Ecx);
+    log_string_if_present("xanim_edx", ctx.Edx);
+    log_string_if_present("xanim_esi", ctx.Esi);
+    log_string_if_present("xanim_edi", ctx.Edi);
+    log_string_if_present("xanim_ebp", ctx.Ebp);
+    log_stack_string_candidates(ctx, 10);
+}
+
+void log_xanim_resolver_state(const CONTEXT& ctx)
+{
+    DWORD query2 = 0;
+    DWORD query3 = 0;
+    DWORD cand0 = 0;
+    DWORD cand1 = 0;
+    DWORD cand2 = 0;
+    DWORD cand3 = 0;
+    safe_copy_memory(ctx.Edx + 8, &query2, sizeof(query2));
+    safe_copy_memory(ctx.Edx + 0xC, &query3, sizeof(query3));
+    safe_copy_memory(ctx.Eax + 8, &cand0, sizeof(cand0));
+    safe_copy_memory(ctx.Eax + 0xC, &cand1, sizeof(cand1));
+    safe_copy_memory(ctx.Eax + 0x10, &cand2, sizeof(cand2));
+    safe_copy_memory(ctx.Eax + 0x14, &cand3, sizeof(cand3));
+
+    const bool match0 = ctx.Ebx == cand0;
+    const bool match1 = ctx.Edi == cand1;
+    const bool match2 = query2 == cand2;
+    const bool match3 = query3 == cand3;
+    const bool full_match = match0 && match1 && match2 && match3;
+
+    log_line("xanim_resolver_state query0=0x%08lX query1=0x%08lX query2=0x%08lX query3=0x%08lX cand0=0x%08lX cand1=0x%08lX cand2=0x%08lX cand3=0x%08lX match0=%d match1=%d match2=%d match3=%d full_match=%d",
+        static_cast<unsigned long>(ctx.Ebx),
+        static_cast<unsigned long>(ctx.Edi),
+        static_cast<unsigned long>(query2),
+        static_cast<unsigned long>(query3),
+        static_cast<unsigned long>(cand0),
+        static_cast<unsigned long>(cand1),
+        static_cast<unsigned long>(cand2),
+        static_cast<unsigned long>(cand3),
+        match0 ? 1 : 0,
+        match1 ? 1 : 0,
+        match2 ? 1 : 0,
+        match3 ? 1 : 0,
+        full_match ? 1 : 0);
+
+    log_pointer_info("xanim_resolver_edx", ctx.Edx);
+    log_pointer_info("xanim_resolver_eax", ctx.Eax);
+    log_pointer_info("xanim_resolver_eax_plus_4", ctx.Eax + 4);
+    log_pointer_info("xanim_resolver_eax_plus_8", ctx.Eax + 8);
+    log_string_if_present("xanim_resolver_eax_str", ctx.Eax);
+    log_string_if_present("xanim_resolver_eax_plus_4_str", ctx.Eax + 4);
+    log_stack_string_candidates(ctx, 12);
+}
+
+void log_xanim_resolver_branch_state(const char* label, const CONTEXT& ctx)
+{
+    const std::string ebx_text = safe_read_ascii_string(ctx.Ebx);
+    const std::string eax_text = safe_read_ascii_string(ctx.Eax);
+    const std::string edx_text = safe_read_ascii_string(ctx.Edx);
+    log_line("xanim_resolver_branch label=%s ebx=0x%08lX eax=0x%08lX edx=0x%08lX ebx_str=%s eax_str=%s edx_str=%s",
+        label ? label : "<null>",
+        static_cast<unsigned long>(ctx.Ebx),
+        static_cast<unsigned long>(ctx.Eax),
+        static_cast<unsigned long>(ctx.Edx),
+        ebx_text.empty() ? "<none>" : ebx_text.c_str(),
+        eax_text.empty() ? "<none>" : eax_text.c_str(),
+        edx_text.empty() ? "<none>" : edx_text.c_str());
+}
+
 void log_backtrace_frames(const char* prefix, unsigned skip = 0, unsigned max_frames = 8)
 {
     void* frames_raw[32] {};
@@ -542,6 +770,8 @@ void load_probe_mode()
 
     if (value == "render_opacity_focus")
         g_probe_mode = ProbeMode::RenderOpacityFocus;
+    else if (value == "xanim_focus")
+        g_probe_mode = ProbeMode::XanimFocus;
     else
         g_probe_mode = ProbeMode::Safe;
 
@@ -585,6 +815,8 @@ void load_watchlist()
             g_watch_materials.insert(value);
         else if (key == "techset")
             g_watch_techsets.insert(value);
+        else if (key == "xanim")
+            g_watch_xanims.insert(value);
     }
     std::fclose(file);
     log_line("watchlist_loaded path=%s entries=%u", watch_path.c_str(), count);
@@ -592,6 +824,9 @@ void load_watchlist()
     g_watch_images.insert("fxt_debris_clump_dirt");
     g_watch_images.insert("fxt_light_glow_square");
     g_watch_images.insert("fxt_light_phosphorous");
+
+    if (g_probe_mode == ProbeMode::XanimFocus)
+        seed_default_xanim_watchlist();
 }
 
 bool patch_imports_in_module(HMODULE module, const char* target_name, void* replacement, void** original_out)
@@ -694,7 +929,7 @@ void install_file_hooks()
 std::vector<std::pair<std::string, std::string>> build_touch_needles()
 {
     std::vector<std::pair<std::string, std::string>> needles;
-    needles.reserve(g_watch_images.size() * 2 + g_watch_materials.size() + g_watch_techsets.size());
+    needles.reserve(g_watch_images.size() * 2 + g_watch_materials.size() + g_watch_techsets.size() + g_watch_xanims.size());
 
     for (const auto& image : g_watch_images)
     {
@@ -706,6 +941,8 @@ std::vector<std::pair<std::string, std::string>> build_touch_needles()
         needles.emplace_back("material", material);
     for (const auto& techset : g_watch_techsets)
         needles.emplace_back("techset", techset);
+    for (const auto& xanim : g_watch_xanims)
+        needles.emplace_back("xanim", xanim);
 
     if (g_probe_mode == ProbeMode::RenderOpacityFocus)
     {
@@ -714,6 +951,17 @@ std::vector<std::pair<std::string, std::string>> build_touch_needles()
         for (const auto& needle : needles)
         {
             if (is_opacity_focus_target(needle.first, needle.second))
+                filtered.push_back(needle);
+        }
+        return filtered;
+    }
+    if (g_probe_mode == ProbeMode::XanimFocus)
+    {
+        std::vector<std::pair<std::string, std::string>> filtered;
+        filtered.reserve(needles.size());
+        for (const auto& needle : needles)
+        {
+            if (is_xanim_focus_target(needle.first, needle.second))
                 filtered.push_back(needle);
         }
         return filtered;
@@ -855,7 +1103,7 @@ DWORD WINAPI touch_trace_thread(void*)
     enumerate_modules();
     scan_touch_targets();
     arm_touch_trace_pages();
-    if (g_probe_mode != ProbeMode::RenderOpacityFocus)
+    if (g_probe_mode == ProbeMode::Safe)
         arm_consumer_exec_traces();
     g_touch_trace_complete = true;
     return 0;
@@ -932,6 +1180,46 @@ DWORD WINAPI opacity_focus_fallback_thread(void*)
     return 0;
 }
 
+bool arm_xanim_focus_resolver_locked(unsigned long long trace_id, const std::string& path)
+{
+    const uintptr_t addr = rva_to_va(kXanimResolverCompareRva);
+    if (!is_runtime_candidate_code_addr(addr))
+        return false;
+
+    arm_exec_trace_locked("xanim_resolver_compare", addr, trace_id, path, 48);
+    auto it = g_exec_traces.find(addr);
+    return it != g_exec_traces.end() && it->second.armed;
+}
+
+DWORD WINAPI xanim_focus_arm_thread(void*)
+{
+    log_line("xanim_focus_arm_thread retry_ms=%lu max_attempts=%d",
+        static_cast<unsigned long>(kXanimResolverArmRetryDelayMs),
+        kXanimResolverArmMaxAttempts);
+    for (int attempt = 1; attempt <= kXanimResolverArmMaxAttempts; ++attempt)
+    {
+        enumerate_modules();
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        const unsigned long long trace_id = g_next_trace_id++;
+        const bool armed = arm_xanim_focus_resolver_locked(trace_id, "xanim_focus_bootstrap");
+        const uintptr_t addr = rva_to_va(kXanimResolverCompareRva);
+        unsigned long rva = 0;
+        const char* module_name = module_name_for_addr(addr, &rva);
+        log_line("xanim_focus_bootstrap attempt=%d armed=%d addr=0x%08lX module=%s rva=0x%08lX trace=%llu",
+            attempt,
+            armed ? 1 : 0,
+            static_cast<unsigned long>(addr),
+            module_name,
+            rva,
+            trace_id);
+        if (armed)
+            return 0;
+        if (attempt < kXanimResolverArmMaxAttempts)
+            Sleep(kXanimResolverArmRetryDelayMs);
+    }
+    return 0;
+}
+
 std::string join_touch_targets(const std::vector<size_t>& indices)
 {
     std::string out;
@@ -962,6 +1250,7 @@ void begin_step_trace_locked(DWORD thread_id, const char* label, unsigned long l
     state.path = path;
     state.last_eip = start_eip;
     state.steps_remaining = steps;
+    state.total_steps = steps;
     log_line("step_trace_begin label=%s thread=%lu trace=%llu start=0x%08lX steps=%d path=%s",
         label,
         static_cast<unsigned long>(thread_id),
@@ -1041,6 +1330,26 @@ DWORD WINAPI opacity_focus_rearm_thread(void*)
             it->second.max_hits);
     }
     g_opacity_focus_rearm_pending = false;
+    return 0;
+}
+
+DWORD WINAPI xanim_focus_rearm_thread(void* param)
+{
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(param);
+    Sleep(150);
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    auto it = g_exec_traces.find(addr);
+    if (it != g_exec_traces.end() && !it->second.armed && it->second.hits < it->second.max_hits)
+    {
+        patch_byte(it->second.addr, 0xCC, nullptr);
+        it->second.armed = true;
+        log_line("xanim_focus_rearm label=%s addr=0x%08lX hit=%d max_hits=%d",
+            it->second.label.c_str(),
+            static_cast<unsigned long>(it->second.addr),
+            it->second.hits,
+            it->second.max_hits);
+    }
+    g_xanim_focus_rearm_pending = false;
     return 0;
 }
 
@@ -1485,6 +1794,7 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             ctx.Eip,
             static_cast<unsigned>(page_it->second.size()));
         bool should_arm_opacity_focus = false;
+        bool xanim_focus_hit = false;
         for (size_t index : page_it->second)
         {
             if (index >= g_touch_targets.size())
@@ -1497,15 +1807,29 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                 target.hit ? 1 : 0);
             if (g_probe_mode == ProbeMode::RenderOpacityFocus && is_opacity_focus_target(target.label, target.text))
                 should_arm_opacity_focus = true;
+            if (g_probe_mode == ProbeMode::XanimFocus && is_xanim_focus_target(target.label, target.text))
+                xanim_focus_hit = true;
         }
         log_register_block(ctx);
         log_bytes_around("touch_trace_eip bytes", ctx.Eip);
-        log_backtrace_frames("touch_trace", 0, 10);
+        log_backtrace_frames(g_probe_mode == ProbeMode::XanimFocus ? "xanim_touch" : "touch_trace", 0, g_probe_mode == ProbeMode::XanimFocus ? 14 : 10);
+        if (xanim_focus_hit)
+            log_xanim_focus_context(ctx, page_it->second);
         if (should_arm_opacity_focus)
         {
             const unsigned long long trace_id = g_next_trace_id++;
             const std::string path = "opacity_focus:" + join_touch_targets(page_it->second);
             arm_opacity_focus_consumers_locked(trace_id, path);
+        }
+        if (xanim_focus_hit)
+        {
+            const uintptr_t arm_addr = static_cast<uintptr_t>(ctx.Eip);
+            unsigned long arm_rva = 0;
+            const char* arm_module = module_name_for_addr(arm_addr, &arm_rva);
+            log_line("xanim_focus_touch_only addr=0x%08lX module=%s rva=0x%08lX reason=bootstrap_resolver_active",
+                static_cast<unsigned long>(arm_addr),
+                arm_module,
+                arm_rva);
         }
         g_tls_in_veh = false;
         return EXCEPTION_CONTINUE_EXECUTION;
@@ -1515,18 +1839,24 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
     {
         g_tls_in_veh = true;
         std::lock_guard<std::mutex> lock(g_state_mutex);
-        auto it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip - 1));
-        if (it == g_exec_traces.end() || !it->second.armed)
-            it = g_exec_traces.find(static_cast<uintptr_t>(ctx.Eip));
-        if (it == g_exec_traces.end() || !it->second.armed)
+        const uintptr_t trap_addr_minus_one = static_cast<uintptr_t>(ctx.Eip - 1);
+        const uintptr_t trap_addr_exact = static_cast<uintptr_t>(ctx.Eip);
+        auto it = g_exec_traces.find(trap_addr_minus_one);
+        if (it == g_exec_traces.end())
+            it = g_exec_traces.find(trap_addr_exact);
+        if (it == g_exec_traces.end())
         {
             g_tls_in_veh = false;
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
         ExecTracePoint& point = it->second;
-        patch_byte(point.addr, point.original, nullptr);
-        point.armed = false;
+        const bool late_concurrent_hit = !point.armed;
+        if (!late_concurrent_hit)
+        {
+            patch_byte(point.addr, point.original, nullptr);
+            point.armed = false;
+        }
         point.hits += 1;
         g_tls_rearm_addr = 0;
         bool should_rearm = point.max_hits > 1 && point.hits < point.max_hits;
@@ -1534,7 +1864,13 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             g_probe_mode == ProbeMode::RenderOpacityFocus &&
             point.label == "consumer_render_table" &&
             should_rearm;
+        const bool delayed_xanim_rearm =
+            g_probe_mode == ProbeMode::XanimFocus &&
+            point.label == "xanim_resolver_compare" &&
+            should_rearm;
         if (delayed_opacity_rearm)
+            should_rearm = false;
+        if (delayed_xanim_rearm)
             should_rearm = false;
         if (should_rearm)
         {
@@ -1543,8 +1879,8 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         }
         ctx.Eip = static_cast<DWORD>(point.addr);
 
-        log_line("exec_trace_hit label=%s hit=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
-            point.label.c_str(), point.hits, static_cast<unsigned long>(point.addr), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str());
+        log_line("exec_trace_hit label=%s hit=%d late=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
+            point.label.c_str(), point.hits, late_concurrent_hit ? 1 : 0, static_cast<unsigned long>(point.addr), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str());
         log_register_block(ctx);
         log_bytes_around("eip bytes", point.addr);
         log_pointer_info("eax", ctx.Eax);
@@ -1556,6 +1892,10 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         log_pointer_info("ebp", ctx.Ebp);
         log_pointer_info("esp", ctx.Esp);
         log_consumer_render_state(point.label.c_str(), ctx);
+        if (point.label == "xanim_resolver_compare")
+            log_xanim_resolver_state(ctx);
+        else if (point.label == "xanim_resolver_null_branch_fallthrough" || point.label == "xanim_resolver_null_branch_taken")
+            log_xanim_resolver_branch_state(point.label.c_str(), ctx);
 
         if (point.label == "consumer_render_table")
         {
@@ -1584,6 +1924,45 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                     g_opacity_focus_rearm_pending = false;
                     log_line("opacity_focus_rearm_thread_failed gle=%lu", GetLastError());
                 }
+            }
+        }
+        else if (point.label == "xanim_resolver_compare" && delayed_xanim_rearm && !g_xanim_focus_rearm_pending.exchange(true))
+        {
+            if (point.hits <= 3)
+            {
+                begin_step_trace_locked(GetCurrentThreadId(), "xanim_resolver_flow", point.trace_id, point.path, point.addr, kXanimStepTraceInstructions);
+                ctx.EFlags |= 0x100u;
+                arm_exec_trace_locked("xanim_resolver_null_branch_fallthrough", rva_to_va(kXanimResolverNullBranchFallthroughRva), point.trace_id, point.path, 8);
+                arm_exec_trace_locked("xanim_resolver_null_branch_taken", rva_to_va(kXanimResolverNullBranchTakenRva), point.trace_id, point.path, 8);
+                log_line("branch_trace_request kind=xanim_resolver_null_gate fallthrough=0x%08lX taken=0x%08lX trace=%llu path=%s",
+                    static_cast<unsigned long>(rva_to_va(kXanimResolverNullBranchFallthroughRva)),
+                    static_cast<unsigned long>(rva_to_va(kXanimResolverNullBranchTakenRva)),
+                    point.trace_id,
+                    point.path.c_str());
+            }
+            HANDLE rearm_thread = CreateThread(nullptr, 0, xanim_focus_rearm_thread, reinterpret_cast<void*>(point.addr), 0, nullptr);
+            if (rearm_thread)
+            {
+                log_line("xanim_focus_rearm_thread_started hit=%d max_hits=%d", point.hits, point.max_hits);
+                CloseHandle(rearm_thread);
+            }
+            else
+            {
+                g_xanim_focus_rearm_pending = false;
+                log_line("xanim_focus_rearm_thread_failed gle=%lu", GetLastError());
+            }
+        }
+        else if (point.label == "xanim_resolver_null_branch_fallthrough")
+        {
+            if (point.hits <= 1)
+            {
+                begin_step_trace_locked(GetCurrentThreadId(), "xanim_resolver_fallthrough_flow", point.trace_id, point.path, point.addr, kXanimFallthroughStepTraceInstructions);
+                ctx.EFlags |= 0x100u;
+                log_line("branch_trace_request kind=xanim_resolver_fallthrough_flow start=0x%08lX steps=%d trace=%llu path=%s",
+                    static_cast<unsigned long>(point.addr),
+                    kXanimFallthroughStepTraceInstructions,
+                    point.trace_id,
+                    point.path.c_str());
             }
         }
 
@@ -1619,13 +1998,16 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         std::lock_guard<std::mutex> lock(g_state_mutex);
         auto step_it = g_step_traces.find(GetCurrentThreadId());
         bool keep_tracing = false;
+        bool chain_post_fallthrough = false;
+        unsigned long long chained_trace_id = 0;
+        std::string chained_path;
         if (step_it != g_step_traces.end())
         {
             StepTraceState& state = step_it->second;
             log_line("step_trace_hit label=%s trace=%llu step=%d eip=0x%08lX prev=0x%08lX path=%s",
                 state.label.c_str(),
                 state.trace_id,
-                kConsumerStepTraceInstructions - state.steps_remaining + 1,
+                state.total_steps - state.steps_remaining + 1,
                 ctx.Eip,
                 static_cast<unsigned long>(state.last_eip),
                 state.path.c_str());
@@ -1646,8 +2028,32 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                     state.label.c_str(),
                     state.trace_id,
                     ctx.Eip);
+                if (state.label == "xanim_resolver_fallthrough_flow" &&
+                    !g_xanim_post_fallthrough_trace_started.exchange(true))
+                {
+                    chain_post_fallthrough = true;
+                    chained_trace_id = state.trace_id;
+                    chained_path = state.path;
+                }
                 g_step_traces.erase(step_it);
             }
+        }
+
+        if (chain_post_fallthrough)
+        {
+            begin_step_trace_locked(
+                GetCurrentThreadId(),
+                "xanim_resolver_post_fallthrough_flow",
+                chained_trace_id,
+                chained_path,
+                ctx.Eip,
+                kXanimPostFallthroughStepTraceInstructions);
+            log_line("branch_trace_request kind=xanim_resolver_post_fallthrough_flow start=0x%08lX steps=%d trace=%llu path=%s",
+                ctx.Eip,
+                kXanimPostFallthroughStepTraceInstructions,
+                chained_trace_id,
+                chained_path.c_str());
+            keep_tracing = true;
         }
 
         if (g_tls_rearm_addr)
@@ -1731,6 +2137,20 @@ DWORD WINAPI init_thread(void*)
         else
         {
             log_line("opacity_focus_fallback_thread_failed gle=%lu", GetLastError());
+        }
+    }
+    else if (g_probe_mode == ProbeMode::XanimFocus)
+    {
+        log_line("consumer_arm_thread_skipped mode=%s reason=bootstrap_exec", probe_mode_name());
+        HANDLE xanim_arm_thread = CreateThread(nullptr, 0, xanim_focus_arm_thread, nullptr, 0, nullptr);
+        if (xanim_arm_thread)
+        {
+            log_line("xanim_focus_arm_thread_started");
+            CloseHandle(xanim_arm_thread);
+        }
+        else
+        {
+            log_line("xanim_focus_arm_thread_failed gle=%lu", GetLastError());
         }
     }
     else
