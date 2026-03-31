@@ -31,6 +31,20 @@ DEFAULT_DONOR_FF = ROOT / "zone_dump" / "raw_test" / "mod_load.ff"
 DEFAULT_DONOR_ZONE = "mod_load"
 
 
+def donor_asset_candidates(asset_name: str) -> list[str]:
+    name = str(asset_name or "").strip()
+    out: list[str] = []
+    for candidate in (
+        name,
+        "viewmodel_zomb_mg08_idlz" if name == "viewmodel_zomb_mg08_idle" else "",
+        "viewmodel_zomb_mg08_idle" if name == "viewmodel_zomb_mg08_idlz" else "",
+    ):
+        candidate = str(candidate or "").strip()
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
+
+
 def read_indexed_strings(data: bytes, count: int, string_data_start: int) -> list[str]:
     out: list[str] = []
     pos = string_data_start
@@ -88,7 +102,13 @@ def find_payload(ff_path: Path, zone_name: str, asset_name: str) -> dict[str, ob
     string_count = result[1]
     string_data_start = result[5]
     index_to_string = read_indexed_strings(raw, string_count, string_data_start)
-    matches = strict_xanim.find_xanim_by_name(raw, asset_name, min_offset=asset_data_offset)
+    matches = []
+    resolved_asset = asset_name
+    for candidate in donor_asset_candidates(asset_name):
+        matches = strict_xanim.find_xanim_by_name(raw, candidate, min_offset=asset_data_offset)
+        if matches:
+            resolved_asset = candidate
+            break
     if not matches:
         raise RuntimeError(f"xanim asset not found: {asset_name} in {ff_path}")
     parsed = matches[0]
@@ -96,6 +116,7 @@ def find_payload(ff_path: Path, zone_name: str, asset_name: str) -> dict[str, ob
         "raw": raw,
         "parsed": parsed,
         "index_to_string": index_to_string,
+        "resolved_asset": resolved_asset,
     }
 
 
@@ -135,6 +156,23 @@ def main() -> int:
     ap.add_argument("--keep-bones-file")
     ap.add_argument("--bo3-frames-target", action="append", default=[])
     ap.add_argument("--bo3-fallback-mode", choices=["donor_clone", "static_pose", "stub"], default="donor_clone")
+    ap.add_argument("--bo3-idle-diagnostic-bone", default="")
+    ap.add_argument(
+        "--bo3-idle-diagnostic-translate",
+        nargs=3,
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        metavar=("X", "Y", "Z"),
+    )
+    ap.add_argument("--bo3-idle-diagnostic-frequency", type=float, default=0.0)
+    ap.add_argument("--bo3-idle-static-bone", default="")
+    ap.add_argument(
+        "--bo3-idle-static-translate",
+        nargs=3,
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        metavar=("X", "Y", "Z"),
+    )
     ap.add_argument("--out-json")
     args = ap.parse_args()
 
@@ -177,18 +215,23 @@ def main() -> int:
     elif args.emit_mode == "bo3_frames":
         cxz.BO3_FRAMES_TARGETS = set(str(x).strip() for x in (args.bo3_frames_target or []) if str(x).strip())
         cxz.BO3_FRAMES_FALLBACK_MODE = str(args.bo3_fallback_mode).strip()
-        if cxz.BO3_FRAMES_FALLBACK_MODE == "donor_clone":
-            cxz.DONOR_FF = args.donor_ff
-            cxz.DONOR_ZONE_NAME = args.donor_zone
-            cxz.DONOR_DEFAULT_ASSET = args.donor_asset
-            cxz.DONOR_OVERRIDE_MAP = {args.target_name: args.donor_asset}
-            cxz.DONOR_CONTEXT = cxz._load_donor_context(args.donor_ff, args.donor_zone, [args.donor_asset])
+        cxz.BO3_IDLE_DIAG_BONE = str(args.bo3_idle_diagnostic_bone).strip()
+        cxz.BO3_IDLE_DIAG_TRANSLATE = [float(v) for v in (args.bo3_idle_diagnostic_translate or [0.0, 0.0, 0.0])[:3]]
+        cxz.BO3_IDLE_DIAG_FREQUENCY = max(0.0, float(args.bo3_idle_diagnostic_frequency or 0.0))
+        cxz.BO3_IDLE_DIAG_STATIC_BONE = str(args.bo3_idle_static_bone).strip()
+        cxz.BO3_IDLE_DIAG_STATIC_TRANSLATE = [float(v) for v in (args.bo3_idle_static_translate or [0.0, 0.0, 0.0])[:3]]
+        cxz.DONOR_FF = args.donor_ff
+        cxz.DONOR_ZONE_NAME = args.donor_zone
+        cxz.DONOR_DEFAULT_ASSET = args.donor_asset
+        cxz.DONOR_OVERRIDE_MAP = {args.target_name: args.donor_asset}
+        cxz.DONOR_CONTEXT = cxz._load_donor_context(args.donor_ff, args.donor_zone, [args.donor_asset])
         emitted_header_bytes, emitted_data = cxz._build_bo3_frames_xanimparts_data(anim, string_table)
     else:
         emitted_header_bytes, emitted_data = cxz._build_static_pose_xanimparts_data(anim, string_table)
 
     report = {
         "donor_asset": args.donor_asset,
+        "donor_asset_resolved": donor.get("resolved_asset"),
         "target_name": args.target_name,
         "emit_mode": args.emit_mode,
         "removed_tracks": removed_tracks,
