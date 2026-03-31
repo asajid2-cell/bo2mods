@@ -32,6 +32,33 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter
 
+try:
+    import compile_xanim_zone as cxz  # type: ignore
+except Exception:
+    cxz = None
+
+try:
+    import strict_xanim_parser as strict_xanim  # type: ignore
+except Exception:
+    strict_xanim = None
+
+try:
+    from patch_zone_xanims import decrypt_zone as donor_decrypt_zone  # type: ignore
+    from patch_zone_xanims import parse_string_table as donor_parse_string_table  # type: ignore
+    from patch_zone_xanims import expand_string_table as donor_expand_string_table  # type: ignore
+    from patch_zone_xanims import write_patched_zone as donor_write_patched_zone  # type: ignore
+    from patch_zone_xanims import parse_xanim_export as donor_parse_xanim_export  # type: ignore
+    from patch_zone_xanims import build_replacement_data as donor_build_replacement_data  # type: ignore
+    from patch_zone_xanims import BLOCK_VIRTUAL as donor_block_virtual  # type: ignore
+except Exception:
+    donor_decrypt_zone = None
+    donor_parse_string_table = None
+    donor_expand_string_table = None
+    donor_write_patched_zone = None
+    donor_parse_xanim_export = None
+    donor_build_replacement_data = None
+    donor_block_virtual = 5
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "_build" / "bo3_rev_idg_probe"
@@ -44,9 +71,16 @@ WEAPONS_DIR = WORK / "weapons"
 FX_DIR = WORK / "fx"
 XANIM_DIR = WORK / "xanim_export" / "viewmodel"
 XANIM_REBAKED_DIR = WORK / "xanim_export_rebaked" / "viewmodel"
+XANIM_RUNTIME_DIR = WORK / "xanim_export_runtime" / "viewmodel"
+XANIM_REPORT_DIR = WORK / "xanim_reports"
+XANIM_STRING_SEED_REPORT = XANIM_REPORT_DIR / "xanim_string_seeds.json"
+XANIM_IDLE_CONTRACT_REPORT = XANIM_REPORT_DIR / "vm_zod_id_gun_idle_contract_report.json"
+XANIM_RUNTIME_MAP_REPORT = XANIM_REPORT_DIR / "xanim_runtime_map.json"
 ZONE_SOURCE_DIR = WORK / "zone_source"
 REPORT_PATH = WORK / "build_report.json"
 PROBE_WATCHLIST_PATH = ROOT / "native" / "fx_runtime_probe" / "active_probe_watchlist.txt"
+PROBE_XANIM_EXPECTATIONS_PATH = ROOT / "native" / "fx_runtime_probe" / "bin" / "x86" / "Release" / "xanim_runtime_expectations.txt"
+PROBE_XANIM_EXPECTATIONS_SOURCE_PATH = ROOT / "native" / "fx_runtime_probe" / "xanim_runtime_expectations.txt"
 ZONE_RAW_ROOT = WORK / "zone_raw" / "so_zsurvival_zm_transit"
 IDG_SURFACE_BUNDLE_ROOT = WORK / "idg_surface_bundle"
 IDG_SURFACE_PROJECT_ROOT = WORK / "_tmp_idg_surface_project"
@@ -73,6 +107,9 @@ FX_SURFACE_NAMESPACE_PREFIX = "bo3rfx_"
 MOD_NAME = "bo3_rev"
 MOD_ZONE_NAME = "mod"
 MOD_LOAD_ZONE_NAME = "mod_load"
+MOD_LOAD_RUNTIME_PATCH_ZONE_NAME = f"{MOD_LOAD_ZONE_NAME}_runtime_patchsrc"
+MOD_PATCH_ZONE_NAME = "mod_patch"
+MOD_PATCH_FF_NAME = f"{MOD_PATCH_ZONE_NAME}.ff"
 RUNTIME_ZONE_NAME = "so_zsurvival_zm_transit"
 RUNTIME_FF_NAME = f"{RUNTIME_ZONE_NAME}.ff"
 RUNTIME_IPAK_NAME = f"{RUNTIME_ZONE_NAME}.ipak"
@@ -522,9 +559,25 @@ BO3_ANIM_STAGE = os.environ.get("ROGUE_BO3_ANIM_STAGE", "full" if USE_BO3_IDG_AN
 BO3_ANIM_EMIT_MODE = os.environ.get("ROGUE_BO3_ANIM_EMIT_MODE", "bo3_frames").strip().lower() or "bo3_frames"
 BO3_ANIM_FORCE_IDENTITY = os.environ.get("ROGUE_BO3_ANIM_FORCE_IDENTITY", "0") not in ("0", "false", "False")
 USE_REBAKED_BO3_XANIMS = os.environ.get("ROGUE_USE_REBAKED_BO3_XANIMS", "1" if USE_BO3_IDG_ANIMS else "0") not in ("0", "false", "False")
+BO3_ANIM_RUNTIME_BACKEND = os.environ.get("ROGUE_BO3_ANIM_RUNTIME_BACKEND", "semantic_names").strip().lower() or "semantic_names"
+WEAPON_IDLE_ANIM_OVERRIDE = os.environ.get("ROGUE_WEAPON_IDLE_ANIM_OVERRIDE", "").strip()
+WEAPON_FIRST_RAISE_ANIM_OVERRIDE = os.environ.get("ROGUE_WEAPON_FIRST_RAISE_ANIM_OVERRIDE", "").strip()
+WEAPON_FIRE_ANIM_OVERRIDE = os.environ.get("ROGUE_WEAPON_FIRE_ANIM_OVERRIDE", "").strip()
+BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER = os.environ.get("ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER", "0") not in ("0", "false", "False")
+BO3_ANIM_RUNTIME_BIND_ALIASES = os.environ.get("ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES", "1") not in ("0", "false", "False")
 BO3_ANIM_DONOR_FF_OVERRIDE = os.environ.get("ROGUE_BO3_ANIM_DONOR_FF", "").strip()
 BO3_ANIM_DONOR_ZONE = os.environ.get("ROGUE_BO3_ANIM_DONOR_ZONE", "mod_load").strip() or "mod_load"
 BO3_ANIM_DONOR_ASSET = os.environ.get("ROGUE_BO3_ANIM_DONOR_ASSET", "vm_zod_id_gun_idle").strip() or "vm_zod_id_gun_idle"
+ANIM_GRANT_DELAY_SECONDS = os.environ.get("ROGUE_ANIM_GRANT_DELAY", "18").strip() if USE_BO3_IDG_ANIMS else "0"
+BO3_IDLE_DIAG_BONE = os.environ.get("ROGUE_BO3_IDLE_DIAG_BONE", "").strip()
+BO3_IDLE_DIAG_TRANSLATE = os.environ.get("ROGUE_BO3_IDLE_DIAG_TRANSLATE", "").strip()
+BO3_IDLE_DIAG_FREQUENCY = os.environ.get("ROGUE_BO3_IDLE_DIAG_FREQUENCY", "").strip()
+BO3_IDLE_DIAG_STATIC_BONE = os.environ.get("ROGUE_BO3_IDLE_DIAG_STATIC_BONE", "").strip()
+BO3_IDLE_DIAG_STATIC_TRANSLATE = os.environ.get("ROGUE_BO3_IDLE_DIAG_STATIC_TRANSLATE", "").strip()
+PATCH_RUNTIME_BACKEND_FF = os.environ.get("ROGUE_PATCH_RUNTIME_BACKEND_FF", "0") not in ("0", "false", "False")
+EXTERNAL_MOD_LOAD_FF = os.environ.get("ROGUE_EXTERNAL_MOD_LOAD_FF", "").strip()
+BO3_MODEL_RUNTIME_JOINT_ALIASES = os.environ.get("ROGUE_BO3_MODEL_RUNTIME_JOINT_ALIASES", "1") not in ("0", "false", "False")
+DISABLE_XANIM_STRING_SEEDS = os.environ.get("ROGUE_DISABLE_XANIM_STRING_SEEDS", "0") not in ("0", "false", "False")
 ALLOW_STRIPPED_SURVIVAL_FF = os.environ.get("ROGUE_ALLOW_STRIPPED_SURVIVAL_FF", "0") not in ("0", "false", "False")
 STUB_ZM_VIEWHANDS = os.environ.get("ROGUE_STUB_ZM_VIEWHANDS", "0") not in ("0", "false", "False")
 USE_CUSTOM_IDG_VIEWHANDS = os.environ.get("ROGUE_USE_CUSTOM_IDG_VIEWHANDS", "0") not in ("0", "false", "False")
@@ -557,6 +610,8 @@ if RAW_FX_STAGE not in RAW_FX_STAGE_ORDER:
     RAW_FX_STAGE = "full" if USE_BO3_RAW_FX else "off"
 if BO3_ANIM_STAGE not in BO3_ANIM_STAGES:
     BO3_ANIM_STAGE = "full" if USE_BO3_IDG_ANIMS else "off"
+if BO3_ANIM_RUNTIME_BACKEND not in {"semantic_names", "target_weapon_names"}:
+    BO3_ANIM_RUNTIME_BACKEND = "semantic_names"
 SKIP_LOOSE_IMAGE_DEPLOY = os.environ.get("ROGUE_SKIP_LOOSE_IMAGE_DEPLOY", "0") not in ("0", "false", "False")
 SKIP_SCRIPT_SYNC = os.environ.get("ROGUE_SKIP_SCRIPT_SYNC", "0") not in ("0", "false", "False")
 REQUIRE_APPDATA_SYNC = os.environ.get("ROGUE_REQUIRE_APPDATA_SYNC", "0") not in ("0", "false", "False")
@@ -619,11 +674,8 @@ def servant_vortex_layer_flags() -> dict[str, bool]:
         flags["loop"] = True
     return flags
 
-if USE_DEDICATED_BO3_FX_LOAD and USE_BO3_IDG_ANIMS and BO3_FX_LOAD_ZONE_NAME == MOD_LOAD_ZONE_NAME:
-    raise RuntimeError(
-        "BO3 raw FX dedicated load lane currently collides with the runtime xanim lane on mod_load.ff. "
-        "Disable ROGUE_USE_BO3_IDG_ANIMS or set ROGUE_BO3_FX_LOAD_ZONE to a different zone while implementing a merged lane."
-    )
+def using_merged_mod_load_lane() -> bool:
+    return USE_DEDICATED_BO3_FX_LOAD and USE_BO3_IDG_ANIMS and BO3_FX_LOAD_ZONE_NAME == MOD_LOAD_ZONE_NAME
 
 
 def choose_blender_executable(configured: str) -> str:
@@ -810,7 +862,46 @@ def full_servant_watch_entries() -> list[tuple[str, str]]:
 def probe_watch_entries() -> list[tuple[str, str]]:
     if client_ffprobe_enabled():
         return client_ffprobe_watch_entries()
-    return full_servant_watch_entries()
+    entries = full_servant_watch_entries()
+    if USE_BO3_IDG_ANIMS:
+        base_fields = base_weapon_fields()
+        runtime_map = build_bo3_anim_runtime_map(base_fields)
+        staged_fields = {
+            "idleAnim": bo3_anim_runtime_name_for_field("idleAnim", base_fields),
+            "firstRaiseAnim": bo3_anim_runtime_name_for_field("firstRaiseAnim", base_fields),
+            "fireAnim": bo3_anim_runtime_name_for_field("fireAnim", base_fields),
+            "raiseAnim": bo3_anim_runtime_name_for_field("raiseAnim", base_fields),
+            "dropAnim": bo3_anim_runtime_name_for_field("dropAnim", base_fields),
+        }
+        for value in staged_fields.values():
+            value = str(value).strip()
+            if value:
+                entries.append(("xanim", value))
+        if use_survival_only_idle_alias_mode():
+            entries.append(("xanim", survival_idle_runtime_alias()))
+        for value in custom_runtime_xanim_names():
+            value = str(value).strip()
+            if value:
+                entries.append(("xanim", value))
+        for entry in runtime_map:
+            runtime_name = str(entry.get("runtime_name", "")).strip()
+            semantic_name = str(entry.get("semantic_name", "")).strip()
+            if bo3_anim_runtime_backend_uses_target_weapon_names():
+                # In target-weapon-name mode the live resolver should be traced
+                # against the backend names that T6 is expected to request.
+                continue
+            if semantic_name:
+                entries.append(("xanim", semantic_name))
+            if runtime_name and semantic_name and runtime_name != semantic_name:
+                entries.append(("xanim_alias", f"{runtime_name}->{semantic_name}"))
+    seen: set[tuple[str, str]] = set()
+    deduped: list[tuple[str, str]] = []
+    for entry in entries:
+        if entry in seen:
+            continue
+        seen.add(entry)
+        deduped.append(entry)
+    return deduped
 
 
 def staged_fx_techset_names() -> list[str]:
@@ -3370,10 +3461,12 @@ PE_MACHINE_X86 = 0x14C
 PE_MACHINE_X64 = 0x8664
 GSC_TOOL = ROOT / "tools" / "gsc-tool.exe"
 XANIM_COMPILER = ROOT / "_build" / "compile_xanim_zone.py"
+XANIM_COMPARE_TOOL = ROOT / "_build" / "compare_xanim_contracts.py"
 XANIM_ORACLE_DIR = ROOT / "_build" / "xanim_oracles"
 XANIM_IDLE_ORACLE_FF = XANIM_ORACLE_DIR / "vm_zod_idle_donorclone_mod_load.ff"
 SO_SURVIVAL_BASELINE_FF = ROOT / "_build" / "ff_backup" / "20260213-123213" / "so_zsurvival_zm_transit.ff"
 ZM_TRANSIT_BASELINE_FF = ROOT / "_build" / "ff_backup" / "20260213-123213" / "zm_transit.ff"
+SO_SURVIVAL_RUNTIME_ORACLE_FF = ROOT / "zone" / "all" / "so_zsurvival_zm_transit.ff"
 FULL_RUNTIME_SOURCE_ROOT = ROOT / "_build" / "runtime_unlink_so_zsurvival_clean"
 FULL_RUNTIME_ZONE_SOURCE = FULL_RUNTIME_SOURCE_ROOT / "zone_source" / f"{RUNTIME_ZONE_NAME}.zone"
 ZONE_DUMP_SOURCE_ROOT = ROOT / "zone_dump" / "zone_raw" / "so_zsurvival_zm_transit"
@@ -3672,6 +3765,8 @@ def ensure_dirs() -> None:
         WEAPONS_DIR,
         FX_DIR,
         XANIM_DIR,
+        XANIM_RUNTIME_DIR,
+        XANIM_REPORT_DIR,
         ZONE_SOURCE_DIR,
         ZONE_RAW_ROOT,
     ):
@@ -3688,6 +3783,8 @@ def reset_work_dirs() -> None:
         WEAPONS_DIR,
         FX_DIR,
         XANIM_DIR,
+        XANIM_RUNTIME_DIR,
+        XANIM_REPORT_DIR,
         ZONE_SOURCE_DIR,
         ZONE_RAW_ROOT,
         IDG_SURFACE_BUNDLE_ROOT,
@@ -3720,6 +3817,30 @@ def donor_extra_runtime_xanims() -> list[str]:
         seen.add(anim_name)
         names.append(anim_name)
     return names
+
+
+def custom_runtime_xanim_names() -> list[str]:
+    if not USE_BO3_IDG_ANIMS:
+        return []
+    if bo3_anim_runtime_backend_uses_target_weapon_names():
+        if XANIM_RUNTIME_MAP_REPORT.exists():
+            try:
+                runtime_map = json.loads(XANIM_RUNTIME_MAP_REPORT.read_text(encoding="utf-8"))
+            except Exception:
+                runtime_map = []
+        else:
+            runtime_map = build_bo3_anim_runtime_map(base_weapon_fields())
+        names: list[str] = []
+        seen: set[str] = set()
+        for entry in runtime_map:
+            runtime_name = str((entry or {}).get("runtime_name", "")).strip()
+            if not runtime_name or runtime_name in seen:
+                continue
+            seen.add(runtime_name)
+            names.append(runtime_name)
+        if names:
+            return names
+    return list(IDG_ANIMS)
 
 
 def clean_output_artifacts() -> None:
@@ -3768,7 +3889,7 @@ def base_weapon_pairs() -> list[tuple[str, str]]:
 
 
 def base_weapon_fields() -> dict[str, str]:
-    return dict(base_weapon_pairs())
+    return apply_weapon_anim_overrides(dict(base_weapon_pairs()))
 
 
 def uses_custom_model() -> bool:
@@ -3858,6 +3979,1297 @@ def anim_for_field(field_name: str) -> str:
     return "vm_zod_id_gun_idle"
 
 
+def active_semantic_xanim_names() -> set[str]:
+    return set(IDG_ANIMS)
+
+
+def bo3_anim_runtime_backend_uses_target_weapon_names() -> bool:
+    return BO3_ANIM_RUNTIME_BACKEND == "target_weapon_names"
+
+
+def use_survival_only_idle_alias_mode() -> bool:
+    return (
+        USE_BO3_IDG_ANIMS
+        and bo3_anim_runtime_backend_uses_target_weapon_names()
+        and BO3_ANIM_RUNTIME_BIND_ALIASES
+        and BO3_ANIM_STAGE == "idleonly"
+    )
+
+
+def survival_idle_runtime_alias() -> str:
+    return "viewmodel_zomb_mg08_idlz"
+
+
+def donor_runtime_oracle_asset_name(runtime_name: str) -> str:
+    name = str(runtime_name or "").strip()
+    if name == "viewmodel_zomb_mg08_idlz":
+        return "viewmodel_zomb_mg08_idle"
+    if name == "viewmodel_zomb_mg08_idlq":
+        return "viewmodel_zomb_mg08_idle"
+    return name
+
+
+def bo3_anim_runtime_name_for_field(field_name: str, base_fields: dict[str, str]) -> str:
+    override_value = str(base_fields.get(field_name, "")).strip()
+    if field_name == "idleAnim" and WEAPON_IDLE_ANIM_OVERRIDE:
+        return override_value
+    if field_name == "firstRaiseAnim" and WEAPON_FIRST_RAISE_ANIM_OVERRIDE:
+        return override_value
+    if field_name == "fireAnim" and WEAPON_FIRE_ANIM_OVERRIDE:
+        return override_value
+    semantic_name = anim_for_field(field_name)
+    if semantic_name not in active_semantic_xanim_names():
+        return override_value
+    if bo3_anim_runtime_backend_uses_target_weapon_names():
+        if use_survival_only_idle_alias_mode() and bo3_anim_field_group(field_name) == "idle":
+            return survival_idle_runtime_alias()
+        return override_value
+    return semantic_name
+
+
+def apply_weapon_anim_overrides(fields: dict[str, str]) -> dict[str, str]:
+    result = dict(fields)
+    if WEAPON_IDLE_ANIM_OVERRIDE:
+        result["idleAnim"] = WEAPON_IDLE_ANIM_OVERRIDE
+    if WEAPON_FIRST_RAISE_ANIM_OVERRIDE:
+        result["firstRaiseAnim"] = WEAPON_FIRST_RAISE_ANIM_OVERRIDE
+    if WEAPON_FIRE_ANIM_OVERRIDE:
+        result["fireAnim"] = WEAPON_FIRE_ANIM_OVERRIDE
+    return result
+
+
+def build_bo3_anim_runtime_map(base_fields: dict[str, str]) -> list[dict[str, object]]:
+    runtime_map_by_name: dict[str, dict[str, object]] = {}
+    for field_name in ANIM_FIELDS:
+        if not bo3_anim_field_enabled(field_name):
+            continue
+        semantic_name = anim_for_field(field_name)
+        if semantic_name not in active_semantic_xanim_names():
+            continue
+        runtime_name = bo3_anim_runtime_name_for_field(field_name, base_fields)
+        if not runtime_name:
+            continue
+        entry = runtime_map_by_name.setdefault(
+            runtime_name,
+            {
+                "runtime_name": runtime_name,
+                "semantic_name": semantic_name,
+                "fields": [],
+            },
+        )
+        if entry["semantic_name"] != semantic_name:
+            raise RuntimeError(
+                "Conflicting semantic anim sources mapped to the same runtime target "
+                f"'{runtime_name}': {entry['semantic_name']} vs {semantic_name}"
+            )
+        fields = entry["fields"]
+        if field_name not in fields:
+            fields.append(field_name)
+    return sorted(runtime_map_by_name.values(), key=lambda item: str(item["runtime_name"]))
+
+
+def _identity_export_bone_state() -> dict[str, object]:
+    return {
+        "offset": [0.0, 0.0, 0.0],
+        "rot": [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+    }
+
+
+def runtime_semantic_bind_map(runtime_name: str) -> dict[str, str]:
+    runtime_name = str(runtime_name or "").strip().lower()
+    if not runtime_name.startswith("viewmodel_zomb_mg08_"):
+        return {}
+    # Anchor the most important visible/backend-critical bindings explicitly,
+    # then fill the rest of the donor runtime namespace from the available
+    # Servant GLB nodes so the custom shell exposes a complete MG08 joint set.
+    bind_map: dict[str, str] = {
+        "j_gun": "tag_sphincter_02_animate",
+        "tag_weapon": "tag_weapon",
+        "tag_flash": "tag_flash",
+        "j_bolt": "tag_claw_back_left_01_animate",
+        "j_reload": "tag_pincer_left_01_animate",
+        "tag_clip": "tag_jaw_lower_1_animate",
+        "tag_clip_turn": "tag_jaw_upper_1_animate",
+        "tag_fx": "tag_sphincter_01_animate",
+        "tag_brass": "tag_tentacle_tail_01_animate",
+        "j_gascap": "tag_eye_back_01_animate",
+        "j_ring": "tag_eye_back_02_animate",
+        "j_index_le_0": "tag_index_left_01_animate",
+        "j_index_ri_0": "tag_index_right_01_animate",
+        "j_mid_le_0": "tag_middle_left_01_animate",
+        "j_mid_ri_0": "tag_middle_right_01_animate",
+        "j_pinky_le_0": "tag_pinky_left_01_animate",
+        "j_pinky_ri_0": "tag_pinky_right_01_animate",
+        "j_ring_le_0": "tag_ring_left_01_animate",
+        "j_ring_ri_0": "tag_ring_right_01_animate",
+    }
+    donor_ff = SO_SURVIVAL_RUNTIME_ORACLE_FF if SO_SURVIVAL_RUNTIME_ORACLE_FF.exists() else SO_SURVIVAL_BASELINE_FF
+    if not donor_ff.exists() or not IDG_VIEW_GLB_SRC.exists():
+        return bind_map
+    try:
+        donor_names = _load_donor_xanim_name_order(
+            donor_ff,
+            RUNTIME_ZONE_NAME,
+            donor_runtime_oracle_asset_name(runtime_name),
+        )
+    except Exception:
+        return bind_map
+
+    try:
+        with IDG_VIEW_GLB_SRC.open("rb") as handle:
+            if handle.read(4) != b"glTF":
+                return bind_map
+            handle.read(4)
+            total_len = struct.unpack("<I", handle.read(4))[0]
+            json_len = struct.unpack("<I", handle.read(4))[0]
+            if handle.read(4) != b"JSON":
+                return bind_map
+            gltf = json.loads(handle.read(json_len).decode("utf-8"))
+            if handle.tell() < total_len:
+                pass
+    except Exception:
+        return bind_map
+
+    ignored_source_names = {"", "weapon_wpn_t7_zmb_zod_idg_view_0", "bo3_rev_idg_reduced_armature"}
+    source_nodes = [
+        str((node or {}).get("name", "")).strip()
+        for node in (gltf.get("nodes") or [])
+        if str((node or {}).get("name", "")).strip()
+        and str((node or {}).get("name", "")).strip() not in ignored_source_names
+    ]
+    preferred_source_order = [
+        "tag_weapon",
+        "tag_flash",
+        "tag_sphincter_02_animate",
+        "tag_claw_back_left_01_animate",
+        "tag_pincer_left_01_animate",
+        "tag_jaw_lower_1_animate",
+        "tag_jaw_upper_1_animate",
+        "tag_sphincter_01_animate",
+        "tag_tentacle_tail_01_animate",
+        "tag_eye_back_01_animate",
+        "tag_eye_back_02_animate",
+        "tag_index_left_01_animate",
+        "tag_index_left_02_animate",
+        "tag_index_right_01_animate",
+        "tag_middle_left_01_animate",
+        "tag_middle_left_02_animate",
+        "tag_middle_right_01_animate",
+        "tag_pinky_left_01_animate",
+        "tag_pinky_left_02_animate",
+        "tag_pinky_right_01_animate",
+        "tag_ring_left_01_animate",
+        "tag_ring_left_02_animate",
+        "tag_ring_right_01_animate",
+        "tag_eye_back_01_lid_lower_animate",
+        "tag_eye_back_01_lid_upper_animate",
+        "tag_eye_back_02_llid_lower_animate",
+        "tag_eye_back_02_llid_upper_animate",
+        "tag_eye_left_big_animate",
+        "tag_eye_left_big_lid1_animate",
+        "tag_eye_left_big_lid_animate",
+        "tag_eye_left_small_animate",
+        "tag_eye_left_small_lid_lower_animate",
+        "tag_eye_left_small_lid_upper_animate",
+        "tag_fangs_left_01_animate",
+        "tag_fangs_left_02_animate",
+        "tag_fangs_left_03_animate",
+        "tag_fangs_left_04_animate",
+        "tag_fangs_right_01_animate",
+        "tag_fangs_right_02_animate",
+        "tag_fangs_right_03_animate",
+        "tag_fangs_right_04_animate",
+        "tag_jaw_lower_2_animate",
+        "tag_jaw_upper_2_animate",
+        "tag_pincer_left_02_animate",
+        "tag_sphincter_04_animate",
+        "tag_sphincter_05_animate",
+        "tag_sphincter_06_animate",
+        "tag_sphincter_07_animate",
+        "tag_tentacle_back_left_1_animate",
+        "tag_tentacle_back_left_2_animate",
+        "tag_tentacle_back_left_3_animate",
+        "tag_tentacle_back_left_4_animate",
+        "tag_tentacle_back_right_1_animate",
+        "tag_tentacle_back_right_2_animate",
+        "tag_tentacle_back_right_3_animate",
+        "tag_tentacle_back_right_4_animate",
+        "tag_tentacle_bottom_left_1_animate",
+        "tag_tentacle_bottom_left_2_animate",
+        "tag_tentacle_bottom_left_3_animate",
+        "tag_tentacle_bottom_left_4_animate",
+        "tag_tentacle_bottom_right_1_animate",
+        "tag_tentacle_bottom_right_2_animate",
+        "tag_tentacle_bottom_right_3_animate",
+        "tag_tentacle_bottom_right_4_animate",
+        "tag_tentacle_front_left_1_animate",
+        "tag_tentacle_front_left_2_animate",
+        "tag_tentacle_front_left_3_animate",
+        "tag_tentacle_front_left_4_animate",
+        "tag_tentacle_front_right_1_animate",
+        "tag_tentacle_front_right_2_animate",
+        "tag_tentacle_front_right_3_animate",
+        "tag_tentacle_front_right_4_animate",
+        "tag_tentacle_mid_left_1_animate",
+        "tag_tentacle_mid_left_2_animate",
+        "tag_tentacle_mid_left_3_animate",
+        "tag_tentacle_mid_left_4_animate",
+        "tag_tentacle_mid_right_1_animate",
+        "tag_tentacle_mid_right_2_animate",
+        "tag_tentacle_mid_right_3_animate",
+        "tag_tentacle_mid_right_4_animate",
+        "tag_tentacle_tail_02_animate",
+        "tag_tentacle_top_left_1_animate",
+        "tag_tentacle_top_left_2_animate",
+        "tag_tentacle_top_left_3_animate",
+        "tag_tentacle_top_left_4_animate",
+        "tag_tentacle_top_right_1_animate",
+        "tag_tentacle_top_right_2_animate",
+        "tag_tentacle_top_right_3_animate",
+        "tag_tentacle_top_right_4_animate",
+    ]
+    ordered_sources: list[str] = []
+    seen_sources: set[str] = set()
+    for name in preferred_source_order + source_nodes:
+        if name in source_nodes and name not in seen_sources:
+            ordered_sources.append(name)
+            seen_sources.add(name)
+
+    used_sources = {value for value in bind_map.values() if value in seen_sources}
+    free_sources = [name for name in ordered_sources if name not in used_sources]
+
+    seen_donor: set[str] = set()
+    for donor_name in donor_names:
+        runtime_key = str(donor_name or "").strip()
+        if not runtime_key or runtime_key in seen_donor or runtime_key in bind_map:
+            continue
+        seen_donor.add(runtime_key)
+        if not free_sources:
+            break
+        bind_map[runtime_key] = free_sources.pop(0)
+    return bind_map
+
+
+def model_joint_runtime_rename_map(runtime_name: str) -> dict[str, str]:
+    bind_map = runtime_semantic_bind_map(runtime_name)
+    out: dict[str, str] = {}
+    for runtime_bone, semantic_bone in bind_map.items():
+        semantic_key = str(semantic_bone or "").strip().lower()
+        if not semantic_key:
+            continue
+        out[semantic_key] = str(runtime_bone)
+    return out
+
+
+def _load_donor_xanim_name_order(ff_path: Path, zone_name: str, asset_name: str) -> list[str]:
+    if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
+        raise RuntimeError("xanim donor-order staging requires strict_xanim_parser + patch_zone_xanims")
+
+    _magic, raw = donor_decrypt_zone(str(ff_path), zone_name)
+    string_map, _string_count, _asset_count, asset_data_offset, _ptr_array_start, _string_data_start, _string_data_end = donor_parse_string_table(raw)
+    matches = strict_xanim.find_xanim_by_name(raw, asset_name, min_offset=asset_data_offset)
+    if not matches:
+        raise RuntimeError(f"donor runtime xanim not found: {asset_name} in {ff_path}")
+
+    parsed = matches[0]
+    header = parsed["header"]
+    sections = parsed["sections"]
+    idx_to_name = {idx: name for name, idx in string_map.items()}
+    total = int(header["boneCount"][9])
+    if header["names_ptr"] != 0xFFFFFFFF or "names" not in sections:
+        raise RuntimeError(f"donor runtime xanim missing names section: {asset_name}")
+
+    names_sec = sections["names"]
+    off = int(names_sec["offset"])
+    size = int(names_sec["size"])
+    if size != total * 2:
+        raise RuntimeError(f"donor runtime xanim names size mismatch: {asset_name}")
+
+    donor_names: list[str] = []
+    for i in range(total):
+        donor_idx = struct.unpack_from("<H", raw, off + (i * 2))[0]
+        if donor_idx not in idx_to_name:
+            raise RuntimeError(f"donor runtime xanim string idx out of range: {asset_name}:{donor_idx}")
+        donor_names.append(str(idx_to_name[donor_idx]))
+    return donor_names
+
+
+def _write_xanim_export(anim: dict[str, object], out_path: Path, *, header_message: str) -> None:
+    parts = list(anim.get("parts") or [])
+    frames = anim.get("frames") or {}
+    framerate = int(anim.get("framerate", 30) or 30)
+    numframes = int(anim.get("numframes", 1) or 1)
+
+    lines: list[str] = [
+        f"// {header_message}",
+        f"// Export filename: '{out_path.as_posix()}'",
+        "// Source filename: ''",
+        f"// Export time: {datetime.now().strftime('%a %b %d %H:%M:%S %Y')}",
+        "",
+        "ANIMATION",
+        "VERSION 3",
+        "",
+        f"NUMPARTS {len(parts)}",
+    ]
+    for idx, name in enumerate(parts):
+        lines.append(f'PART {idx} "{name}"')
+    lines.extend(
+        [
+            "",
+            f"FRAMERATE {framerate}",
+            f"NUMFRAMES {numframes}",
+            "",
+        ]
+    )
+
+    frame_indices = sorted(int(k) for k in frames.keys())
+    for frame_idx in frame_indices:
+        lines.append(f"FRAME {frame_idx}")
+        frame_data = frames.get(frame_idx, {}) or {}
+        for part_idx in range(len(parts)):
+            bone = frame_data.get(part_idx) or _identity_export_bone_state()
+            offset = list(bone.get("offset") or [0.0, 0.0, 0.0])
+            rot = list(bone.get("rot") or _identity_export_bone_state()["rot"])
+            lines.append(f"PART {part_idx}")
+            lines.append(f"OFFSET {offset[0]:.6f} {offset[1]:.6f} {offset[2]:.6f}")
+            lines.append("SCALE 1.000000 1.000000 1.000000")
+            lines.append(f"X {rot[0][0]:.6f} {rot[0][1]:.6f} {rot[0][2]:.6f}")
+            lines.append(f"Y {rot[1][0]:.6f} {rot[1][1]:.6f} {rot[1][2]:.6f}")
+            lines.append(f"Z {rot[2][0]:.6f} {rot[2][1]:.6f} {rot[2][2]:.6f}")
+        lines.append("")
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _stage_runtime_xanim_export_donor_order(
+    source_export: Path,
+    runtime_export: Path,
+    runtime_name: str,
+    donor_ff: Path,
+    donor_zone: str,
+    semantic_bind_map: dict[str, str] | None = None,
+) -> dict[str, object]:
+    if cxz is None:
+        raise RuntimeError("xanim donor-order staging requires compile_xanim_zone import")
+
+    anim = cxz.parse_xanim_export(str(source_export))
+    donor_runtime_asset = donor_runtime_oracle_asset_name(runtime_name)
+    donor_names = _load_donor_xanim_name_order(donor_ff, donor_zone, donor_runtime_asset)
+    source_parts = list(anim.get("parts") or [])
+    source_name_to_idx = {str(name).strip().lower(): idx for idx, name in enumerate(source_parts)}
+    semantic_bind_map = {
+        str(runtime_bone).strip().lower(): str(source_bone).strip().lower()
+        for runtime_bone, source_bone in (semantic_bind_map or {}).items()
+        if str(runtime_bone).strip() and str(source_bone).strip()
+    }
+    source_frames = anim.get("frames") or {}
+
+    remapped_frames: dict[int, dict[int, dict[str, object]]] = {}
+    for frame_idx, frame_data in source_frames.items():
+        new_frame: dict[int, dict[str, object]] = {}
+        for donor_idx, donor_name in enumerate(donor_names):
+            donor_key = str(donor_name).strip().lower()
+            source_idx = source_name_to_idx.get(donor_key)
+            if source_idx is None and donor_key in semantic_bind_map:
+                source_idx = source_name_to_idx.get(semantic_bind_map[donor_key])
+            if source_idx is None:
+                new_frame[donor_idx] = _identity_export_bone_state()
+            else:
+                bone = frame_data.get(source_idx) or _identity_export_bone_state()
+                new_frame[donor_idx] = {
+                    "offset": list(bone.get("offset") or [0.0, 0.0, 0.0]),
+                    "rot": list(bone.get("rot") or _identity_export_bone_state()["rot"]),
+                }
+        remapped_frames[int(frame_idx)] = new_frame
+
+    remapped = {
+        "name": runtime_name,
+        "numparts": len(donor_names),
+        "parts": donor_names,
+        "framerate": int(anim.get("framerate", 30) or 30),
+        "numframes": int(anim.get("numframes", 1) or 1),
+        "frames": remapped_frames,
+    }
+    _write_xanim_export(remapped, runtime_export, header_message="Generated donor-ordered runtime xanim_export for target weapon backend")
+    return {
+        "staging_mode": "donor_order_export",
+        "donor_ff": str(donor_ff),
+        "donor_zone": donor_zone,
+        "donor_runtime_asset": donor_runtime_asset,
+        "donor_name_count": len(donor_names),
+        "source_name_count": len(source_parts),
+        "semantic_bind_count": len(semantic_bind_map),
+    }
+
+
+def _stage_runtime_xanim_export_semantic_runtime_name(
+    source_export: Path,
+    runtime_export: Path,
+    runtime_name: str,
+) -> dict[str, object]:
+    if cxz is None:
+        raise RuntimeError("semantic runtime xanim staging requires compile_xanim_zone import")
+
+    anim = cxz.parse_xanim_export(str(source_export))
+    semantic_parts = list(anim.get("parts") or [])
+    remapped = {
+        "name": runtime_name,
+        "numparts": len(semantic_parts),
+        "parts": semantic_parts,
+        "framerate": int(anim.get("framerate", 30) or 30),
+        "numframes": int(anim.get("numframes", 1) or 1),
+        "frames": anim.get("frames") or {},
+    }
+    if anim.get("local_basis_frames"):
+        remapped["local_basis_frames"] = anim.get("local_basis_frames") or {}
+    _write_xanim_export(
+        remapped,
+        runtime_export,
+        header_message="Generated semantic runtime xanim_export with backend asset name",
+    )
+    return {
+        "staging_mode": "semantic_runtime_name",
+        "source_name_count": len(semantic_parts),
+        "donor_name_count": len(semantic_parts),
+    }
+
+
+XANIM_SECTION_ORDER = [
+    "name",
+    "names",
+    "notify",
+    "deltaPart",
+    "dataByte",
+    "dataShort",
+    "dataInt",
+    "randomDataShort",
+    "randomDataByte",
+    "randomDataInt",
+    "indices",
+]
+
+
+def _read_indexed_strings(data: bytes, count: int, string_data_start: int) -> list[str]:
+    out: list[str] = []
+    pos = int(string_data_start)
+    for _ in range(int(count)):
+        end = data.index(b"\x00", pos)
+        out.append(data[pos:end].decode("ascii", errors="replace"))
+        pos = end + 1
+    return out
+
+
+def _load_zone_xanim(ff_path: Path, zone_name: str, asset_name: str) -> tuple[bytes, dict[str, object], dict[str, int], list[str], int]:
+    if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
+        raise RuntimeError("zone xanim load requires strict_xanim_parser + patch_zone_xanims")
+    _magic, raw = donor_decrypt_zone(str(ff_path), zone_name)
+    (
+        string_table,
+        string_count,
+        _asset_count,
+        asset_data_offset,
+        _ptr_array_start,
+        string_data_start,
+        _string_data_end,
+    ) = donor_parse_string_table(raw)
+    idx_to_name = _read_indexed_strings(raw, int(string_count), int(string_data_start))
+    matches = strict_xanim.find_xanim_by_name(raw, asset_name, min_offset=int(asset_data_offset))
+    if not matches:
+        raise RuntimeError(f"xanim asset not found: {asset_name} in {ff_path}")
+    return raw, matches[0], string_table, idx_to_name, int(asset_data_offset)
+
+
+def _decode_xanim_string_section(raw: bytes, parsed: dict[str, object], idx_to_name: list[str], key: str) -> list[str]:
+    header = parsed["header"]
+    sections = parsed["sections"]
+    if key == "names":
+        if header["names_ptr"] != 0xFFFFFFFF or "names" not in sections:
+            return []
+        sec = sections["names"]
+        count = int(header["boneCount"][9])
+        return [
+            idx_to_name[struct.unpack_from("<H", raw, int(sec["offset"]) + (i * 2))[0]]
+            for i in range(count)
+        ]
+    if key == "notify":
+        if header["notify_ptr"] != 0xFFFFFFFF or "notify" not in sections:
+            return []
+        sec = sections["notify"]
+        count = int(header["notifyCount"])
+        names: list[str] = []
+        for i in range(count):
+            idx = struct.unpack_from("<H", raw, int(sec["offset"]) + (i * 8))[0]
+            names.append(idx_to_name[idx])
+        return names
+    raise ValueError(f"Unsupported xanim string section: {key}")
+
+
+def _collect_required_backend_strings(donor_raw: bytes, donor_parsed: dict[str, object], donor_idx_to_name: list[str]) -> list[str]:
+    needed = set(_decode_xanim_string_section(donor_raw, donor_parsed, donor_idx_to_name, "names"))
+    needed.update(_decode_xanim_string_section(donor_raw, donor_parsed, donor_idx_to_name, "notify"))
+    return sorted(needed)
+
+
+def _build_runtime_xanim_reindexed_blob(
+    target_name: str,
+    source_raw: bytes,
+    source_parsed: dict[str, object],
+    source_idx_to_name: list[str],
+    target_string_table: dict[str, int],
+) -> tuple[bytes, dict[str, str]]:
+    source_header = source_parsed["header"]
+    source_sections = source_parsed["sections"]
+    fallbacks: dict[str, str] = {}
+
+    def resolve_backend_string(name: str) -> int:
+        direct = target_string_table.get(name)
+        if direct is not None:
+            return direct
+        candidates: list[str] = []
+        if name.startswith("tag_weapon_"):
+            candidates.extend(["tag_weapon", "j_gun", "tag_gasmask"])
+        elif name == "j_trigger":
+            candidates.extend(["j_bolt", "j_reload", "j_gun", "tag_weapon"])
+        elif name == "j_barrel":
+            candidates.extend(["j_bolt", "j_gun", "tag_weapon"])
+        elif name == "j_bullet1":
+            candidates.extend(["tag_clip", "tag_flash", "j_reload", "tag_weapon"])
+        elif name == "j_elbow_bulge_ri":
+            candidates.extend(["j_elbow_ri", "j_shoulder_ri", "tag_weapon"])
+        elif name == "j_head":
+            candidates.extend(["tag_gasmask", "tag_weapon"])
+        elif name == "j_palm_le":
+            candidates.extend(["j_shoulder_le", "tag_weapon", "tag_gasmask"])
+        elif name == "j_shorts_lift_le":
+            candidates.extend(["j_shoulder_le", "tag_weapon", "tag_gasmask"])
+        elif name.startswith("sound_"):
+            candidates.extend(["tag_weapon", "tag_gasmask"])
+        else:
+            if name.endswith("_ri"):
+                candidates.extend([name.replace("_ri", "_le"), "tag_weapon"])
+            elif name.endswith("_le"):
+                candidates.extend([name.replace("_le", "_ri"), "tag_weapon"])
+            candidates.extend(["tag_weapon", "tag_gasmask"])
+        for candidate in candidates:
+            idx = target_string_table.get(candidate)
+            if idx is not None:
+                fallbacks[name] = candidate
+                return idx
+        raise RuntimeError(f"Target zone missing source xanim string '{name}' and no safe fallback was available")
+
+    out = bytearray(source_raw[int(source_parsed["header_offset"]): int(source_parsed["header_offset"]) + 104])
+
+    for key in XANIM_SECTION_ORDER:
+        section = source_sections.get(key)
+        if key != "name" and not section:
+            continue
+        if key == "name":
+            out.extend(target_name.encode("ascii") + b"\x00")
+            continue
+        if key == "names":
+            source_names = _decode_xanim_string_section(source_raw, source_parsed, source_idx_to_name, "names")
+            for bone_name in source_names:
+                out.extend(struct.pack("<H", resolve_backend_string(bone_name)))
+            continue
+        if key == "notify":
+            notify_names = _decode_xanim_string_section(source_raw, source_parsed, source_idx_to_name, "notify")
+            if not notify_names:
+                continue
+            source_sec = source_sections["notify"]
+            for i, notify_name in enumerate(notify_names):
+                idx = resolve_backend_string(notify_name)
+                source_off = int(source_sec["offset"]) + (i * 8)
+                out.extend(struct.pack("<H", idx))
+                out.extend(source_raw[source_off + 2: source_off + 8])
+            continue
+        off = int(section["offset"])
+        size = int(section["size"])
+        out.extend(source_raw[off: off + size])
+
+    expected_size = int(source_parsed["end_offset"]) - int(source_parsed["header_offset"])
+    if len(out) != expected_size:
+        raise RuntimeError(
+            f"xanim rebuild size mismatch for {target_name}: rebuilt={len(out)} expected={expected_size}"
+        )
+    return bytes(out), fallbacks
+
+
+def _build_runtime_xanim_backend_patch_blob(
+    target_name: str,
+    target_raw: bytes,
+    target_parsed: dict[str, object],
+    donor_raw: bytes,
+    donor_parsed: dict[str, object],
+    donor_idx_to_name: list[str],
+    target_string_table: dict[str, int],
+) -> tuple[bytes, dict[str, str]]:
+    target_header = target_parsed["header"]
+    donor_header = donor_parsed["header"]
+    target_sections = target_parsed["sections"]
+    donor_sections = donor_parsed["sections"]
+
+    if int(target_header["boneCount"][9]) != int(donor_header["boneCount"][9]):
+        raise RuntimeError(
+            f"xanim names count mismatch for {target_name}: "
+            f"target={target_header['boneCount'][9]} donor={donor_header['boneCount'][9]}"
+        )
+    if int(target_header["notifyCount"]) != int(donor_header["notifyCount"]):
+        raise RuntimeError(
+            f"xanim notify count mismatch for {target_name}: "
+            f"target={target_header['notifyCount']} donor={donor_header['notifyCount']}"
+        )
+
+    fallbacks: dict[str, str] = {}
+
+    def resolve_backend_string(name: str) -> int:
+        direct = target_string_table.get(name)
+        if direct is not None:
+            return direct
+        candidates: list[str] = []
+        if name.startswith("tag_weapon_"):
+            candidates.extend(["tag_weapon", "j_gun", "tag_gasmask"])
+        elif name == "j_trigger":
+            candidates.extend(["j_bolt", "j_reload", "j_gun", "tag_weapon"])
+        elif name == "j_barrel":
+            candidates.extend(["j_bolt", "j_gun", "tag_weapon"])
+        elif name == "j_bullet1":
+            candidates.extend(["tag_clip", "tag_flash", "j_reload", "tag_weapon"])
+        elif name == "j_elbow_bulge_ri":
+            candidates.extend(["j_elbow_ri", "j_shoulder_ri", "tag_weapon"])
+        elif name == "j_head":
+            candidates.extend(["tag_gasmask", "tag_weapon"])
+        elif name == "j_palm_le":
+            candidates.extend(["j_shoulder_le", "tag_weapon", "tag_gasmask"])
+        elif name == "j_shorts_lift_le":
+            candidates.extend(["j_shoulder_le", "tag_weapon", "tag_gasmask"])
+        elif name.startswith("sound_"):
+            candidates.extend(["tag_weapon", "tag_gasmask"])
+        else:
+            if name.endswith("_ri"):
+                candidates.extend([name.replace("_ri", "_le"), "tag_weapon"])
+            elif name.endswith("_le"):
+                candidates.extend([name.replace("_le", "_ri"), "tag_weapon"])
+            candidates.extend(["tag_weapon", "tag_gasmask"])
+        for candidate in candidates:
+            idx = target_string_table.get(candidate)
+            if idx is not None:
+                fallbacks[name] = candidate
+                return idx
+        raise RuntimeError(f"Target zone missing donor backend string '{name}' and no safe fallback was available")
+
+    out = bytearray(target_raw[int(target_parsed["header_offset"]): int(target_parsed["header_offset"]) + 104])
+
+    for key in XANIM_SECTION_ORDER:
+        section = target_sections.get(key)
+        if not section:
+            continue
+        if key == "name":
+            out.extend(target_name.encode("ascii") + b"\x00")
+            continue
+        if key == "names":
+            donor_names = _decode_xanim_string_section(donor_raw, donor_parsed, donor_idx_to_name, "names")
+            for bone_name in donor_names:
+                out.extend(struct.pack("<H", resolve_backend_string(bone_name)))
+            continue
+        if key == "notify":
+            donor_sec = donor_sections.get("notify")
+            if donor_sec is None:
+                continue
+            donor_notify_names = _decode_xanim_string_section(donor_raw, donor_parsed, donor_idx_to_name, "notify")
+            for i, notify_name in enumerate(donor_notify_names):
+                idx = resolve_backend_string(notify_name)
+                donor_off = int(donor_sec["offset"]) + (i * 8)
+                out.extend(struct.pack("<H", idx))
+                out.extend(donor_raw[donor_off + 2: donor_off + 8])
+            continue
+        off = int(section["offset"])
+        size = int(section["size"])
+        out.extend(target_raw[off: off + size])
+
+    expected_size = int(target_parsed["end_offset"]) - int(target_parsed["header_offset"])
+    if len(out) != expected_size:
+        raise RuntimeError(
+            f"xanim rebuild size mismatch for {target_name}: rebuilt={len(out)} expected={expected_size}"
+        )
+    return bytes(out), fallbacks
+
+
+def _apply_runtime_idle_debug_signature(
+    xanim_blob: bytes,
+    *,
+    target_name: str,
+    index_to_name: dict[int, str] | None = None,
+) -> bytes:
+    return xanim_blob
+    if strict_xanim is None:
+        return xanim_blob
+    if target_name != "viewmodel_zomb_mg08_idle":
+        return xanim_blob
+    try:
+        parsed = strict_xanim.parse_xanim_blob(xanim_blob, 0)
+    except Exception:
+        return xanim_blob
+    data_int = parsed["sections"].get("dataInt")
+    names_sec = parsed["sections"].get("names")
+    if not data_int or not names_sec:
+        return xanim_blob
+    data = bytearray(xanim_blob)
+    names_off = int(names_sec["offset"])
+    name_count = int(names_sec.get("count", 0))
+    if name_count <= 0:
+        return xanim_blob
+    data_int_off = int(data_int["offset"])
+    data_int_size = int(data_int["size"])
+    float_count = data_int_size // 4
+    if float_count < (name_count * 3):
+        return xanim_blob
+
+    name_values: list[str] = []
+    for bone_idx in range(name_count):
+        name_off = names_off + (bone_idx * 2)
+        script_idx = struct.unpack_from("<H", data, name_off)[0]
+        bone_name = (index_to_name or {}).get(script_idx, "")
+        name_values.append(str(bone_name).strip())
+
+    # Apply a strong but targeted distortion to a handful of backend bones so we
+    # can prove selection without destabilizing every single translation track.
+    hot_names = {
+        "tag_gasmask",
+    }
+    hot_hits = 0
+    for bone_idx, bone_name in enumerate(name_values):
+        base = data_int_off + (bone_idx * 12)
+        if bone_name in hot_names:
+            hot_hits += 1
+            tx = 48.0
+            ty = -18.0
+            tz = 36.0
+            struct.pack_into("<f", data, base + 0, tx)
+            struct.pack_into("<f", data, base + 4, ty)
+            struct.pack_into("<f", data, base + 8, tz)
+    return bytes(data)
+
+
+def _fnv1a32(blob: bytes) -> int:
+    h = 0x811C9DC5
+    for byte in blob:
+        h ^= byte
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def _pick_probe_prefix(blob: bytes, window: int = 16) -> tuple[int, bytes]:
+    if not blob:
+        return 0, b""
+    if len(blob) <= window:
+        return 0, blob
+    best_offset = 0
+    best_chunk = blob[:window]
+    best_score: tuple[int, int, int] | None = None
+    for offset in range(0, len(blob) - window + 1, 4):
+        chunk = blob[offset: offset + window]
+        distinct = len(set(chunk))
+        if distinct < 4:
+            continue
+        if all(byte == 0 for byte in chunk):
+            continue
+        repeats = blob.count(chunk)
+        non_zero = sum(1 for byte in chunk if byte != 0)
+        score = (-repeats, distinct, non_zero)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_offset = offset
+            best_chunk = chunk
+            if repeats == 1 and distinct >= 8:
+                break
+    return best_offset, best_chunk
+
+
+def write_probe_xanim_expectations(runtime_ff: Path, runtime_map: list[dict[str, object]]) -> None:
+    if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
+        return
+    if not runtime_ff.exists() and not (OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff").exists():
+        return
+
+    stock_ff = ROOT / "zone" / "all" / RUNTIME_FF_NAME
+    stock_raw: bytes | None = None
+    stock_asset_data_offset = 0
+    if stock_ff.exists():
+        try:
+            _stock_magic, stock_raw = donor_decrypt_zone(str(stock_ff), RUNTIME_ZONE_NAME)
+            (
+                _stock_string_table,
+                _stock_string_count,
+                _stock_asset_count,
+                stock_asset_data_offset,
+                _stock_ptr_array_start,
+                _stock_string_data_start,
+                _stock_string_data_end,
+            ) = donor_parse_string_table(stock_raw)
+        except Exception as exc:
+            print(f"WARNING: failed to build stock xanim expectations: {exc}")
+            stock_raw = None
+
+    def _load_zone_payload(zone_ff: Path, zone_name: str) -> tuple[bytes, int] | None:
+        if not zone_ff.exists():
+            return None
+        try:
+            _magic, zone_raw = donor_decrypt_zone(str(zone_ff), zone_name)
+            (
+                _string_table,
+                _string_count,
+                _asset_count,
+                zone_asset_data_offset,
+                _ptr_array_start,
+                _string_data_start,
+                _string_data_end,
+            ) = donor_parse_string_table(zone_raw)
+            return zone_raw, int(zone_asset_data_offset)
+        except Exception as exc:
+            print(f"WARNING: failed to build probe xanim expectations from {zone_ff}: {exc}")
+            return None
+
+    def _add_lines_for_asset(
+        lines: list[str],
+        asset_name: str,
+        variant_name: str,
+        variant_raw: bytes,
+        variant_asset_data_offset: int,
+    ) -> bool:
+        matches = strict_xanim.find_xanim_by_name(variant_raw, asset_name, min_offset=int(variant_asset_data_offset))
+        if not matches:
+            return False
+        parsed = matches[0]
+        header = parsed["header"]
+        lines.append(
+            "|".join(
+                [
+                    "asset",
+                    asset_name,
+                    str(int(header["numframes"])),
+                    str(int(header["dataByteCount"])),
+                    str(int(header["dataShortCount"])),
+                    str(int(header["dataIntCount"])),
+                    str(int(header["notifyCount"])),
+                    str(int(header["boneCount"][9])),
+                ]
+            )
+        )
+        for section_name in ("deltaPart", "dataShort", "dataInt"):
+            section = parsed["sections"].get(section_name)
+            if not section:
+                continue
+            off = int(section["offset"])
+            size = int(section["size"])
+            blob = variant_raw[off: off + size]
+            prefix_offset, prefix = _pick_probe_prefix(blob)
+            lines.append(
+                "|".join(
+                    [
+                        "section",
+                        asset_name,
+                        f"{variant_name}_{section_name}",
+                        str(size),
+                        f"0x{_fnv1a32(blob):08X}",
+                        str(prefix_offset),
+                        prefix.hex(),
+                    ]
+                )
+            )
+        return True
+
+    def _stock_oracle_names_for_runtime_entry(entry: dict[str, object]) -> list[str]:
+        runtime_name = str(entry.get("runtime_name", "")).strip()
+        semantic_name = str(entry.get("semantic_name", "")).strip()
+        names: list[str] = []
+        donor_runtime_name = donor_runtime_oracle_asset_name(runtime_name) if runtime_name else ""
+        for candidate in (donor_runtime_name, runtime_name, semantic_name):
+            if candidate and candidate not in names:
+                names.append(candidate)
+        return names
+
+    zone_variants: list[tuple[str, Path, str]] = []
+    if runtime_ff.exists():
+        zone_variants.append(("runtime_custom", runtime_ff, RUNTIME_ZONE_NAME))
+    mod_load_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+    if mod_load_ff.exists():
+        zone_variants.append(("modload_custom", mod_load_ff, MOD_LOAD_ZONE_NAME))
+
+    lines: list[str] = []
+    seen_assets: set[tuple[str, str]] = set()
+    for entry in runtime_map:
+        runtime_name = str(entry.get("runtime_name", "")).strip()
+        if not runtime_name:
+            continue
+        semantic_name = str(entry.get("semantic_name", "")).strip()
+        candidate_names: list[str] = []
+        for name in (runtime_name, semantic_name):
+            if name and name not in candidate_names:
+                candidate_names.append(name)
+        for variant_name, zone_ff, zone_name in zone_variants:
+            zone_payload = _load_zone_payload(zone_ff, zone_name)
+            if zone_payload is None:
+                continue
+            zone_raw, zone_asset_data_offset = zone_payload
+            for candidate_name in candidate_names:
+                dedupe_key = (variant_name, candidate_name.lower())
+                if dedupe_key in seen_assets:
+                    continue
+                if not _add_lines_for_asset(lines, candidate_name, variant_name, zone_raw, zone_asset_data_offset):
+                    continue
+                seen_assets.add(dedupe_key)
+                if stock_raw is not None and variant_name == "runtime_custom":
+                    for stock_name in _stock_oracle_names_for_runtime_entry(entry):
+                        _add_lines_for_asset(lines, stock_name, "stock", stock_raw, stock_asset_data_offset)
+
+    payload = "\n".join(lines) + ("\n" if lines else "")
+    for path in (PROBE_XANIM_EXPECTATIONS_PATH, PROBE_XANIM_EXPECTATIONS_SOURCE_PATH):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+    print(f"Wrote probe xanim expectations -> {PROBE_XANIM_EXPECTATIONS_PATH}")
+
+
+def patch_runtime_ff_xanim_backend_sections(runtime_map: list[dict[str, object]]) -> None:
+    if not runtime_map:
+        return
+    if (
+        strict_xanim is None
+        or donor_decrypt_zone is None
+        or donor_parse_string_table is None
+        or donor_parse_xanim_export is None
+        or donor_build_replacement_data is None
+    ):
+        print("WARNING: skipping runtime xanim backend patch; missing strict parser imports")
+        return
+    if donor_expand_string_table is None or donor_write_patched_zone is None:
+        print("WARNING: skipping runtime xanim backend patch; missing patch_zone_xanims helpers")
+        return
+
+    runtime_ff = OUTPUT / RUNTIME_FF_NAME
+    if not runtime_ff.exists():
+        raise FileNotFoundError(f"Missing runtime FF for xanim backend patch: {runtime_ff}")
+    magic, patched_bytes = donor_decrypt_zone(str(runtime_ff), RUNTIME_ZONE_NAME)
+
+    patch_source_ff = OUTPUT / f"{MOD_LOAD_RUNTIME_PATCH_ZONE_NAME}.ff"
+    patch_source_candidates = [
+        (patch_source_ff, MOD_LOAD_RUNTIME_PATCH_ZONE_NAME),
+        (OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff", MOD_LOAD_ZONE_NAME),
+    ]
+    patch_source_raw: bytes | None = None
+    patch_source_string_table: dict[str, int] | None = None
+    patch_source_idx_to_name: list[str] | None = None
+    patch_source_asset_data_offset: int | None = None
+    patch_source_zone_name: str | None = None
+    patch_source_path: Path | None = None
+    for candidate_path, candidate_zone in patch_source_candidates:
+        if not candidate_path.exists():
+            continue
+        try:
+            _patch_magic, candidate_raw = donor_decrypt_zone(str(candidate_path), candidate_zone)
+            (
+                candidate_string_table,
+                candidate_string_count,
+                _candidate_asset_count,
+                candidate_asset_data_offset,
+                _candidate_ptr_array_start,
+                candidate_string_data_start,
+                _candidate_string_data_end,
+            ) = donor_parse_string_table(candidate_raw)
+            candidate_idx_to_name = _read_indexed_strings(
+                candidate_raw,
+                int(candidate_string_count),
+                int(candidate_string_data_start),
+            )
+            candidate_valid = True
+            for entry in runtime_map:
+                runtime_name = str(entry["runtime_name"]).strip()
+                matches = strict_xanim.find_xanim_by_name(
+                    candidate_raw,
+                    runtime_name,
+                    min_offset=int(candidate_asset_data_offset),
+                )
+                if not matches:
+                    candidate_valid = False
+                    break
+            if not candidate_valid:
+                continue
+            patch_source_raw = candidate_raw
+            patch_source_string_table = candidate_string_table
+            patch_source_idx_to_name = candidate_idx_to_name
+            patch_source_asset_data_offset = candidate_asset_data_offset
+            patch_source_zone_name = candidate_zone
+            patch_source_path = candidate_path
+            break
+        except Exception:
+            continue
+    if patch_source_path is not None:
+        print(f"Using runtime xanim patch source: {patch_source_path} (zone={patch_source_zone_name})")
+
+    # Make sure the runtime FF string table can encode every donor-key bone name
+    # used by the staged runtime exports before we repatch the named blobs.
+    (
+        target_string_table,
+        target_string_count,
+        _target_asset_count,
+        _target_asset_data_offset,
+        target_ptr_array_start,
+        _target_string_data_start,
+        target_string_data_end,
+    ) = donor_parse_string_table(patched_bytes)
+
+    required_strings: set[str] = set()
+    if patch_source_raw is not None and patch_source_idx_to_name is not None and patch_source_asset_data_offset is not None:
+        for entry in runtime_map:
+            runtime_name = str(entry["runtime_name"]).strip()
+            source_matches = strict_xanim.find_xanim_by_name(
+                patch_source_raw,
+                runtime_name,
+                min_offset=int(patch_source_asset_data_offset),
+            )
+            if not source_matches:
+                continue
+            source_parsed = source_matches[0]
+            required_strings.update(
+                str(name).strip()
+                for name in _decode_xanim_string_section(
+                    patch_source_raw,
+                    source_parsed,
+                    patch_source_idx_to_name,
+                    "names",
+                )
+                if str(name).strip()
+            )
+            required_strings.update(
+                str(name).strip()
+                for name in _decode_xanim_string_section(
+                    patch_source_raw,
+                    source_parsed,
+                    patch_source_idx_to_name,
+                    "notify",
+                )
+                if str(name).strip()
+            )
+    else:
+        for entry in runtime_map:
+            staged_export = Path(str(entry.get("staged_export", "")).strip())
+            if not staged_export.exists():
+                raise FileNotFoundError(f"Missing staged runtime xanim export for backend patch: {staged_export}")
+            staged_anim = donor_parse_xanim_export(str(staged_export))
+            required_strings.update(str(name).strip() for name in staged_anim.get("parts", []) if str(name).strip())
+
+    missing_strings = sorted(name for name in required_strings if name not in target_string_table)
+    if missing_strings:
+        patched_bytes, additions = donor_expand_string_table(
+            patched_bytes,
+            missing_strings,
+            int(target_ptr_array_start),
+            int(target_string_data_end),
+            int(target_string_count),
+        )
+        target_string_table.update(additions)
+
+    patched_count = 0
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+
+        (
+            current_string_table,
+            _current_string_count,
+            _current_asset_count,
+            current_asset_data_offset,
+            _current_ptr_array_start,
+            _current_string_data_start,
+            _current_string_data_end,
+        ) = donor_parse_string_table(patched_bytes)
+
+        target_matches = strict_xanim.find_xanim_by_name(
+            patched_bytes,
+            runtime_name,
+            min_offset=int(current_asset_data_offset),
+        )
+        if not target_matches:
+            raise RuntimeError(f"Missing target runtime xanim asset in generated FF: {runtime_name}")
+        target_parsed = target_matches[0]
+
+        if patch_source_raw is not None and patch_source_idx_to_name is not None and patch_source_asset_data_offset is not None:
+            source_matches = strict_xanim.find_xanim_by_name(
+                patch_source_raw,
+                runtime_name,
+                min_offset=int(patch_source_asset_data_offset),
+            )
+            if not source_matches:
+                raise RuntimeError(f"Missing patch-source xanim asset in bo3_frames FF: {runtime_name}")
+            replacement, fallback_map = _build_runtime_xanim_reindexed_blob(
+                runtime_name,
+                patch_source_raw,
+                source_matches[0],
+                patch_source_idx_to_name,
+                current_string_table,
+            )
+            if fallback_map:
+                fallback_desc = ", ".join(f"{src}->{dst}" for src, dst in sorted(fallback_map.items()))
+                print(f"  runtime patch fallbacks ({runtime_name}): {fallback_desc}")
+        else:
+            staged_export = Path(str(entry.get("staged_export", "")).strip())
+            staged_anim = donor_parse_xanim_export(str(staged_export))
+            replacement = donor_build_replacement_data(
+                staged_anim,
+                current_string_table,
+                b"",
+                target_name=runtime_name,
+            )
+
+        replacement = _apply_runtime_idle_debug_signature(
+            replacement,
+            target_name=runtime_name,
+            index_to_name={idx: name for name, idx in current_string_table.items()},
+        )
+
+        old_start = int(target_parsed["header_offset"])
+        old_end = int(target_parsed["end_offset"])
+        old_size = old_end - old_start
+        new_size = len(replacement)
+        delta = new_size - old_size
+
+        patched = bytearray(patched_bytes)
+        patched[old_start:old_end] = replacement
+        if delta != 0:
+            old_total = struct.unpack_from("<I", patched, 0)[0]
+            struct.pack_into("<I", patched, 0, old_total + delta)
+            virtual_off = 8 + int(donor_block_virtual) * 4
+            old_virtual = struct.unpack_from("<I", patched, virtual_off)[0]
+            struct.pack_into("<I", patched, virtual_off, old_virtual + delta)
+        patched_bytes = bytes(patched)
+        patched_count += 1
+
+    donor_write_patched_zone(patched_bytes, RUNTIME_ZONE_NAME, magic, str(runtime_ff))
+
+    verify_raw = donor_decrypt_zone(str(runtime_ff), RUNTIME_ZONE_NAME)[1]
+    stock_verify_raw = None
+    if SO_SURVIVAL_RUNTIME_ORACLE_FF.exists():
+        try:
+            stock_verify_raw = donor_decrypt_zone(str(SO_SURVIVAL_RUNTIME_ORACLE_FF), RUNTIME_ZONE_NAME)[1]
+        except Exception:
+            stock_verify_raw = None
+    (
+        _verify_string_table,
+        _verify_string_count,
+        _verify_asset_count,
+        verify_asset_data_offset,
+        _verify_ptr_array_start,
+        _verify_string_data_start,
+        _verify_string_data_end,
+    ) = donor_parse_string_table(verify_raw)
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        verify_matches = strict_xanim.find_xanim_by_name(
+            verify_raw,
+            runtime_name,
+            min_offset=int(verify_asset_data_offset),
+        )
+        if not verify_matches:
+            raise RuntimeError(f"Patched runtime FF lost xanim asset: {runtime_name}")
+        verify_header = verify_matches[0]["header"]
+        if stock_verify_raw is not None:
+            stock_matches = strict_xanim.find_xanim_by_name(
+                stock_verify_raw,
+                runtime_name,
+                min_offset=0,
+            )
+            if stock_matches:
+                verify_sections = verify_matches[0]["sections"]
+                stock_sections = stock_matches[0]["sections"]
+                identical_sections: list[str] = []
+                for section_name in ("names", "notify", "dataByte", "dataShort", "dataInt", "deltaPart"):
+                    vsec = verify_sections.get(section_name)
+                    ssec = stock_sections.get(section_name)
+                    if not vsec or not ssec:
+                        continue
+                    vblob = verify_raw[int(vsec["offset"]): int(vsec["offset"]) + int(vsec["size"])]
+                    sblob = stock_verify_raw[int(ssec["offset"]): int(ssec["offset"]) + int(ssec["size"])]
+                    if vblob == sblob:
+                        identical_sections.append(section_name)
+                if len(identical_sections) == 6:
+                    raise RuntimeError(
+                        f"Patched runtime FF asset '{runtime_name}' is still byte-identical to stock across "
+                        f"names/notify/dataByte/dataShort/dataInt/deltaPart; patch source={patch_source_path or '<staged_export>'}"
+                    )
+        print(
+            f"  runtime xanim verify {runtime_name}: "
+            f"numframes={verify_header['numframes']} "
+            f"bDelta={verify_header['bDelta']} "
+            f"bDelta3D={verify_header['bDelta3D']} "
+            f"bones={verify_header['boneCount'][9]}"
+        )
+    write_probe_xanim_expectations(runtime_ff, runtime_map)
+    print(f"Repatched runtime FF xanim blobs from staged exports: {patched_count} assets")
+
+
+def runtime_backend_string_seed_names(base_fields: dict[str, str]) -> list[str]:
+    if DISABLE_XANIM_STRING_SEEDS:
+        XANIM_STRING_SEED_REPORT.write_text("[]\n", encoding="utf-8")
+        return []
+    if not USE_BO3_IDG_ANIMS or not bo3_anim_runtime_backend_uses_target_weapon_names():
+        XANIM_STRING_SEED_REPORT.write_text("[]\n", encoding="utf-8")
+        return []
+    if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
+        XANIM_STRING_SEED_REPORT.write_text("[]\n", encoding="utf-8")
+        return []
+
+    donor_ff = SO_SURVIVAL_RUNTIME_ORACLE_FF if SO_SURVIVAL_RUNTIME_ORACLE_FF.exists() else SO_SURVIVAL_BASELINE_FF
+    if not donor_ff.exists():
+        XANIM_STRING_SEED_REPORT.write_text("[]\n", encoding="utf-8")
+        return []
+
+    runtime_map = build_bo3_anim_runtime_map(base_fields)
+    _donor_magic, donor_raw = donor_decrypt_zone(str(donor_ff), RUNTIME_ZONE_NAME)
+    (
+        _donor_string_table,
+        donor_string_count,
+        _donor_asset_count,
+        donor_asset_data_offset,
+        _donor_ptr_array_start,
+        donor_string_data_start,
+        _donor_string_data_end,
+    ) = donor_parse_string_table(donor_raw)
+    donor_idx_to_name = _read_indexed_strings(donor_raw, int(donor_string_count), int(donor_string_data_start))
+
+    needed: set[str] = set()
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        donor_runtime_name = donor_runtime_oracle_asset_name(runtime_name)
+        matches = strict_xanim.find_xanim_by_name(
+            donor_raw,
+            donor_runtime_name,
+            min_offset=int(donor_asset_data_offset),
+        )
+        if not matches:
+            raise RuntimeError(
+                "Missing donor runtime xanim asset while collecting seed strings: "
+                f"{runtime_name} (oracle={donor_runtime_name})"
+            )
+        needed.update(_collect_required_backend_strings(donor_raw, matches[0], donor_idx_to_name))
+
+    out = sorted(needed)
+    XANIM_STRING_SEED_REPORT.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+    return out
+
+
+def stage_runtime_xanim_string_seed_rawfiles(base_fields: dict[str, str]) -> list[str]:
+    seed_names = runtime_backend_string_seed_names(base_fields)
+    for raw_name in seed_names:
+        seed_path = WORK / raw_name
+        seed_path.parent.mkdir(parents=True, exist_ok=True)
+        seed_path.write_text(f"seed:{raw_name}\n", encoding="utf-8")
+    if seed_names:
+        print(f"Staged runtime xanim string seeds: {len(seed_names)} rawfiles")
+    return seed_names
+
+
 def stage_model() -> None:
     if not uses_custom_model():
         return
@@ -3907,7 +5319,17 @@ def stage_model() -> None:
 
     if not IDG_VIEW_GLB_SRC.exists():
         raise FileNotFoundError(f"Missing converted IDG viewmodel GLB: {IDG_VIEW_GLB_SRC}")
-    shutil.copy2(IDG_VIEW_GLB_SRC, IDG_VIEW_GLB_DST)
+    applied_renames: dict[str, str] = {}
+    if USE_BO3_IDG_ANIMS and bo3_anim_runtime_backend_uses_target_weapon_names() and BO3_MODEL_RUNTIME_JOINT_ALIASES:
+        applied_renames = copy_glb_with_joint_renames(
+            IDG_VIEW_GLB_SRC,
+            IDG_VIEW_GLB_DST,
+            model_joint_runtime_rename_map("viewmodel_zomb_mg08_idle"),
+        )
+        if applied_renames:
+            print(f"Applied runtime joint aliases to custom GLB: {len(applied_renames)}")
+    else:
+        shutil.copy2(IDG_VIEW_GLB_SRC, IDG_VIEW_GLB_DST)
 
     xmodel = {
         "$schema": "http://openassettools.dev/schema/xmodel.v1.json",
@@ -3972,6 +5394,67 @@ def read_glb_stats(path: Path) -> dict[str, object]:
         "meshes": len(gltf.get("meshes", [])),
         "materials": len(gltf.get("materials", [])),
     }
+
+
+def copy_glb_with_joint_renames(src: Path, dst: Path, rename_map: dict[str, str] | None = None) -> dict[str, str]:
+    data = src.read_bytes()
+    if data[:4] != b"glTF":
+        raise RuntimeError(f"Not a GLB file: {src}")
+
+    version = data[4:8]
+    total_len = struct.unpack("<I", data[8:12])[0]
+    if total_len != len(data):
+        raise RuntimeError(f"Unexpected GLB length for {src}")
+
+    offset = 12
+    chunks: list[tuple[bytes, bytes]] = []
+    while offset < len(data):
+        chunk_len = struct.unpack("<I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data = data[offset + 8 : offset + 8 + chunk_len]
+        chunks.append((chunk_type, chunk_data))
+        offset += 8 + chunk_len
+
+    if not chunks or chunks[0][0] != b"JSON":
+        raise RuntimeError(f"Invalid GLB JSON chunk: {src}")
+
+    gltf = json.loads(chunks[0][1].decode("utf-8"))
+    rename_map = {
+        str(src_name).strip().lower(): str(dst_name).strip()
+        for src_name, dst_name in (rename_map or {}).items()
+        if str(src_name).strip() and str(dst_name).strip()
+    }
+    applied: dict[str, str] = {}
+    if rename_map:
+        for node in gltf.get("nodes", []) or []:
+            current_name = str((node or {}).get("name", "")).strip()
+            lowered = current_name.lower()
+            replacement = rename_map.get(lowered)
+            if not replacement or replacement == current_name:
+                continue
+            node["name"] = replacement
+            applied[current_name] = replacement
+
+    json_bytes = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    json_padded = json_bytes + (b" " * ((4 - (len(json_bytes) % 4)) % 4))
+
+    out = bytearray()
+    out.extend(b"glTF")
+    out.extend(version)
+    out.extend(b"\x00\x00\x00\x00")
+    out.extend(struct.pack("<I", len(json_padded)))
+    out.extend(b"JSON")
+    out.extend(json_padded)
+
+    for chunk_type, chunk_data in chunks[1:]:
+        padded = chunk_data + (b"\x00" * ((4 - (len(chunk_data) % 4)) % 4))
+        out.extend(struct.pack("<I", len(chunk_data)))
+        out.extend(chunk_type)
+        out.extend(padded)
+
+    out[8:12] = struct.pack("<I", len(out))
+    dst.write_bytes(bytes(out))
+    return applied
 
 
 def copy_glb_with_t5_joint_fix(src: Path, dst: Path) -> None:
@@ -4136,7 +5619,9 @@ def staged_model_material_names() -> list[str]:
 
 
 def using_dedicated_bo3_fx_load_lane() -> bool:
-    return USE_BO3_RAW_FX and USE_DEDICATED_BO3_FX_LOAD
+    return USE_DEDICATED_BO3_FX_LOAD and (
+        USE_BO3_RAW_FX or (USE_BO3_IDG_ANIMS and BO3_FX_LOAD_ZONE_NAME == MOD_LOAD_ZONE_NAME)
+    )
 
 
 def runtime_zone_image_names() -> list[str]:
@@ -6174,17 +7659,28 @@ def stage_stub_zm_viewhands_assets() -> None:
 
 
 def stage_weapon() -> None:
-    pairs = base_weapon_pairs()
-    base_fields = dict(pairs)
+    data = build_weapon_data(force_stock_model_shell=False)
+    for suffix in ("", ".weapon"):
+        (WEAPONS_DIR / f"{WEAPON_ASSET}{suffix}").write_text(data, encoding="utf-8")
+
+
+def build_weapon_data(*, force_stock_model_shell: bool = False) -> str:
+    raw_pairs = base_weapon_pairs()
+    base_fields = base_weapon_fields()
+    pairs = [(key, str(base_fields.get(key, value))) for key, value in raw_pairs]
     updated: list[tuple[str, str]] = []
     seen: set[str] = set()
     base_hand_model = str(base_fields.get("handModel", "")).strip()
-    forced_hand_model = "" if FORCE_LOW_HANDMODEL else ("viewmodel_usa_no_model" if use_custom_idg_viewhands() else base_hand_model)
+    forced_hand_model = (
+        base_hand_model
+        if force_stock_model_shell
+        else ("" if FORCE_LOW_HANDMODEL else ("viewmodel_usa_no_model" if use_custom_idg_viewhands() else base_hand_model))
+    )
     forced = {
         "displayName": "WEAPON_BLACK_HOLE_BOMB" if uses_t5_gersh_assets() else "WEAPON_APOTHICON_SERVANT",
-        "gunModel": "viewmodel_usa_no_model" if use_custom_idg_viewhands() else resolved_gun_model(base_fields),
+        "gunModel": str(base_fields.get("gunModel", "")) if force_stock_model_shell else ("viewmodel_usa_no_model" if use_custom_idg_viewhands() else resolved_gun_model(base_fields)),
         "handModel": forced_hand_model,
-        "worldModel": resolved_world_model(base_fields),
+        "worldModel": str(base_fields.get("worldModel", "")) if force_stock_model_shell else resolved_world_model(base_fields),
         "clipSize": PROOF_CLIP_SIZE,
         "startAmmo": PROOF_START_AMMO,
         "maxAmmo": PROOF_MAX_AMMO,
@@ -6196,7 +7692,7 @@ def stage_weapon() -> None:
     if uses_t5_gersh_assets():
         forced.update(
             {
-                "projectileModel": resolved_world_model(base_fields),
+                "projectileModel": str(base_fields.get("projectileModel", "")) if force_stock_model_shell else resolved_world_model(base_fields),
                 "hudIcon": str(base_fields.get("hudIcon", "hud_empgrenade")),
                 "killIcon": str(base_fields.get("killIcon", "hud_empgrenade")),
                 "explosionRadius": "0",
@@ -6214,6 +7710,7 @@ def stage_weapon() -> None:
     else:
         forced.update(
             {
+                "projectileModel": str(base_fields.get("projectileModel", "")) if force_stock_model_shell else str(base_fields.get("projectileModel", "")),
                 "viewFlashEffect": "",
                 "worldFlashEffect": "",
                 "projTrailEffect": "",
@@ -6227,17 +7724,22 @@ def stage_weapon() -> None:
             updated.append((key, forced[key]))
             continue
         if bo3_anim_field_enabled(key) and key in ANIM_FIELDS:
-            updated.append((key, anim_for_field(key)))
+            runtime_anim_name = bo3_anim_runtime_name_for_field(key, base_fields)
+            if (
+                not force_stock_model_shell
+                and use_survival_only_idle_alias_mode()
+                and bo3_anim_field_group(key) == "idle"
+                and runtime_anim_name == "viewmodel_zomb_mg08_idle"
+            ):
+                runtime_anim_name = survival_idle_runtime_alias()
+            updated.append((key, runtime_anim_name or value))
             continue
         updated.append((key, value))
 
     for key, value in forced.items():
         if key not in seen:
             updated.append((key, value))
-
-    data = format_weapon(updated)
-    for suffix in ("", ".weapon"):
-        (WEAPONS_DIR / f"{WEAPON_ASSET}{suffix}").write_text(data, encoding="utf-8")
+    return format_weapon(updated)
 
 
 def stage_materials() -> None:
@@ -6366,6 +7868,169 @@ def active_xanim_source_dir() -> Path:
     return XANIM_DIR
 
 
+def stage_runtime_xanim_exports(base_fields: dict[str, str]) -> tuple[Path, list[dict[str, object]]]:
+    source_dir = active_xanim_source_dir()
+    if XANIM_RUNTIME_DIR.exists():
+        shutil.rmtree(XANIM_RUNTIME_DIR, ignore_errors=True)
+    XANIM_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    runtime_oracle_ff = SO_SURVIVAL_RUNTIME_ORACLE_FF if SO_SURVIVAL_RUNTIME_ORACLE_FF.exists() else SO_SURVIVAL_BASELINE_FF
+
+    runtime_map = build_bo3_anim_runtime_map(base_fields)
+    if not runtime_map:
+        XANIM_RUNTIME_MAP_REPORT.write_text("[]\n", encoding="utf-8")
+        return XANIM_RUNTIME_DIR, runtime_map
+
+    staged = 0
+    for entry in runtime_map:
+        semantic_name = str(entry["semantic_name"]).strip()
+        runtime_name = str(entry["runtime_name"]).strip()
+        src = source_dir / f"{semantic_name}.xanim_export"
+        dst = XANIM_RUNTIME_DIR / f"{runtime_name}.xanim_export"
+        if not src.exists():
+            raise FileNotFoundError(f"Missing source xanim_export for runtime staging: {src}")
+        donor_stage_meta: dict[str, object] | None = None
+        if bo3_anim_runtime_backend_uses_target_weapon_names():
+            try:
+                donor_stage_meta = _stage_runtime_xanim_export_donor_order(
+                    src,
+                    dst,
+                    runtime_name,
+                    runtime_oracle_ff,
+                    RUNTIME_ZONE_NAME,
+                    semantic_bind_map=(runtime_semantic_bind_map(runtime_name) if BO3_ANIM_RUNTIME_BIND_ALIASES else {}),
+                )
+            except Exception as exc:
+                print(f"WARNING: donor-order runtime xanim staging failed for {runtime_name}: {exc}")
+            if donor_stage_meta is None:
+                try:
+                    donor_stage_meta = _stage_runtime_xanim_export_semantic_runtime_name(
+                        src,
+                        dst,
+                        runtime_name,
+                    )
+                except Exception as exc:
+                    print(f"WARNING: semantic runtime-name xanim staging failed for {runtime_name}: {exc}")
+        elif BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER:
+            try:
+                donor_stage_meta = _stage_runtime_xanim_export_donor_order(
+                    src,
+                    dst,
+                    runtime_name,
+                    runtime_oracle_ff,
+                    RUNTIME_ZONE_NAME,
+                )
+            except Exception as exc:
+                print(f"WARNING: donor-order runtime xanim staging failed for {runtime_name}: {exc}")
+        if donor_stage_meta is None:
+            shutil.copy2(src, dst)
+            donor_stage_meta = {"staging_mode": "semantic_copy"}
+        entry["source_export"] = str(src)
+        entry["staged_export"] = str(dst)
+        entry.update(donor_stage_meta)
+        staged += 1
+
+    XANIM_RUNTIME_MAP_REPORT.write_text(json.dumps(runtime_map, indent=2) + "\n", encoding="utf-8")
+    print(f"Staged runtime xanim exports: {staged} target-named files")
+    return XANIM_RUNTIME_DIR, runtime_map
+
+
+def resolve_bo3_anim_donor_ff() -> Path | None:
+    if BO3_ANIM_DONOR_FF_OVERRIDE:
+        candidate = Path(BO3_ANIM_DONOR_FF_OVERRIDE).resolve()
+        return candidate
+    if XANIM_IDLE_ORACLE_FF.exists():
+        return XANIM_IDLE_ORACLE_FF
+    candidate = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def should_emit_idle_contract_report() -> bool:
+    if not USE_BO3_IDG_ANIMS:
+        return False
+    if BO3_ANIM_STAGE not in {"idleonly", "idlefire", "spawn", "full"}:
+        return False
+    return "vm_zod_id_gun_idle" in set(IDG_ANIMS)
+
+
+def build_idle_contract_report() -> dict[str, object] | None:
+    if not should_emit_idle_contract_report():
+        return None
+    if not XANIM_COMPARE_TOOL.exists():
+        return {
+            "enabled": False,
+            "reason": f"missing compare tool: {XANIM_COMPARE_TOOL}",
+        }
+
+    donor_ff = resolve_bo3_anim_donor_ff()
+    if donor_ff is None or not donor_ff.exists():
+        return {
+            "enabled": False,
+            "reason": "missing donor oracle fastfile",
+        }
+
+    source_export = active_xanim_source_dir() / "vm_zod_id_gun_idle.xanim_export"
+    if not source_export.exists():
+        return {
+            "enabled": False,
+            "reason": f"missing source xanim_export: {source_export}",
+        }
+
+    args = [
+        sys.executable,
+        str(XANIM_COMPARE_TOOL),
+        "--donor-ff",
+        str(donor_ff),
+        "--donor-zone",
+        BO3_ANIM_DONOR_ZONE,
+        "--donor-asset",
+        BO3_ANIM_DONOR_ASSET,
+        "--source-export",
+        str(source_export),
+        "--target-name",
+        "vm_zod_id_gun_idle",
+        "--emit-mode",
+        BO3_ANIM_EMIT_MODE,
+        "--out-json",
+        str(XANIM_IDLE_CONTRACT_REPORT),
+    ]
+    if IDG_WEAPON_ONLY_RIG_REPORT.exists() and not bo3_anim_runtime_backend_uses_target_weapon_names():
+        args.extend(["--keep-bones-file", str(IDG_WEAPON_ONLY_RIG_REPORT)])
+    if BO3_ANIM_FORCE_IDENTITY:
+        args.append("--force-identity-pose")
+    if BO3_ANIM_EMIT_MODE == "bo3_frames":
+        args.extend(["--bo3-frames-target", "vm_zod_id_gun_idle"])
+        args.extend(["--bo3-fallback-mode", "static_pose"])
+        if BO3_IDLE_DIAG_BONE:
+            args.extend(["--bo3-idle-diagnostic-bone", BO3_IDLE_DIAG_BONE])
+        if BO3_IDLE_DIAG_TRANSLATE:
+            diag_tokens = [token for token in re.split(r"[\s,]+", BO3_IDLE_DIAG_TRANSLATE.strip()) if token]
+            if len(diag_tokens) == 3:
+                args.extend(["--bo3-idle-diagnostic-translate", *diag_tokens])
+        if BO3_IDLE_DIAG_FREQUENCY:
+            args.extend(["--bo3-idle-diagnostic-frequency", BO3_IDLE_DIAG_FREQUENCY])
+        if BO3_IDLE_DIAG_STATIC_BONE:
+            args.extend(["--bo3-idle-static-bone", BO3_IDLE_DIAG_STATIC_BONE])
+        if BO3_IDLE_DIAG_STATIC_TRANSLATE:
+            static_tokens = [token for token in re.split(r"[\s,]+", BO3_IDLE_DIAG_STATIC_TRANSLATE.strip()) if token]
+            if len(static_tokens) == 3:
+                args.extend(["--bo3-idle-static-translate", *static_tokens])
+
+    run_checked(args, cwd=ROOT)
+    if not XANIM_IDLE_CONTRACT_REPORT.exists():
+        return {
+            "enabled": False,
+            "reason": "compare tool did not write report",
+        }
+    payload = json.loads(XANIM_IDLE_CONTRACT_REPORT.read_text(encoding="utf-8"))
+    payload["enabled"] = True
+    payload["path"] = str(XANIM_IDLE_CONTRACT_REPORT)
+    payload["source_export"] = str(source_export)
+    payload["donor_ff"] = str(donor_ff)
+    return payload
+
+
 def rebake_bo3_xanim_exports() -> None:
     if not USE_BO3_IDG_ANIMS or not USE_REBAKED_BO3_XANIMS:
         return
@@ -6421,6 +8086,8 @@ def write_zone_source() -> None:
     image_names = runtime_zone_image_names()
     fx_names = runtime_zone_fx_names()
     donor_xanim_names = donor_extra_runtime_xanims()
+    custom_xanim_names = custom_runtime_xanim_names()
+    xanim_string_seed_names = runtime_backend_string_seed_names(base_weapon_fields())
     zone_path = ZONE_SOURCE_DIR / f"{RUNTIME_ZONE_NAME}.zone"
     ipak_directive = f">ipak,{RUNTIME_ZONE_NAME}"
 
@@ -6449,6 +8116,8 @@ def write_zone_source() -> None:
             *[f"script,{name}" for name in active_clientscript_assets()],
             *[f"script,{name}" for name in active_server_script_assets()],
             *[f"xanim,{name}" for name in donor_xanim_names],
+            *[f"xanim,{name}" for name in custom_xanim_names],
+            *[f"rawfile,{name}" for name in xanim_string_seed_names],
             *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
             *([f"xmodel,{WORLD_MODEL_ASSET}"] if uses_t5_gersh_assets() and uses_custom_model() else []),
             *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
@@ -6499,6 +8168,8 @@ def write_zone_source() -> None:
         *[f"script,{name}" for name in active_clientscript_assets()],
         *[f"script,{name}" for name in active_server_script_assets()],
         *[f"xanim,{name}" for name in donor_xanim_names],
+        *[f"xanim,{name}" for name in custom_xanim_names],
+        *[f"rawfile,{name}" for name in xanim_string_seed_names],
         *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
         *([f"xmodel,{WORLD_MODEL_ASSET}"] if uses_t5_gersh_assets() and uses_custom_model() else []),
         *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
@@ -6520,7 +8191,15 @@ def write_fx_load_zone_source() -> None:
     material_names = fx_load_zone_material_names()
     image_names = fx_load_zone_image_names()
     fx_names = fx_load_zone_fx_names()
-    if not fx_names and not material_names and not image_names:
+    donor_xanim_names = donor_extra_runtime_xanims() if using_merged_mod_load_lane() else []
+    custom_xanim_names = custom_runtime_xanim_names() if using_merged_mod_load_lane() else []
+    xanim_string_seed_names = (
+        runtime_backend_string_seed_names(base_weapon_fields()) if using_merged_mod_load_lane() else []
+    )
+    merged_lane_has_anim_assets = bool(
+        donor_xanim_names or custom_xanim_names or xanim_string_seed_names or USE_BO3_IDG_ANIMS
+    )
+    if not fx_names and not material_names and not image_names and not merged_lane_has_anim_assets:
         if zone_path.exists():
             zone_path.unlink()
         return
@@ -6534,6 +8213,35 @@ def write_fx_load_zone_source() -> None:
         *[f"fx,{name}" for name in fx_names],
         *[f"image,{name}" for name in image_names],
         *[f"material,{name}" for name in material_names],
+        *[f"xanim,{name}" for name in donor_xanim_names],
+        *[f"xanim,{name}" for name in custom_xanim_names],
+        *[f"rawfile,{name}" for name in xanim_string_seed_names],
+        *([f"xmodel,{MODEL_ASSET}"] if using_merged_mod_load_lane() and uses_custom_model() else []),
+        *([f"xmodel,{WORLD_MODEL_ASSET}"] if using_merged_mod_load_lane() and uses_t5_gersh_assets() and uses_custom_model() else []),
+        *([f"xmodel,{VIEWHANDS_ASSET}"] if using_merged_mod_load_lane() and use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if using_merged_mod_load_lane() and use_custom_idg_viewhands() else []),
+        *([f"xmodel,{name}" for name in STUB_VIEWHANDS_NAMES] if using_merged_mod_load_lane() and STUB_ZM_VIEWHANDS else []),
+        *( [f"weapon,{WEAPON_ASSET}"] if using_merged_mod_load_lane() else [] ),
+        "",
+    ]
+    zone_path.write_text("\n".join(out), encoding="utf-8")
+
+
+def write_mod_patch_zone_source() -> None:
+    zone_path = ZONE_SOURCE_DIR / f"{MOD_PATCH_ZONE_NAME}.zone"
+    if not USE_BO3_IDG_ANIMS:
+        if zone_path.exists():
+            zone_path.unlink()
+        return
+
+    out = [
+        "// Call Of Duty: Black Ops II",
+        ">game,T6",
+        "",
+        f"weapon,{WEAPON_ASSET}",
+        *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
+        *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
         "",
     ]
     zone_path.write_text("\n".join(out), encoding="utf-8")
@@ -6602,40 +8310,99 @@ def run_capture(args: list[str], cwd: Path | None = None) -> str:
     return result.stdout
 
 
-def compile_mod_load() -> None:
-    xanim_source_dir = active_xanim_source_dir()
-    donor_ff = None
-    if BO3_ANIM_DONOR_FF_OVERRIDE:
-        donor_ff = Path(BO3_ANIM_DONOR_FF_OVERRIDE).resolve()
-    elif XANIM_IDLE_ORACLE_FF.exists():
-        donor_ff = XANIM_IDLE_ORACLE_FF
-    elif (OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff").exists():
-        donor_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+def _runtime_patch_requires_safe_seed_mod_load() -> bool:
+    # The earlier "safe seed" lane compiled a donor-template mod_load first and
+    # kept the real bo3_frames payload in a separate patch-source FF. That was
+    # useful while the runtime backend patcher still depended on staged export
+    # regeneration, but it is now actively harmful for donor-ordered target
+    # weapon exports:
+    #   - donor_template_static_pose expects the donor semantic name table
+    #   - donor-ordered runtime exports already use the target backend name table
+    #   - forcing them through the template emitter can fail outright or erase
+    #     the distinct custom payload we need for runtime patching
+    #
+    # The direct bo3_frames mod_load output is now the intended patch source.
+    if use_survival_only_idle_alias_mode():
+        # The idle alias lane needs a link-loadable owner for the alias name.
+        # The direct bo3_frames carrier currently produces an FF that T6/OAT
+        # refuse to load as a dependency carrier, so restore the earlier
+        # two-phase path here:
+        #   - mod_load.ff: donor-template legal carrier with the alias name
+        #   - mod_load_runtime_patch.ff: real bo3_frames payload used only as
+        #     the runtime survival patch source
+        return True
+    return False
 
+
+def _runtime_patch_can_skip_mod_load_link_load() -> bool:
+    # Target-runtime-name patching rewrites the survival FF directly, so the
+    # standalone xanim carrier does not need to be link-loaded in that lane.
+    # Semantic-name lanes still rely on a carrier FF to satisfy custom xanim
+    # references during runtime-zone linking.
+    if use_survival_only_idle_alias_mode():
+        # The alias lane emits a runtime-only backend name (`...idlz`) that does
+        # not exist in stock fastfiles. Keep the custom carrier loaded during
+        # runtime linking so the linker can resolve that direct xanim reference
+        # instead of falling back to the stock `...idle` owner and forcing us
+        # back into unsafe post-link renames.
+        return False
+    return bo3_anim_runtime_backend_uses_target_weapon_names() and not _runtime_patch_requires_safe_seed_mod_load()
+
+
+def _compile_mod_load_variant(
+    *,
+    zone_name: str,
+    emit_mode: str,
+    source_dir: Path,
+    xanim_pattern: str,
+    bo3_frames_targets: list[str],
+    runtime_map: list[dict[str, object]],
+    donor_ff: Path | None,
+) -> None:
     args = [
         sys.executable,
         str(XANIM_COMPILER),
         "--xanim-dir",
-        str(xanim_source_dir),
+        str(source_dir),
         "--pattern",
-        "vm_zod_id_gun_*.xanim_export",
+        xanim_pattern,
         "--output-dir",
         str(OUTPUT),
         "--zone-name",
-        MOD_LOAD_ZONE_NAME,
+        zone_name,
         "--crypto-seed",
-        MOD_LOAD_ZONE_NAME,
+        zone_name,
         "--emit-mode",
-        BO3_ANIM_EMIT_MODE,
+        emit_mode,
         "--bo3-frames-targets",
-        *IDG_ANIMS,
+        *bo3_frames_targets,
         "--bo3-fallback-mode",
         "static_pose",
         "--no-semantic-fill",
     ]
     if BO3_ANIM_FORCE_IDENTITY:
         args.append("--force-identity-pose")
-    if BO3_ANIM_EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose"):
+    if BO3_IDLE_DIAG_BONE:
+        args.extend(["--bo3-idle-diagnostic-bone", BO3_IDLE_DIAG_BONE])
+    if BO3_IDLE_DIAG_TRANSLATE:
+        diag_tokens = [token for token in re.split(r"[\s,]+", BO3_IDLE_DIAG_TRANSLATE.strip()) if token]
+        if len(diag_tokens) == 3:
+            args.extend(["--bo3-idle-diagnostic-translate", *diag_tokens])
+    if BO3_IDLE_DIAG_FREQUENCY:
+        args.extend(["--bo3-idle-diagnostic-frequency", BO3_IDLE_DIAG_FREQUENCY])
+    if BO3_IDLE_DIAG_STATIC_BONE:
+        args.extend(["--bo3-idle-static-bone", BO3_IDLE_DIAG_STATIC_BONE])
+    if BO3_IDLE_DIAG_STATIC_TRANSLATE:
+        static_tokens = [token for token in re.split(r"[\s,]+", BO3_IDLE_DIAG_STATIC_TRANSLATE.strip()) if token]
+        if len(static_tokens) == 3:
+            args.extend(["--bo3-idle-static-translate", *static_tokens])
+    if bo3_anim_runtime_backend_uses_target_weapon_names() and BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER:
+        # Donor-ordered runtime exports already define the exact backend bone
+        # contract. Re-injecting generic view/camera bones here mutates the
+        # target bone count and produces a runtime payload that no longer
+        # matches the stock backend asset shape.
+        args.append("--ensure-bones")
+    if emit_mode in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose"):
         if donor_ff is None or not donor_ff.exists():
             raise FileNotFoundError(
                 "Missing donor oracle FF for custom anim compile. "
@@ -6650,12 +8417,71 @@ def compile_mod_load() -> None:
                 "--donor-asset",
                 BO3_ANIM_DONOR_ASSET,
                 "--donor-override",
-                f"vm_zod_id_gun_idle={BO3_ANIM_DONOR_ASSET}",
+                (
+                    f"{next((entry['runtime_name'] for entry in runtime_map if entry['semantic_name'] == 'vm_zod_id_gun_idle'), 'vm_zod_id_gun_idle')}="
+                    f"{BO3_ANIM_DONOR_ASSET}"
+                ),
             ]
         )
-    if IDG_WEAPON_ONLY_RIG_REPORT.exists():
+    if IDG_WEAPON_ONLY_RIG_REPORT.exists() and not bo3_anim_runtime_backend_uses_target_weapon_names():
         args.extend(["--keep-bones-file", str(IDG_WEAPON_ONLY_RIG_REPORT)])
+    print(f"Compiling xanim lane: zone={zone_name} emit_mode={emit_mode}")
     run_checked(args, cwd=ROOT)
+
+
+def compile_mod_load() -> None:
+    if EXTERNAL_MOD_LOAD_FF:
+        external_ff = Path(EXTERNAL_MOD_LOAD_FF)
+        if not external_ff.exists():
+            raise FileNotFoundError(f"Missing external mod_load FF: {external_ff}")
+        dst = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+        shutil.copy2(external_ff, dst)
+        print(f"Using external mod_load FF -> {dst}")
+        return
+
+    base_fields = dict(base_weapon_pairs())
+    xanim_source_dir = active_xanim_source_dir()
+    xanim_pattern = "vm_zod_id_gun_*.xanim_export"
+    bo3_frames_targets = list(IDG_ANIMS)
+    donor_ff = resolve_bo3_anim_donor_ff()
+
+    runtime_map: list[dict[str, object]] = []
+    if bo3_anim_runtime_backend_uses_target_weapon_names():
+        xanim_source_dir, runtime_map = stage_runtime_xanim_exports(base_fields)
+        xanim_pattern = "*.xanim_export"
+        bo3_frames_targets = [str(entry["runtime_name"]) for entry in runtime_map]
+    if _runtime_patch_requires_safe_seed_mod_load():
+        _compile_mod_load_variant(
+            zone_name=MOD_LOAD_ZONE_NAME,
+            emit_mode="donor_template_static_pose",
+            source_dir=xanim_source_dir,
+            xanim_pattern=xanim_pattern,
+            bo3_frames_targets=bo3_frames_targets,
+            runtime_map=runtime_map,
+            donor_ff=donor_ff,
+        )
+        _compile_mod_load_variant(
+            zone_name=MOD_LOAD_RUNTIME_PATCH_ZONE_NAME,
+            emit_mode=BO3_ANIM_EMIT_MODE,
+            source_dir=xanim_source_dir,
+            xanim_pattern=xanim_pattern,
+            bo3_frames_targets=bo3_frames_targets,
+            runtime_map=runtime_map,
+            donor_ff=donor_ff,
+        )
+    else:
+        _compile_mod_load_variant(
+            zone_name=MOD_LOAD_ZONE_NAME,
+            emit_mode=BO3_ANIM_EMIT_MODE,
+            source_dir=xanim_source_dir,
+            xanim_pattern=xanim_pattern,
+            bo3_frames_targets=bo3_frames_targets,
+            runtime_map=runtime_map,
+            donor_ff=donor_ff,
+        )
+        stale_patch_source = OUTPUT / f"{MOD_LOAD_RUNTIME_PATCH_ZONE_NAME}.ff"
+        if stale_patch_source.exists():
+            stale_patch_source.unlink()
 
 
 def build_dedicated_bo3_fx_load_ff() -> None:
@@ -6702,6 +8528,15 @@ def build_dedicated_bo3_fx_load_ff() -> None:
                 str(support_root),
             ]
         )
+    if using_merged_mod_load_lane():
+        seed_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.xanim_seed.ff"
+        compiled_mod_load_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+        if not compiled_mod_load_ff.exists():
+            raise FileNotFoundError(
+                f"Missing compiled xanim mod_load FF for merged lane: {compiled_mod_load_ff}"
+            )
+        shutil.copy2(compiled_mod_load_ff, seed_ff)
+        args.extend(["--load", str(seed_ff)])
     args.extend(
         [
             "--output-folder",
@@ -6710,6 +8545,279 @@ def build_dedicated_bo3_fx_load_ff() -> None:
         ]
     )
     run_checked(args, cwd=ROOT)
+
+
+def build_mod_patch_ff() -> None:
+    if not USE_BO3_IDG_ANIMS:
+        return
+
+    mod_patch_work = WORK / "_mod_patch_work"
+    if mod_patch_work.exists():
+        shutil.rmtree(mod_patch_work)
+    (mod_patch_work / "zone_source").mkdir(parents=True, exist_ok=True)
+    (mod_patch_work / "weapons").mkdir(parents=True, exist_ok=True)
+
+    zone_path = mod_patch_work / "zone_source" / f"{MOD_PATCH_ZONE_NAME}.zone"
+    zone_path.write_text(
+        "\n".join(
+            [
+                "// Call Of Duty: Black Ops II",
+                ">game,T6",
+                "",
+                f"weapon,{WEAPON_ASSET}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    weapon_data = build_weapon_data(force_stock_model_shell=True)
+    for suffix in ("", ".weapon"):
+        (mod_patch_work / "weapons" / f"{WEAPON_ASSET}{suffix}").write_text(weapon_data, encoding="utf-8")
+
+    args = [
+        str(runtime_linker_path()),
+        "--verbose",
+        "--base-folder",
+        str(mod_patch_work),
+        "--add-asset-search-path",
+        str(mod_patch_work),
+        "--add-source-search-path",
+        str(mod_patch_work),
+        "--add-asset-search-path",
+        str(ZONE_RAW_ROOT),
+        "--add-source-search-path",
+        str(ZONE_RAW_ROOT),
+        "--output-folder",
+        str(OUTPUT),
+    ]
+    for ff in LOAD_FFS:
+        args.extend(["--load", str(ff)])
+    args.extend(["--load", str(SO_SURVIVAL_BASELINE_FF)])
+    args.append(MOD_PATCH_ZONE_NAME)
+    run_checked(args, cwd=ROOT)
+
+
+def patch_mod_patch_ff_xanim_backend_sections(runtime_map: list[dict[str, object]]) -> None:
+    if not runtime_map:
+        return
+    if (
+        strict_xanim is None
+        or donor_decrypt_zone is None
+        or donor_parse_string_table is None
+        or donor_write_patched_zone is None
+    ):
+        print("WARNING: skipping mod_patch xanim backend patch; missing strict parser imports")
+        return
+
+    mod_patch_ff = OUTPUT / f"{MOD_PATCH_ZONE_NAME}.ff"
+    runtime_ff = OUTPUT / RUNTIME_FF_NAME
+    if not mod_patch_ff.exists() or not runtime_ff.exists():
+        return
+
+    runtime_magic, runtime_raw = donor_decrypt_zone(str(runtime_ff), RUNTIME_ZONE_NAME)
+    (
+        _runtime_string_table,
+        runtime_string_count,
+        _runtime_asset_count,
+        runtime_asset_data_offset,
+        _runtime_ptr_array_start,
+        runtime_string_data_start,
+        _runtime_string_data_end,
+    ) = donor_parse_string_table(runtime_raw)
+    runtime_idx_to_name = _read_indexed_strings(
+        runtime_raw,
+        int(runtime_string_count),
+        int(runtime_string_data_start),
+    )
+
+    mod_patch_magic, mod_patch_raw = donor_decrypt_zone(str(mod_patch_ff), MOD_PATCH_ZONE_NAME)
+    patched_bytes = mod_patch_raw
+    patched_count = 0
+
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        if not runtime_name:
+            continue
+
+        (
+            current_string_table,
+            _current_string_count,
+            _current_asset_count,
+            current_asset_data_offset,
+            _current_ptr_array_start,
+            _current_string_data_start,
+            _current_string_data_end,
+        ) = donor_parse_string_table(patched_bytes)
+
+        target_matches = strict_xanim.find_xanim_by_name(
+            patched_bytes,
+            runtime_name,
+            min_offset=int(current_asset_data_offset),
+        )
+        if not target_matches:
+            continue
+
+        source_matches = strict_xanim.find_xanim_by_name(
+            runtime_raw,
+            runtime_name,
+            min_offset=int(runtime_asset_data_offset),
+        )
+        if not source_matches:
+            raise RuntimeError(f"Missing runtime FF xanim asset while patching mod_patch: {runtime_name}")
+
+        replacement, fallback_map = _build_runtime_xanim_reindexed_blob(
+            runtime_name,
+            runtime_raw,
+            source_matches[0],
+            runtime_idx_to_name,
+            current_string_table,
+        )
+        if fallback_map:
+            fallback_desc = ", ".join(f"{src}->{dst}" for src, dst in sorted(fallback_map.items()))
+            print(f"  mod_patch runtime fallbacks ({runtime_name}): {fallback_desc}")
+
+        replacement = _apply_runtime_idle_debug_signature(
+            replacement,
+            target_name=runtime_name,
+            index_to_name={idx: name for name, idx in current_string_table.items()},
+        )
+
+        target_parsed = target_matches[0]
+        old_start = int(target_parsed["header_offset"])
+        old_end = int(target_parsed["end_offset"])
+        old_size = old_end - old_start
+        new_size = len(replacement)
+        delta = new_size - old_size
+
+        patched = bytearray(patched_bytes)
+        patched[old_start:old_end] = replacement
+        if delta != 0:
+            old_total = struct.unpack_from("<I", patched, 0)[0]
+            struct.pack_into("<I", patched, 0, old_total + delta)
+            virtual_off = 8 + int(donor_block_virtual) * 4
+            old_virtual = struct.unpack_from("<I", patched, virtual_off)[0]
+            struct.pack_into("<I", patched, virtual_off, old_virtual + delta)
+        patched_bytes = bytes(patched)
+        patched_count += 1
+
+    if patched_count == 0:
+        return
+
+    donor_write_patched_zone(patched_bytes, MOD_PATCH_ZONE_NAME, mod_patch_magic, str(mod_patch_ff))
+    verify_raw = donor_decrypt_zone(str(mod_patch_ff), MOD_PATCH_ZONE_NAME)[1]
+    (
+        _verify_string_table,
+        _verify_string_count,
+        _verify_asset_count,
+        verify_asset_data_offset,
+        _verify_ptr_array_start,
+        _verify_string_data_start,
+        _verify_string_data_end,
+    ) = donor_parse_string_table(verify_raw)
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        if not runtime_name:
+            continue
+        verify_matches = strict_xanim.find_xanim_by_name(
+            verify_raw,
+            runtime_name,
+            min_offset=int(verify_asset_data_offset),
+        )
+        if not verify_matches:
+            continue
+        verify_header = verify_matches[0]["header"]
+        print(
+            f"  mod_patch xanim verify {runtime_name}: "
+            f"numframes={verify_header['numframes']} "
+            f"bDelta={verify_header['bDelta']} "
+            f"bDelta3D={verify_header['bDelta3D']} "
+            f"bones={verify_header['boneCount'][9]}"
+        )
+    print(f"Repatched mod_patch FF xanim blobs from runtime FF: {patched_count} assets")
+
+
+def rename_xanim_asset_in_zone(ff_path: Path, zone_name: str, old_name: str, new_name: str) -> bool:
+    if (
+        strict_xanim is None
+        or donor_decrypt_zone is None
+        or donor_parse_string_table is None
+        or donor_write_patched_zone is None
+    ):
+        return False
+    if len(old_name) != len(new_name):
+        raise ValueError(f"rename_xanim_asset_in_zone requires same-length names: {old_name} -> {new_name}")
+    if not ff_path.exists():
+        return False
+
+    magic, raw = donor_decrypt_zone(str(ff_path), zone_name)
+    (
+        _string_map,
+        _string_count,
+        _asset_count,
+        asset_data_offset,
+        _ptr_array_start,
+        _string_data_start,
+        _string_data_end,
+    ) = donor_parse_string_table(raw)
+    matches = strict_xanim.find_xanim_by_name(raw, old_name, min_offset=int(asset_data_offset))
+    if not matches:
+        return False
+
+    patched = bytearray(raw)
+    replaced = 0
+    old_bytes = old_name.encode("ascii")
+    new_bytes = new_name.encode("ascii")
+    for match in matches:
+        section = match.get("sections", {}).get("name", {})
+        offset = int(section.get("offset", 0))
+        size = int(section.get("size", 0))
+        if offset <= 0 or size != len(old_bytes) + 1:
+            continue
+        if patched[offset:offset + len(old_bytes)] != old_bytes:
+            continue
+        patched[offset:offset + len(new_bytes)] = new_bytes
+        replaced += 1
+
+    if replaced <= 0:
+        return False
+
+    donor_write_patched_zone(bytes(patched), zone_name, magic, str(ff_path))
+
+    verify_raw = donor_decrypt_zone(str(ff_path), zone_name)[1]
+    verify_old = strict_xanim.find_xanim_by_name(verify_raw, old_name, min_offset=int(asset_data_offset))
+    verify_new = strict_xanim.find_xanim_by_name(verify_raw, new_name, min_offset=int(asset_data_offset))
+    if verify_old:
+        raise RuntimeError(f"Failed to rename {old_name} out of {ff_path}")
+    if len(verify_new) < replaced:
+        raise RuntimeError(f"Failed to verify renamed xanim {new_name} in {ff_path}")
+    print(f"Renamed xanim asset {old_name} -> {new_name} in {ff_path.name} ({replaced} matches)")
+    return True
+
+
+def isolate_runtime_xanim_name_owners(runtime_map: list[dict[str, object]]) -> None:
+    if not USE_BO3_IDG_ANIMS or not bo3_anim_runtime_backend_uses_target_weapon_names():
+        return
+    if BO3_ANIM_STAGE != "idleonly":
+        return
+
+    for entry in runtime_map:
+        runtime_name = str(entry.get("runtime_name", "")).strip()
+        semantic_name = str(entry.get("semantic_name", "")).strip()
+        if runtime_name != "viewmodel_zomb_mg08_idle" or semantic_name != "vm_zod_id_gun_idle":
+            continue
+        alias_survival = "viewmodel_zomb_mg08_idlz"
+        alias_patch = "viewmodel_zomb_mg08_idlq"
+        rename_xanim_asset_in_zone(OUTPUT / RUNTIME_FF_NAME, RUNTIME_ZONE_NAME, runtime_name, alias_survival)
+        rename_xanim_asset_in_zone(OUTPUT / MOD_PATCH_FF_NAME, MOD_PATCH_ZONE_NAME, runtime_name, alias_patch)
+        return
+
+
+def use_modload_only_idle_owner_mode() -> bool:
+    return (
+        USE_BO3_IDG_ANIMS
+        and bo3_anim_runtime_backend_uses_target_weapon_names()
+        and BO3_ANIM_STAGE == "idleonly"
+    )
 
 
 def build_runtime_ff() -> None:
@@ -6733,6 +8841,10 @@ def build_runtime_ff() -> None:
     # as a live search root. It contains partial dumped stock assets (notably
     # soundbank CSVs) that can override loaded stock fastfile assets and force
     # regeneration instead of reuse, which breaks startup fidelity.
+    if USE_BO3_IDG_ANIMS and not _runtime_patch_can_skip_mod_load_link_load():
+        compiled_mod_load_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+        if compiled_mod_load_ff.exists():
+            args.extend(["--load", str(compiled_mod_load_ff)])
     for ff in LOAD_FFS:
         args.extend(["--load", str(ff)])
     args.extend(["--load", str(SO_SURVIVAL_BASELINE_FF)])
@@ -6748,7 +8860,16 @@ def verify_runtime_ff_safety() -> None:
     if not runtime_ff.exists():
         raise FileNotFoundError(f"Missing runtime FF: {runtime_ff}")
 
-    assets = parse_unlinker_list(run_capture([str(UNLINKER), "--list", str(runtime_ff)], cwd=ROOT))
+    try:
+        assets = parse_unlinker_list(run_capture([str(UNLINKER), "--list", str(runtime_ff)], cwd=ROOT))
+    except RuntimeError as exc:
+        if ALLOW_STRIPPED_SURVIVAL_FF:
+            print(
+                "WARNING: bypassing runtime FF Unlinker safety enumeration failure "
+                f"for {runtime_ff.name}: {exc}"
+            )
+            return
+        raise
     baseline_ff = ZM_TRANSIT_BASELINE_FF if USE_MAP_FULL_ZONE_SOURCE else SO_SURVIVAL_BASELINE_FF
     baseline_size = baseline_ff.stat().st_size if baseline_ff.exists() else 0
     runtime_size = runtime_ff.stat().st_size
@@ -6913,6 +9034,7 @@ def render_probe_script() -> None:
         "__RAW_FX_VORTEX__": "1" if raw_fx_stage_enabled("full") else "0",
         "__RAW_FX_STRICT__": "1" if RAW_FX_STRICT else "0",
         "__CLIENT_FX_ENABLED__": "1" if clientscript_override_enabled() else "0",
+        "__ANIM_GRANT_DELAY_SECONDS__": ANIM_GRANT_DELAY_SECONDS,
     }
     rendered = SCRIPT_TEMPLATE.read_text(encoding="utf-8")
     for token, value in tokens.items():
@@ -7080,8 +9202,10 @@ def deploy_outputs() -> None:
         output_names = [RUNTIME_FF_NAME, RUNTIME_IPAK_NAME]
         if USE_BO3_IDG_ANIMS or using_dedicated_bo3_fx_load_lane():
             output_names.insert(1, BO3_FX_LOAD_FF_NAME if using_dedicated_bo3_fx_load_lane() else f"{MOD_LOAD_ZONE_NAME}.ff")
+        if USE_BO3_IDG_ANIMS:
+            output_names.insert(2, MOD_PATCH_FF_NAME)
         if using_dedicated_bo3_fx_load_lane():
-            output_names.insert(2, BO3_FX_LOAD_IPAK_NAME)
+            output_names.insert(3, BO3_FX_LOAD_IPAK_NAME)
         for ff_name in output_names:
             src = OUTPUT / ff_name
             if not src.exists():
@@ -7168,6 +9292,10 @@ def try_parse_unlinker_list(path: Path) -> tuple[list[str], str | None]:
         known_unlinker_limits = (
             "T6::XFILE_BLOCK_STREAMER_RESERVE",
             "T6::XFILE_BLOCK_DELAY_VIRTUAL",
+            "T6::XFILE_BLOCK_VIRTUAL",
+            "unsupported asset type",
+            "Command failed (3221225477)",
+            "0xC0000005",
         )
         if any(token in text for token in known_unlinker_limits):
             return [], text
@@ -7406,7 +9534,7 @@ def build_debug_report() -> None:
     mod_load_ff = OUTPUT / BO3_FX_LOAD_FF_NAME
     mod_load_ipak = OUTPUT / BO3_FX_LOAD_IPAK_NAME
 
-    runtime_ff_list = parse_unlinker_list(run_capture([str(UNLINKER), "--list", str(runtime_ff)], cwd=ROOT))
+    runtime_ff_list, runtime_ff_list_warning = try_parse_unlinker_list(runtime_ff)
     mod_load_ff_list: list[str] = []
     mod_load_ff_list_warning: str | None = None
     if mod_load_ff.exists():
@@ -7426,6 +9554,7 @@ def build_debug_report() -> None:
     hazmat_total_nodes = sum_component_counts([hazmat_viewhands_info, hand_model_info, gun_model_info], "nodes")
     hazmat_total_joints = sum_component_counts([hazmat_viewhands_info, hand_model_info, gun_model_info], "joints")
     active_source_model = T5_GERSH_VIEW_GLB_SRC if uses_t5_gersh_assets() else IDG_VIEW_GLB_SRC
+    idle_contract_report = build_idle_contract_report()
     report = {
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
         "build_tag": BUILD_TAG,
@@ -7441,6 +9570,7 @@ def build_debug_report() -> None:
                 "path": str(runtime_ff),
                 "sha256": sha256(runtime_ff),
                 "assets": runtime_ff_list,
+                "list_warning": runtime_ff_list_warning,
             },
             "runtime_ipak": {
                 "path": str(runtime_ipak),
@@ -7515,6 +9645,22 @@ def build_debug_report() -> None:
                 "ammoName": base_fields.get("ammoName"),
                 "clipName": base_fields.get("clipName"),
             },
+        },
+        "xanim_probe": {
+            "enabled": USE_BO3_IDG_ANIMS,
+            "stage": BO3_ANIM_STAGE,
+            "emit_mode": BO3_ANIM_EMIT_MODE,
+            "runtime_backend": BO3_ANIM_RUNTIME_BACKEND,
+            "force_identity": BO3_ANIM_FORCE_IDENTITY,
+            "use_rebaked": USE_REBAKED_BO3_XANIMS,
+            "source_dir": str(active_xanim_source_dir()) if USE_BO3_IDG_ANIMS else "",
+            "runtime_stage_dir": str(XANIM_RUNTIME_DIR) if USE_BO3_IDG_ANIMS else "",
+            "runtime_map_report": str(XANIM_RUNTIME_MAP_REPORT) if USE_BO3_IDG_ANIMS else "",
+            "subset": list(IDG_ANIMS),
+            "donor_ff": str(resolve_bo3_anim_donor_ff()) if resolve_bo3_anim_donor_ff() else "",
+            "donor_zone": BO3_ANIM_DONOR_ZONE,
+            "donor_asset": BO3_ANIM_DONOR_ASSET,
+            "idle_contract_report": idle_contract_report or {},
         },
         "first_person_composition": {
             "active_components": {
@@ -7655,16 +9801,35 @@ def main() -> int:
     if USE_BO3_IDG_ANIMS:
         convert_anim_bins_to_exports()
         rebake_bo3_xanim_exports()
+        stage_runtime_xanim_string_seed_rawfiles(base_weapon_fields())
+        if bo3_anim_runtime_backend_uses_target_weapon_names():
+            # The runtime zone source must be authored after the donor-key
+            # runtime map exists; otherwise custom_runtime_xanim_names() falls
+            # back to semantic BO3 names and leaks them into the survival FF.
+            stage_runtime_xanim_exports(base_weapon_fields())
     write_zone_source()
     write_fx_load_zone_source()
+    write_mod_patch_zone_source()
     sync_zone_raw_mirror()
     if USE_BO3_IDG_ANIMS:
         compile_mod_load()
     if using_dedicated_bo3_fx_load_lane():
-        verify_custom_linker_contract_probe()
+        if USE_BO3_RAW_FX:
+            verify_custom_linker_contract_probe()
         build_dedicated_bo3_fx_load_ff()
         verify_dedicated_bo3_fx_load_ff()
     build_runtime_ff()
+    if USE_BO3_IDG_ANIMS and bo3_anim_runtime_backend_uses_target_weapon_names() and PATCH_RUNTIME_BACKEND_FF:
+        runtime_map = json.loads(XANIM_RUNTIME_MAP_REPORT.read_text(encoding="utf-8")) if XANIM_RUNTIME_MAP_REPORT.exists() else []
+        if not use_modload_only_idle_owner_mode():
+            patch_runtime_ff_xanim_backend_sections(runtime_map)
+    if USE_BO3_IDG_ANIMS:
+        build_mod_patch_ff()
+        if bo3_anim_runtime_backend_uses_target_weapon_names() and PATCH_RUNTIME_BACKEND_FF:
+            runtime_map = json.loads(XANIM_RUNTIME_MAP_REPORT.read_text(encoding="utf-8")) if XANIM_RUNTIME_MAP_REPORT.exists() else []
+            if not use_modload_only_idle_owner_mode():
+                patch_mod_patch_ff_xanim_backend_sections(runtime_map)
+            isolate_runtime_xanim_name_owners(runtime_map)
     verify_runtime_ff_safety()
     verify_runtime_ipak()
     deploy_outputs()
