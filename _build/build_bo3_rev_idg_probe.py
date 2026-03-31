@@ -3428,6 +3428,10 @@ IDG_VIEW_GLB_SRC = (
     else ROOT / "_build" / "bo3_rev_idg_weapon_only" / "bo3_rev_idg_weapon_only.glb"
 )
 IDG_WEAPON_ONLY_RIG_REPORT = ROOT / "_build" / "bo3_rev_idg_weapon_only" / "weapon_only_rig_report.json"
+IDG_RUNTIME_MODEL_DIR = WORK / "runtime_model"
+IDG_RUNTIME_MODEL_MANIFEST = IDG_RUNTIME_MODEL_DIR / "weapon_runtime_manifest.json"
+IDG_RUNTIME_MODEL_GLB_SRC = IDG_RUNTIME_MODEL_DIR / f"{MODEL_ASSET}_runtime_reduced.glb"
+IDG_RUNTIME_MODEL_METADATA = IDG_RUNTIME_MODEL_DIR / "weapon_runtime_rig_metadata.json"
 IDG_VIEW_GLB_DST = MODEL_EXPORT_DIR / f"{MODEL_ASSET}_lod0.glb"
 IDG_VIEWHANDS_GLB_DST = MODEL_EXPORT_DIR / "bo3_rev_idg_viewhands_lod0.glb"
 BRIDGE_VIEWHANDS_GLB_DST = MODEL_EXPORT_DIR / "bo3_rev_bridge_viewhands_lod0.glb"
@@ -3502,7 +3506,18 @@ WEAPON_SOURCE_ROOTS = [
     ZONE_DUMP_TOMB_ROOT,
 ]
 MIN_VIEWHANDS_TOOL = ROOT / "_build" / "rebuild_min_viewhands_glb.py"
-STUB_VIEWHANDS_NAMES = ["c_zom_suit_viewhands", "c_zom_hazmat_viewhands"]
+IDG_REDUCE_WORKER = ROOT / "tools" / "asset_port_pipeline" / "blender_idg_reduce_worker.py"
+STUB_VIEWHANDS_NAMES = [
+    "c_zom_suit_viewhands",
+    "c_zom_hazmat_viewhands",
+    "c_zom_farmgirl_viewhands",
+    "c_zom_reporter_viewhands",
+    "c_zom_engineer_viewhands",
+]
+RUNTIME_MODEL_BONE_CAP = max(
+    16,
+    int(os.environ.get("ROGUE_RUNTIME_MODEL_BONE_CAP", "64").strip() or "64"),
+)
 
 
 def runtime_linker_path() -> Path:
@@ -3910,6 +3925,14 @@ def use_custom_idg_viewhands() -> bool:
     return USE_CUSTOM_IDG_VIEWHANDS and not probe_only_fast_path_enabled()
 
 
+def use_bridge_viewmodel() -> bool:
+    if probe_only_fast_path_enabled():
+        return False
+    if use_custom_idg_viewhands():
+        return True
+    return uses_custom_model() and FORCE_LOW_HANDMODEL
+
+
 def resolved_gun_model(base_fields: dict[str, str]) -> str:
     if uses_custom_model():
         return MODEL_ASSET
@@ -4007,6 +4030,39 @@ def donor_runtime_oracle_asset_name(runtime_name: str) -> str:
     if name == "viewmodel_zomb_mg08_idlq":
         return "viewmodel_zomb_mg08_idle"
     return name
+
+
+def resolve_runtime_oracle_asset_name(ff_path: Path, zone_name: str, runtime_name: str) -> str:
+    primary = str(runtime_name or "").strip()
+    fallback = donor_runtime_oracle_asset_name(primary)
+    candidates: list[str] = []
+    for candidate in (primary, fallback):
+        candidate = str(candidate or "").strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    if not candidates:
+        raise RuntimeError("Empty runtime oracle xanim candidate set")
+    if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
+        return candidates[-1]
+
+    _magic, raw = donor_decrypt_zone(str(ff_path), zone_name)
+    (
+        _string_table,
+        _string_count,
+        _asset_count,
+        asset_data_offset,
+        _ptr_array_start,
+        _string_data_start,
+        _string_data_end,
+    ) = donor_parse_string_table(raw)
+    for candidate in candidates:
+        matches = strict_xanim.find_xanim_by_name(raw, candidate, min_offset=int(asset_data_offset))
+        if matches:
+            return candidate
+    raise RuntimeError(
+        "donor runtime xanim not found in oracle FF: "
+        f"{primary} (fallback={fallback}) in {ff_path}"
+    )
 
 
 def bo3_anim_runtime_name_for_field(field_name: str, base_fields: dict[str, str]) -> str:
@@ -4265,6 +4321,98 @@ def model_joint_runtime_rename_map(runtime_name: str) -> dict[str, str]:
     return out
 
 
+def runtime_model_source_semantic_order(runtime_name: str) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for semantic_name in runtime_semantic_bind_map(runtime_name).values():
+        name = str(semantic_name or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
+def runtime_model_keep_bones(runtime_name: str) -> list[str]:
+    ordered = runtime_model_source_semantic_order(runtime_name)
+    if not ordered:
+        return []
+
+    preferred_front = [
+        "tag_weapon",
+        "tag_sphincter_02_animate",
+        "tag_flash",
+        "tag_claw_back_left_01_animate",
+        "tag_pincer_left_01_animate",
+        "tag_jaw_lower_1_animate",
+        "tag_jaw_upper_1_animate",
+        "tag_eye_back_01_animate",
+        "tag_eye_back_02_animate",
+        "tag_tentacle_tail_01_animate",
+    ]
+    front: list[str] = []
+    seen: set[str] = set()
+    for name in preferred_front + ordered:
+        if name in ordered and name not in seen:
+            front.append(name)
+            seen.add(name)
+    return front[: min(RUNTIME_MODEL_BONE_CAP, len(front))]
+
+
+def build_runtime_reduced_model_glb(runtime_name: str) -> Path | None:
+    if not uses_custom_model() or uses_t5_gersh_assets():
+        return None
+    if not USE_BO3_IDG_ANIMS or not bo3_anim_runtime_backend_uses_target_weapon_names():
+        return None
+    if not IDG_VIEW_GLB_SRC.exists():
+        raise FileNotFoundError(f"Missing source GLB for runtime model reduction: {IDG_VIEW_GLB_SRC}")
+    if not IDG_REDUCE_WORKER.exists():
+        raise FileNotFoundError(f"Missing Blender runtime model reducer: {IDG_REDUCE_WORKER}")
+
+    keep_bones = runtime_model_keep_bones(runtime_name)
+    if not keep_bones:
+        return None
+
+    required = [name for name in ("tag_weapon", "tag_sphincter_02_animate", "tag_flash") if name in keep_bones]
+    manifest = {
+        "t6_bone_cap": len(keep_bones),
+        "weapon_keep_bones": keep_bones,
+        "required_bones": required,
+        "fit_transform": {"scale": [1.0, 1.0, 1.0], "translation": [0.0, 0.0, 0.0]},
+    }
+    write_json(IDG_RUNTIME_MODEL_MANIFEST, manifest)
+
+    blender_exe = choose_blender_executable(os.environ.get("ROGUE_BLENDER_EXE", "blender"))
+    if not Path(blender_exe).exists() and shutil.which(blender_exe) is None:
+        raise FileNotFoundError(f"Blender executable not found: {blender_exe}")
+
+    IDG_RUNTIME_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        blender_exe,
+        "-b",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        str(IDG_REDUCE_WORKER),
+        "--",
+        "--weapon-glb",
+        str(IDG_VIEW_GLB_SRC),
+        "--manifest",
+        str(IDG_RUNTIME_MODEL_MANIFEST),
+        "--output",
+        str(IDG_RUNTIME_MODEL_GLB_SRC),
+        "--metadata-out",
+        str(IDG_RUNTIME_MODEL_METADATA),
+        "--mode",
+        "weapon_only",
+    ]
+    run_checked(cmd, cwd=ROOT)
+    if not IDG_RUNTIME_MODEL_GLB_SRC.exists():
+        raise FileNotFoundError(f"Runtime reduced GLB was not produced: {IDG_RUNTIME_MODEL_GLB_SRC}")
+    return IDG_RUNTIME_MODEL_GLB_SRC
+
+
 def _load_donor_xanim_name_order(ff_path: Path, zone_name: str, asset_name: str) -> list[str]:
     if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
         raise RuntimeError("xanim donor-order staging requires strict_xanim_parser + patch_zone_xanims")
@@ -4357,7 +4505,7 @@ def _stage_runtime_xanim_export_donor_order(
         raise RuntimeError("xanim donor-order staging requires compile_xanim_zone import")
 
     anim = cxz.parse_xanim_export(str(source_export))
-    donor_runtime_asset = donor_runtime_oracle_asset_name(runtime_name)
+    donor_runtime_asset = resolve_runtime_oracle_asset_name(donor_ff, donor_zone, runtime_name)
     donor_names = _load_donor_xanim_name_order(donor_ff, donor_zone, donor_runtime_asset)
     source_parts = list(anim.get("parts") or [])
     source_name_to_idx = {str(name).strip().lower(): idx for idx, name in enumerate(source_parts)}
@@ -4704,7 +4852,6 @@ def _apply_runtime_idle_debug_signature(
     target_name: str,
     index_to_name: dict[int, str] | None = None,
 ) -> bytes:
-    return xanim_blob
     if strict_xanim is None:
         return xanim_blob
     if target_name != "viewmodel_zomb_mg08_idle":
@@ -4738,6 +4885,8 @@ def _apply_runtime_idle_debug_signature(
     # Apply a strong but targeted distortion to a handful of backend bones so we
     # can prove selection without destabilizing every single translation track.
     hot_names = {
+        "j_gun",
+        "tag_weapon",
         "tag_gasmask",
     }
     hot_hits = 0
@@ -4745,9 +4894,9 @@ def _apply_runtime_idle_debug_signature(
         base = data_int_off + (bone_idx * 12)
         if bone_name in hot_names:
             hot_hits += 1
-            tx = 48.0
-            ty = -18.0
-            tz = 36.0
+            tx = 96.0
+            ty = -40.0
+            tz = 72.0
             struct.pack_into("<f", data, base + 0, tx)
             struct.pack_into("<f", data, base + 4, ty)
             struct.pack_into("<f", data, base + 8, tz)
@@ -5209,6 +5358,161 @@ def patch_runtime_ff_xanim_backend_sections(runtime_map: list[dict[str, object]]
     print(f"Repatched runtime FF xanim blobs from staged exports: {patched_count} assets")
 
 
+def patch_mod_load_ff_xanim_backend_sections(runtime_map: list[dict[str, object]]) -> None:
+    if not runtime_map:
+        return
+    if (
+        strict_xanim is None
+        or donor_decrypt_zone is None
+        or donor_parse_string_table is None
+        or donor_write_patched_zone is None
+    ):
+        print("WARNING: skipping mod_load xanim backend patch; missing strict parser imports")
+        return
+
+    mod_load_ff = OUTPUT / f"{MOD_LOAD_ZONE_NAME}.ff"
+    runtime_ff = OUTPUT / RUNTIME_FF_NAME
+    if not mod_load_ff.exists() or not runtime_ff.exists():
+        return
+
+    runtime_magic, runtime_raw = donor_decrypt_zone(str(runtime_ff), RUNTIME_ZONE_NAME)
+    (
+        _runtime_string_table,
+        runtime_string_count,
+        _runtime_asset_count,
+        runtime_asset_data_offset,
+        _runtime_ptr_array_start,
+        runtime_string_data_start,
+        _runtime_string_data_end,
+    ) = donor_parse_string_table(runtime_raw)
+    runtime_idx_to_name = _read_indexed_strings(
+        runtime_raw,
+        int(runtime_string_count),
+        int(runtime_string_data_start),
+    )
+
+    mod_load_magic, mod_load_raw = donor_decrypt_zone(str(mod_load_ff), MOD_LOAD_ZONE_NAME)
+    patched_bytes = mod_load_raw
+    patched_count = 0
+
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        if not runtime_name:
+            continue
+
+        (
+            current_string_table,
+            _current_string_count,
+            _current_asset_count,
+            current_asset_data_offset,
+            _current_ptr_array_start,
+            _current_string_data_start,
+            _current_string_data_end,
+        ) = donor_parse_string_table(patched_bytes)
+
+        target_matches = strict_xanim.find_xanim_by_name(
+            patched_bytes,
+            runtime_name,
+            min_offset=int(current_asset_data_offset),
+        )
+        if not target_matches:
+            continue
+
+        target_parsed = target_matches[0]
+        source_matches = strict_xanim.find_xanim_by_name(
+            runtime_raw,
+            runtime_name,
+            min_offset=int(runtime_asset_data_offset),
+        )
+        if not source_matches:
+            raise RuntimeError(f"Missing runtime FF xanim asset while patching mod_load: {runtime_name}")
+
+        replacement, fallback_map = _build_runtime_xanim_reindexed_blob(
+            runtime_name,
+            runtime_raw,
+            source_matches[0],
+            runtime_idx_to_name,
+            current_string_table,
+        )
+        if fallback_map:
+            fallback_desc = ", ".join(f"{src}->{dst}" for src, dst in sorted(fallback_map.items()))
+            print(f"  mod_load runtime fallbacks ({runtime_name}): {fallback_desc}")
+
+        replacement = _apply_runtime_idle_debug_signature(
+            replacement,
+            target_name=runtime_name,
+            index_to_name={idx: name for name, idx in current_string_table.items()},
+        )
+
+        old_start = int(target_parsed["header_offset"])
+        old_end = int(target_parsed["end_offset"])
+        old_size = old_end - old_start
+        new_size = len(replacement)
+        if new_size > old_size:
+            print(
+                f"  mod_load runtime replacement too large ({runtime_name}): "
+                f"replacement={new_size} target={old_size}"
+            )
+            continue
+
+        replacement_padded = replacement + (b"\x00" * (old_size - new_size))
+        patched = bytearray(patched_bytes)
+        patched[old_start:old_end] = replacement_padded
+        patched_bytes = bytes(patched)
+        patched_count += 1
+        print(
+            f"  mod_load full-asset patch {runtime_name}: "
+            f"assetSize={old_size} payloadSize={new_size} md5={hashlib.md5(replacement).hexdigest()}"
+        )
+
+    if patched_count == 0:
+        return
+
+    donor_write_patched_zone(patched_bytes, MOD_LOAD_ZONE_NAME, mod_load_magic, str(mod_load_ff))
+    verify_raw = donor_decrypt_zone(str(mod_load_ff), MOD_LOAD_ZONE_NAME)[1]
+    (
+        _verify_string_table,
+        _verify_string_count,
+        _verify_asset_count,
+        verify_asset_data_offset,
+        _verify_ptr_array_start,
+        _verify_string_data_start,
+        _verify_string_data_end,
+    ) = donor_parse_string_table(verify_raw)
+    for entry in runtime_map:
+        runtime_name = str(entry["runtime_name"]).strip()
+        if not runtime_name:
+            continue
+        verify_matches = strict_xanim.find_xanim_by_name(
+            verify_raw,
+            runtime_name,
+            min_offset=int(verify_asset_data_offset),
+        )
+        if not verify_matches:
+            continue
+        verify_parsed = verify_matches[0]
+        verify_header = verify_parsed["header"]
+        verify_data_int = verify_parsed["sections"].get("dataInt")
+        verify_md5 = ""
+        if verify_data_int:
+            start = int(verify_data_int["offset"])
+            size = int(verify_data_int["size"])
+            verify_md5 = hashlib.md5(verify_raw[start : start + size]).hexdigest()
+        verify_asset_md5 = hashlib.md5(
+            verify_raw[int(verify_parsed["header_offset"]) : int(verify_parsed["end_offset"])]
+        ).hexdigest()
+        print(
+            f"  mod_load xanim verify {runtime_name}: "
+            f"numframes={verify_header['numframes']} "
+            f"bDelta={verify_header['bDelta']} "
+            f"bDelta3D={verify_header['bDelta3D']} "
+            f"bones={verify_header['boneCount'][9]} "
+            f"dataIntMd5={verify_md5} "
+            f"assetMd5={verify_asset_md5}"
+        )
+    print(f"Repatched mod_load FF xanim assets from runtime FF with fixed-size padding: {patched_count} assets")
+
+
 def runtime_backend_string_seed_names(base_fields: dict[str, str]) -> list[str]:
     if DISABLE_XANIM_STRING_SEEDS:
         XANIM_STRING_SEED_REPORT.write_text("[]\n", encoding="utf-8")
@@ -5241,7 +5545,7 @@ def runtime_backend_string_seed_names(base_fields: dict[str, str]) -> list[str]:
     needed: set[str] = set()
     for entry in runtime_map:
         runtime_name = str(entry["runtime_name"]).strip()
-        donor_runtime_name = donor_runtime_oracle_asset_name(runtime_name)
+        donor_runtime_name = resolve_runtime_oracle_asset_name(donor_ff, RUNTIME_ZONE_NAME, runtime_name)
         matches = strict_xanim.find_xanim_by_name(
             donor_raw,
             donor_runtime_name,
@@ -5319,17 +5623,22 @@ def stage_model() -> None:
 
     if not IDG_VIEW_GLB_SRC.exists():
         raise FileNotFoundError(f"Missing converted IDG viewmodel GLB: {IDG_VIEW_GLB_SRC}")
+    staged_glb_src = IDG_VIEW_GLB_SRC
+    if USE_BO3_IDG_ANIMS and bo3_anim_runtime_backend_uses_target_weapon_names():
+        runtime_glb = build_runtime_reduced_model_glb("viewmodel_zomb_mg08_idle")
+        if runtime_glb is not None:
+            staged_glb_src = runtime_glb
     applied_renames: dict[str, str] = {}
     if USE_BO3_IDG_ANIMS and bo3_anim_runtime_backend_uses_target_weapon_names() and BO3_MODEL_RUNTIME_JOINT_ALIASES:
         applied_renames = copy_glb_with_joint_renames(
-            IDG_VIEW_GLB_SRC,
+            staged_glb_src,
             IDG_VIEW_GLB_DST,
             model_joint_runtime_rename_map("viewmodel_zomb_mg08_idle"),
         )
         if applied_renames:
             print(f"Applied runtime joint aliases to custom GLB: {len(applied_renames)}")
     else:
-        shutil.copy2(IDG_VIEW_GLB_SRC, IDG_VIEW_GLB_DST)
+        shutil.copy2(staged_glb_src, IDG_VIEW_GLB_DST)
 
     xmodel = {
         "$schema": "http://openassettools.dev/schema/xmodel.v1.json",
@@ -7574,7 +7883,7 @@ def stage_bridge_viewhands_asset() -> None:
     dst_json = XMODEL_DIR / f"{BRIDGE_VIEWHANDS_ASSET}.json"
     dst_glb = BRIDGE_VIEWHANDS_GLB_DST
 
-    if not use_custom_idg_viewhands():
+    if not use_bridge_viewmodel():
         for path in (dst_json, dst_glb):
             try:
                 if path.exists():
@@ -7633,29 +7942,55 @@ def stage_stub_zm_viewhands_assets() -> None:
         print(f"Stub ZM viewhands disabled (purged {removed} staged overrides).")
         return
 
-    if not MIN_VIEWHANDS_TOOL.exists():
+    use_custom_stub_viewhands = use_custom_idg_viewhands()
+    if not use_custom_stub_viewhands and not MIN_VIEWHANDS_TOOL.exists():
         raise FileNotFoundError(f"Missing minimal viewhands tool: {MIN_VIEWHANDS_TOOL}")
+    if use_custom_stub_viewhands and not IDG_VIEW_GLB_SRC.exists():
+        raise FileNotFoundError(f"Missing custom IDG viewhands source GLB: {IDG_VIEW_GLB_SRC}")
 
     for name in STUB_VIEWHANDS_NAMES:
         src_json = ZONE_DUMP_SOURCE_ROOT / "xmodel" / f"{name}.json"
         src_glb = ZONE_DUMP_SOURCE_ROOT / "model_export" / f"{name}_lod0.glb"
         if not src_json.exists() or not src_glb.exists():
-            raise FileNotFoundError(
-                f"Missing stock viewhands source for {name}: json={src_json.exists()} glb={src_glb.exists()}"
-            )
+            fallback_name = "c_zom_suit_viewhands"
+            src_json = ZONE_DUMP_SOURCE_ROOT / "xmodel" / f"{fallback_name}.json"
+            src_glb = ZONE_DUMP_SOURCE_ROOT / "model_export" / f"{fallback_name}_lod0.glb"
+            if not src_json.exists() or not src_glb.exists():
+                raise FileNotFoundError(
+                    f"Missing stock viewhands source for {name} and fallback {fallback_name}: "
+                    f"json={src_json.exists()} glb={src_glb.exists()}"
+                )
 
         dst_json = XMODEL_DIR / f"{name}.json"
         dst_glb = MODEL_EXPORT_DIR / f"{name}_lod0.glb"
-        shutil.copy2(src_json, dst_json)
-        cmd = [sys.executable, str(MIN_VIEWHANDS_TOOL), "--src-glb", str(src_glb), "--out-glb", str(dst_glb)]
-        result = subprocess.run(cmd, cwd=str(ROOT), text=True, capture_output=True)
-        if result.returncode != 0:
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(result.stderr)
-            raise RuntimeError(f"Failed building stub viewhands GLB for {name}: exit={result.returncode}")
-        print(f"Staged stub viewhands '{name}' -> {dst_glb}")
+        meta = json.loads(src_json.read_text(encoding="utf-8", errors="replace"))
+        if use_custom_stub_viewhands:
+            shutil.copy2(IDG_VIEW_GLB_SRC, dst_glb)
+        else:
+            cmd = [sys.executable, str(MIN_VIEWHANDS_TOOL), "--src-glb", str(src_glb), "--out-glb", str(dst_glb)]
+            result = subprocess.run(cmd, cwd=str(ROOT), text=True, capture_output=True)
+            if result.returncode != 0:
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+                raise RuntimeError(f"Failed building stub viewhands GLB for {name}: exit={result.returncode}")
+        out = {
+            "$schema": "http://openassettools.dev/schema/xmodel.v1.json",
+            "_game": "t6",
+            "_type": "xmodel",
+            "_version": 2,
+            "flags": int(meta.get("flags", 786432)),
+            "lightingOriginOffset": meta.get("lightingOriginOffset", {"x": 0.0, "y": 0.0, "z": 0.5}),
+            "lightingOriginRange": float(meta.get("lightingOriginRange", 0.5)),
+            "lods": [{"distance": 900.0, "file": f"model_export/{name}_lod0.glb"}],
+            "type": "viewhands",
+        }
+        dst_json.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+        if use_custom_stub_viewhands:
+            print(f"Staged custom stub viewhands '{name}' -> {dst_glb}")
+        else:
+            print(f"Staged stub viewhands '{name}' -> {dst_glb}")
 
 
 def stage_weapon() -> None:
@@ -7671,10 +8006,11 @@ def build_weapon_data(*, force_stock_model_shell: bool = False) -> str:
     updated: list[tuple[str, str]] = []
     seen: set[str] = set()
     base_hand_model = str(base_fields.get("handModel", "")).strip()
+    low_hand_model = "viewmodel_usa_no_model"
     forced_hand_model = (
         base_hand_model
         if force_stock_model_shell
-        else ("" if FORCE_LOW_HANDMODEL else ("viewmodel_usa_no_model" if use_custom_idg_viewhands() else base_hand_model))
+        else (low_hand_model if FORCE_LOW_HANDMODEL else (low_hand_model if use_custom_idg_viewhands() else base_hand_model))
     )
     forced = {
         "displayName": "WEAPON_BLACK_HOLE_BOMB" if uses_t5_gersh_assets() else "WEAPON_APOTHICON_SERVANT",
@@ -8121,7 +8457,7 @@ def write_zone_source() -> None:
             *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
             *([f"xmodel,{WORLD_MODEL_ASSET}"] if uses_t5_gersh_assets() and uses_custom_model() else []),
             *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
-            *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
+            *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_bridge_viewmodel() else []),
             *([f"xmodel,{name}" for name in STUB_VIEWHANDS_NAMES] if STUB_ZM_VIEWHANDS else []),
             f"weapon,{WEAPON_ASSET}",
         ]
@@ -8173,7 +8509,7 @@ def write_zone_source() -> None:
         *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
         *([f"xmodel,{WORLD_MODEL_ASSET}"] if uses_t5_gersh_assets() and uses_custom_model() else []),
         *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
-        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_bridge_viewmodel() else []),
         *([f"xmodel,{name}" for name in STUB_VIEWHANDS_NAMES] if STUB_ZM_VIEWHANDS else []),
         f"weapon,{WEAPON_ASSET}",
         "",
@@ -8219,7 +8555,7 @@ def write_fx_load_zone_source() -> None:
         *([f"xmodel,{MODEL_ASSET}"] if using_merged_mod_load_lane() and uses_custom_model() else []),
         *([f"xmodel,{WORLD_MODEL_ASSET}"] if using_merged_mod_load_lane() and uses_t5_gersh_assets() and uses_custom_model() else []),
         *([f"xmodel,{VIEWHANDS_ASSET}"] if using_merged_mod_load_lane() and use_custom_idg_viewhands() else []),
-        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if using_merged_mod_load_lane() and use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if using_merged_mod_load_lane() and use_bridge_viewmodel() else []),
         *([f"xmodel,{name}" for name in STUB_VIEWHANDS_NAMES] if using_merged_mod_load_lane() and STUB_ZM_VIEWHANDS else []),
         *( [f"weapon,{WEAPON_ASSET}"] if using_merged_mod_load_lane() else [] ),
         "",
@@ -8241,7 +8577,7 @@ def write_mod_patch_zone_source() -> None:
         f"weapon,{WEAPON_ASSET}",
         *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
         *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
-        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_bridge_viewmodel() else []),
         "",
     ]
     zone_path.write_text("\n".join(out), encoding="utf-8")
@@ -8558,19 +8894,18 @@ def build_mod_patch_ff() -> None:
     (mod_patch_work / "weapons").mkdir(parents=True, exist_ok=True)
 
     zone_path = mod_patch_work / "zone_source" / f"{MOD_PATCH_ZONE_NAME}.zone"
-    zone_path.write_text(
-        "\n".join(
-            [
-                "// Call Of Duty: Black Ops II",
-                ">game,T6",
-                "",
-                f"weapon,{WEAPON_ASSET}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    weapon_data = build_weapon_data(force_stock_model_shell=True)
+    zone_lines = [
+        "// Call Of Duty: Black Ops II",
+        ">game,T6",
+        "",
+        f"weapon,{WEAPON_ASSET}",
+        *([f"xmodel,{MODEL_ASSET}"] if uses_custom_model() else []),
+        *([f"xmodel,{VIEWHANDS_ASSET}"] if use_custom_idg_viewhands() else []),
+        *([f"xmodel,{BRIDGE_VIEWHANDS_ASSET}"] if use_bridge_viewmodel() else []),
+        "",
+    ]
+    zone_path.write_text("\n".join(zone_lines), encoding="utf-8")
+    weapon_data = build_weapon_data(force_stock_model_shell=False)
     for suffix in ("", ".weapon"):
         (mod_patch_work / "weapons" / f"{WEAPON_ASSET}{suffix}").write_text(weapon_data, encoding="utf-8")
 
@@ -8583,6 +8918,10 @@ def build_mod_patch_ff() -> None:
         str(mod_patch_work),
         "--add-source-search-path",
         str(mod_patch_work),
+        "--add-asset-search-path",
+        str(WORK),
+        "--add-source-search-path",
+        str(WORK),
         "--add-asset-search-path",
         str(ZONE_RAW_ROOT),
         "--add-source-search-path",
@@ -8795,9 +9134,7 @@ def rename_xanim_asset_in_zone(ff_path: Path, zone_name: str, old_name: str, new
 
 
 def isolate_runtime_xanim_name_owners(runtime_map: list[dict[str, object]]) -> None:
-    if not USE_BO3_IDG_ANIMS or not bo3_anim_runtime_backend_uses_target_weapon_names():
-        return
-    if BO3_ANIM_STAGE != "idleonly":
+    if not use_survival_only_idle_alias_mode():
         return
 
     for entry in runtime_map:
@@ -8813,11 +9150,7 @@ def isolate_runtime_xanim_name_owners(runtime_map: list[dict[str, object]]) -> N
 
 
 def use_modload_only_idle_owner_mode() -> bool:
-    return (
-        USE_BO3_IDG_ANIMS
-        and bo3_anim_runtime_backend_uses_target_weapon_names()
-        and BO3_ANIM_STAGE == "idleonly"
-    )
+    return False
 
 
 def build_runtime_ff() -> None:
@@ -9035,6 +9368,13 @@ def render_probe_script() -> None:
         "__RAW_FX_STRICT__": "1" if RAW_FX_STRICT else "0",
         "__CLIENT_FX_ENABLED__": "1" if clientscript_override_enabled() else "0",
         "__ANIM_GRANT_DELAY_SECONDS__": ANIM_GRANT_DELAY_SECONDS,
+        "__USE_CUSTOM_VIEWMODEL__": "true" if use_bridge_viewmodel() else "false",
+        "__TARGET_VIEWMODEL__": (
+            resolved_gun_model(base_weapon_fields())
+            if uses_custom_model() and use_bridge_viewmodel() and not use_custom_idg_viewhands()
+            else (BRIDGE_VIEWHANDS_ASSET if use_bridge_viewmodel() and not use_custom_idg_viewhands() else VIEWHANDS_ASSET)
+        ),
+        "__BRIDGE_VIEWMODEL__": resolved_gun_model(base_weapon_fields()) if uses_custom_model() else BRIDGE_VIEWHANDS_ASSET,
     }
     rendered = SCRIPT_TEMPLATE.read_text(encoding="utf-8")
     for token, value in tokens.items():
@@ -9553,7 +9893,12 @@ def build_debug_report() -> None:
     suit_total_joints = sum_component_counts([suit_viewhands_info, hand_model_info, gun_model_info], "joints")
     hazmat_total_nodes = sum_component_counts([hazmat_viewhands_info, hand_model_info, gun_model_info], "nodes")
     hazmat_total_joints = sum_component_counts([hazmat_viewhands_info, hand_model_info, gun_model_info], "joints")
-    active_source_model = T5_GERSH_VIEW_GLB_SRC if uses_t5_gersh_assets() else IDG_VIEW_GLB_SRC
+    if uses_t5_gersh_assets():
+        active_source_model = T5_GERSH_VIEW_GLB_SRC
+    elif IDG_RUNTIME_MODEL_GLB_SRC.exists():
+        active_source_model = IDG_RUNTIME_MODEL_GLB_SRC
+    else:
+        active_source_model = IDG_VIEW_GLB_SRC
     idle_contract_report = build_idle_contract_report()
     report = {
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -9823,6 +10168,7 @@ def main() -> int:
         runtime_map = json.loads(XANIM_RUNTIME_MAP_REPORT.read_text(encoding="utf-8")) if XANIM_RUNTIME_MAP_REPORT.exists() else []
         if not use_modload_only_idle_owner_mode():
             patch_runtime_ff_xanim_backend_sections(runtime_map)
+        patch_mod_load_ff_xanim_backend_sections(runtime_map)
     if USE_BO3_IDG_ANIMS:
         build_mod_patch_ff()
         if bo3_anim_runtime_backend_uses_target_weapon_names() and PATCH_RUNTIME_BACKEND_FF:
