@@ -131,6 +131,16 @@ BO3_NONROOT_BONE_PRIORITY = [
     "j_mag",
 ]
 BO3_MOTION_BONE_REPORT_TOP = 3
+BO3_IDLE_DIAG_BONE = ""
+BO3_IDLE_DIAG_TRANSLATE = [0.0, 0.0, 0.0]
+BO3_IDLE_DIAG_FREQUENCY = 0.0
+BO3_IDLE_DIAG_STATIC_BONE = ""
+BO3_IDLE_DIAG_STATIC_TRANSLATE = [0.0, 0.0, 0.0]
+BO3_DISABLE_NOTIFY = os.environ.get("ROGUE_BO3_DISABLE_NOTIFY", "0") not in ("0", "false", "False", "")
+try:
+    BO3_FORCE_ASSETTYPE = int(str(os.environ.get("ROGUE_BO3_FORCE_ASSETTYPE", "0") or "0").strip() or "0")
+except Exception:
+    BO3_FORCE_ASSETTYPE = 0
 THUNDER_TO_AK74U_SUFFIX = {
     "idle": "idle",
     "fire": "fire",
@@ -666,6 +676,22 @@ def _default_donor_asset_for_target(target_name):
     return DONOR_DEFAULT_ASSET
 
 
+def _resolve_loaded_donor_asset_for_target(target_name):
+    donor_name = _default_donor_asset_for_target(target_name)
+    if DONOR_CONTEXT is None or "payloads" not in DONOR_CONTEXT:
+        return donor_name
+    payloads = DONOR_CONTEXT["payloads"]
+    candidates = []
+    for candidate in (target_name, donor_name, DONOR_DEFAULT_ASSET):
+        candidate = str(candidate or "").strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate in payloads:
+            return candidate
+    return donor_name
+
+
 def _load_donor_context(donor_ff, donor_zone_name, donor_asset_names):
     if strict_xanim is None or donor_decrypt_zone is None or donor_parse_string_table is None:
         raise RuntimeError("donor_clone mode requires strict_xanim_parser + patch_zone_xanims imports")
@@ -734,6 +760,30 @@ def _copy_following_section(out, donor_raw, sections, key):
     off = int(s["offset"])
     size = int(s["size"])
     out.extend(donor_raw[off:off + size])
+
+
+def _append_remapped_donor_notify(out, donor_header, donor_sections, donor_raw, donor_index_to_string, string_table, donor_name):
+    """Append donor notify payload while remapping scriptstring indices into the target table."""
+    count = int(donor_header["notifyCount"])
+    if count <= 0:
+        return 0
+    if donor_header["notify_ptr"] != PTR_FOLLOWING or "notify" not in donor_sections:
+        return 0
+
+    s = donor_sections["notify"]
+    src = donor_raw[s["offset"]:s["offset"] + s["size"]]
+    if len(src) != count * 8:
+        raise RuntimeError(f"donor notify size mismatch for '{donor_name}'")
+
+    for i in range(count):
+        off = i * 8
+        donor_idx = struct.unpack_from("<H", src, off)[0]
+        if donor_idx >= len(donor_index_to_string):
+            raise RuntimeError(f"donor notify idx out of range in '{donor_name}': {donor_idx}")
+        sname = donor_index_to_string[donor_idx]
+        out.extend(struct.pack("<H", _map_script_string(sname, string_table)))
+        out.extend(src[off + 2:off + 8])
+    return count
 
 
 def _build_donor_clone_xanimparts_data(anim, string_table):
@@ -818,7 +868,7 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
         raise RuntimeError("donor_template_static_pose mode: donor context not initialized")
 
     target_name = anim["name"]
-    donor_name = _default_donor_asset_for_target(target_name)
+    donor_name = _resolve_loaded_donor_asset_for_target(target_name)
 
     if donor_name not in DONOR_CONTEXT["payloads"]:
         if DONOR_FALLBACK_IDLE and DONOR_DEFAULT_ASSET in DONOR_CONTEXT["payloads"]:
@@ -843,19 +893,25 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
         donor_data_byte = donor_raw[s["offset"]:s["offset"] + s["size"]]
     if len(donor_data_byte) != int(donor_header["dataByteCount"]):
         raise RuntimeError("donor template dataByte size mismatch")
-    if len(donor_data_byte) != total_bones:
+    rotated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(1, 5)))
+    translated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(5, 8)))
+    required_perm_count = max(rotated_count, translated_count)
+    if len(donor_data_byte) < required_perm_count:
         raise RuntimeError(
-            f"donor template expects full dataByte permutation; got {len(donor_data_byte)} for {total_bones} bones"
+            "donor template dataByte table too short: "
+            f"got {len(donor_data_byte)} need at least {required_perm_count} "
+            f"(rotated={rotated_count} translated={translated_count} total={total_bones})"
         )
 
     donor_perm = [int(b) for b in donor_data_byte]
-    rotated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(1, 5)))
-    translated_count = int(sum(int(donor_header["boneCount"][i]) for i in range(5, 8)))
 
-    if int(donor_header["dataShortCount"]) != rotated_count * 4:
-        raise RuntimeError(
-            f"donor template unsupported dataShort layout: count={donor_header['dataShortCount']} rotated={rotated_count}"
-        )
+    donor_data_short = b""
+    if donor_header["dataShort_ptr"] == PTR_FOLLOWING and "dataShort" in donor_sections:
+        s = donor_sections["dataShort"]
+        donor_data_short = donor_raw[s["offset"]:s["offset"] + s["size"]]
+    if len(donor_data_short) != int(donor_header["dataShortCount"]) * 2:
+        raise RuntimeError("donor template dataShort size mismatch")
+    preserve_donor_rotations = int(donor_header["dataShortCount"]) != rotated_count * 4
     if int(donor_header["dataIntCount"]) != translated_count * 3:
         raise RuntimeError(
             f"donor template unsupported dataInt layout: count={donor_header['dataIntCount']} translated={translated_count}"
@@ -902,22 +958,29 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
     # 4) dataByte: donor category permutation stays intact
     out.extend(donor_data_byte)
 
-    # 5) dataShort: donor rotated-set order, but pose sampled from the source anim
-    for donor_bone_idx in donor_perm[:rotated_count]:
-        bone_name = donor_names[donor_bone_idx]
-        bone = source_state_for_name(bone_name)
-        if bone:
-            rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-            rot_m_t = [
-                [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
-                [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
-                [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
-            ]
-            quat = rotation_matrix_to_quat(rot_m_t)
-        else:
-            quat = [0.0, 0.0, 0.0, 1.0]
-        for q in quat:
-            out.extend(struct.pack("<h", quat_to_int16(_sanitize_float(q))))
+    # 5) dataShort:
+    # Some stock T6 viewmodel xanims use a mixed rotation contract where the
+    # raw dataShort count is not simply rotated_count * 4. Preserve that donor
+    # payload until the full codec split is implemented, but still allow custom
+    # translation injection via dataInt below.
+    if preserve_donor_rotations:
+        out.extend(donor_data_short)
+    else:
+        for donor_bone_idx in donor_perm[:rotated_count]:
+            bone_name = donor_names[donor_bone_idx]
+            bone = source_state_for_name(bone_name)
+            if bone:
+                rot_m = bone.get("rot", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+                rot_m_t = [
+                    [rot_m[0][0], rot_m[1][0], rot_m[2][0]],
+                    [rot_m[0][1], rot_m[1][1], rot_m[2][1]],
+                    [rot_m[0][2], rot_m[1][2], rot_m[2][2]],
+                ]
+                quat = rotation_matrix_to_quat(rot_m_t)
+            else:
+                quat = [0.0, 0.0, 0.0, 1.0]
+            for q in quat:
+                out.extend(struct.pack("<h", quat_to_int16(_sanitize_float(q))))
 
     # 6) dataInt: donor translated-set order, but pose sampled from the source anim
     for donor_bone_idx in donor_perm[:translated_count]:
@@ -931,6 +994,17 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
         out.extend(struct.pack("<f", ox))
         out.extend(struct.pack("<f", oy))
         out.extend(struct.pack("<f", oz))
+
+    # 7) randomDataShort: preserve donor payload exactly. Stock T6 weapon
+    # xanims can require this section even when we are only injecting custom
+    # translation into dataInt.
+    if donor_header["randomDataShort_ptr"] == PTR_FOLLOWING and "randomDataShort" in donor_sections:
+        s = donor_sections["randomDataShort"]
+        src = donor_raw[s["offset"]:s["offset"] + s["size"]]
+        expected = int(donor_header["randomDataShortCount"]) * 2
+        if len(src) != expected:
+            raise RuntimeError(f"donor randomDataShort size mismatch for '{donor_name}'")
+        out.extend(src)
 
     return bytes(header), bytes(out)
 
@@ -991,8 +1065,8 @@ def _build_donor_semantic_static_pose_xanimparts_data(anim, string_table):
       - assetType=1
       - 2-frame header / 15Hz frequency
       - donor-style notify payload
-      - full dataByte permutation where rotated bones are a prefix of
-        translated bones, and unanimated bones trail the permutation
+      - target-rig names table
+      - full static rotation/translation channel coverage for the target rig
 
     This keeps the stable donor runtime contract but does not reuse the donor's
     71-bone names table. It rebuilds the names and section counts for the actual
@@ -1030,26 +1104,15 @@ def _build_donor_semantic_static_pose_xanimparts_data(anim, string_table):
             string_table[bone_name] = len(string_table)
         bone_string_indices.append(string_table[bone_name])
 
-    rotated_entries = []
-    translated_only_entries = []
-    none_entries = []
+    ordered_entries = []
     for bone_idx in range(num_bones):
         quat, off = _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=True)
-        rot_animated = not _quat_near_identity(quat)
-        trans_animated = not _offset_near_zero(off)
-        entry = (bone_idx, quat, off)
-        if rot_animated:
-            rotated_entries.append(entry)
-        elif trans_animated:
-            translated_only_entries.append(entry)
-        else:
-            none_entries.append(entry)
+        ordered_entries.append((bone_idx, quat, off))
 
-    ordered_entries = rotated_entries + translated_only_entries + none_entries
-    rotated_count = len(rotated_entries)
-    translated_count = len(rotated_entries) + len(translated_only_entries)
-    none_rotated_count = num_bones - rotated_count
-    none_translated_count = num_bones - translated_count
+    rotated_count = num_bones
+    translated_count = num_bones
+    none_rotated_count = 0
+    none_translated_count = 0
 
     data_byte = bytearray()
     data_short = bytearray()
@@ -1058,11 +1121,11 @@ def _build_donor_semantic_static_pose_xanimparts_data(anim, string_table):
     for bone_idx, _quat, _off in ordered_entries:
         data_byte.append(bone_idx & 0xFF)
 
-    for _bone_idx, quat, _off in ordered_entries[:rotated_count]:
+    for _bone_idx, quat, _off in ordered_entries:
         for q in quat:
             data_short.extend(struct.pack("<h", quat_to_int16(q)))
 
-    for _bone_idx, _quat, off in ordered_entries[:translated_count]:
+    for _bone_idx, _quat, off in ordered_entries:
         data_int.extend(struct.pack("<f", off[0]))
         data_int.extend(struct.pack("<f", off[1]))
         data_int.extend(struct.pack("<f", off[2]))
@@ -1200,6 +1263,13 @@ def _pick_bo3_nonroot_motion_part_index(anim, numframes):
 
     name_to_idx = {str(name).strip().lower(): idx for idx, name in enumerate(parts)}
     root_exclude = {str(x).strip().lower() for x in BO3_ROOT_BONE_PRIORITY}
+
+    diag_key = str(BO3_IDLE_DIAG_BONE).strip().lower()
+    if diag_key:
+        idx = name_to_idx.get(diag_key)
+        if idx is not None and diag_key not in root_exclude:
+            score = _compute_bo3_motion_score(anim, idx, numframes)
+            return idx, [(parts[idx], score)]
 
     # 1) Deterministic preferred weapon-bone list first.
     for preferred in BO3_NONROOT_BONE_PRIORITY:
@@ -1341,6 +1411,22 @@ def _build_bo3_idle_delta_part(anim, numframes):
         if _quat_dot(quats[i - 1], quats[i]) < 0.0:
             quats[i] = [-quats[i][0], -quats[i][1], -quats[i][2], -quats[i][3]]
 
+    diag_translate = [float(v) for v in (BO3_IDLE_DIAG_TRANSLATE or [0.0, 0.0, 0.0])[:3]]
+    if any(abs(v) > 1e-6 for v in diag_translate):
+        frame_span = max(1, numframes - 1)
+        for frame_idx in range(numframes):
+            phase = (float(frame_idx) / float(frame_span)) * (2.0 * math.pi)
+            pulse = math.sin(phase)
+            offsets[frame_idx] = [
+                _sanitize_float(offsets[frame_idx][0] + (diag_translate[0] * pulse)),
+                _sanitize_float(offsets[frame_idx][1] + (diag_translate[1] * pulse)),
+                _sanitize_float(offsets[frame_idx][2] + (diag_translate[2] * pulse)),
+            ]
+        print(
+            f"  bo3_frames idle diagnostic ({anim.get('name','?')}): "
+            f"bone={part_name or part_idx} translate={diag_translate}"
+        )
+
     idx_elem = 1 if numframes < 256 else 2
     indices = bytearray()
     for i in range(numframes):
@@ -1408,10 +1494,18 @@ def _build_bo3_idle_delta_part(anim, numframes):
 
 def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     """
-    bo3_frames milestone A:
-    - Keep full static channels for all bones (safe, deterministic).
-    - Add a real keyframed deltaPart stream on root for vm_thunder_gun_idle.
+    bo3_frames idle path:
+    - keep a donor-safe semantic T6 header/pointer contract
+    - use a stable frame-0 baseline pose for all bones
+    - add a real BO3-driven deltaPart stream for visible idle motion
+
+    This avoids the earlier malformed hybrid contract where we wrote only
+    frame-0 static channels but advertised the full BO3 frame count without
+    any matching playback payload.
     """
+    if DONOR_CONTEXT is None:
+        raise RuntimeError("bo3_frames mode: donor context not initialized")
+
     name = anim["name"]
     parts = anim["parts"]
     framerate = max(1.0, float(anim.get("framerate", 30)))
@@ -1421,21 +1515,43 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     if DIAG_ZERO_BONES:
         num_bones = 0
 
+    donor_name = _default_donor_asset_for_target(name)
+    if donor_name not in DONOR_CONTEXT["payloads"]:
+        if DONOR_FALLBACK_IDLE and DONOR_DEFAULT_ASSET in DONOR_CONTEXT["payloads"]:
+            donor_name = DONOR_DEFAULT_ASSET
+        else:
+            raise RuntimeError(f"bo3_frames donor semantic asset missing for target '{name}': {donor_name}")
+
+    donor_parsed = DONOR_CONTEXT["payloads"][donor_name]
+    donor_raw = DONOR_CONTEXT["raw"]
+    donor_header = donor_parsed["header"]
+    donor_sections = donor_parsed["sections"]
+    donor_index_to_string = DONOR_CONTEXT["index_to_string"]
+
     bone_string_indices = []
     rot_quats_i16 = []
     trans_vec_f32 = []
     trans_bone_ids_u8 = []
     trans_bone_ids_u16 = []
+    static_diag_key = str(BO3_IDLE_DIAG_STATIC_BONE).strip().lower()
+    static_diag_translate = [float(v) for v in (BO3_IDLE_DIAG_STATIC_TRANSLATE or [0.0, 0.0, 0.0])[:3]]
+    static_diag_applied = False
 
     for bone_idx, bone_name in enumerate(parts[:num_bones]):
         if bone_name not in string_table:
             string_table[bone_name] = len(string_table)
         bone_string_indices.append(string_table[bone_name])
 
-        quat, off = _get_emit_frame_quat_and_offset(anim, 0, bone_idx)
+        # Use the stable local-basis-neutralized pose for the baseline channels.
+        quat, off = _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=True)
 
         qx, qy, qz, qw = (_sanitize_float(v) for v in quat)
         ox, oy, oz = (_sanitize_float(v) for v in off[:3])
+        if static_diag_key and str(bone_name).strip().lower() == static_diag_key and any(abs(v) > 1e-6 for v in static_diag_translate):
+            ox = _sanitize_float(ox + static_diag_translate[0])
+            oy = _sanitize_float(oy + static_diag_translate[1])
+            oz = _sanitize_float(oz + static_diag_translate[2])
+            static_diag_applied = True
         rot_quats_i16.extend([quat_to_int16(qx), quat_to_int16(qy), quat_to_int16(qz), quat_to_int16(qw)])
         trans_vec_f32.extend([ox, oy, oz])
 
@@ -1448,16 +1564,19 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     data_short_count = len(rot_quats_i16) + len(trans_bone_ids_u16)
     data_int_count = len(trans_vec_f32)
 
-    # NOTE: Real T6 viewmodel XAnimParts observed in donor fastfiles do not use
-    # deltaPart for these assets. Emitting an experimental deltaPart here can
-    # create malformed fastfiles that crash the engine/Unlinker. Keep deltaPart
-    # disabled until we implement a proven-correct per-frame encoder that
-    # matches T6's serialized layout.
     delta_bytes = b""
     has_delta_trans = False
     has_delta_quat = False
     has_delta = False
     delta_part_name = ""
+    if numframes >= 2 and num_bones > 0:
+        delta_bytes, has_delta_trans, has_delta_quat, delta_part_name = _build_bo3_idle_delta_part(anim, numframes)
+        has_delta = bool(delta_bytes)
+    if static_diag_applied:
+        print(
+            f"  bo3_frames idle static diagnostic ({anim.get('name','?')}): "
+            f"bone={BO3_IDLE_DIAG_STATIC_BONE} translate={static_diag_translate}"
+        )
 
     header = bytearray(104)
     struct.pack_into("<I", header, 0x00, PTR_FOLLOWING)  # name
@@ -1466,7 +1585,7 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     struct.pack_into("<H", header, 0x08, data_int_count)
     struct.pack_into("<H", header, 0x0A, 0)  # randomDataByteCount
     struct.pack_into("<H", header, 0x0C, 0)  # randomDataIntCount
-    struct.pack_into("<H", header, 0x0E, numframes)
+    struct.pack_into("<H", header, 0x0E, numframes if has_delta else 2)
 
     header[0x10] = 0  # bLoop
     header[0x11] = 1 if has_delta else 0  # bDelta
@@ -1474,22 +1593,31 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     header[0x13] = 0  # bLeftHandGripIK
     struct.pack_into("<I", header, 0x14, 0)  # streamedFileSize
 
-    # All bones static in explicit channels for this milestone.
+    # Donor-safe semantic layout: full static rot/trans coverage on the target rig.
     for bc in range(10):
         header[0x18 + bc] = 0
     if num_bones > 0:
+        header[0x18 + 0] = 0          # NoneRotated
         header[0x18 + 4] = num_bones  # NormalStaticRotated
+        header[0x18 + 5] = 0          # NormalTranslated
+        header[0x18 + 6] = 0          # PreciseTranslated
         header[0x18 + 7] = num_bones  # StaticTranslated
+        header[0x18 + 8] = 0          # NoneTranslated
         header[0x18 + 9] = num_bones  # TotalBoneCount
 
-    header[0x22] = 0  # notifyCount
-    header[0x23] = 1  # assetType (match vanilla donor xanimparts)
+    notify_count = 0 if BO3_DISABLE_NOTIFY else int(donor_header["notifyCount"])
+    header[0x22] = notify_count
+    header[0x23] = int(BO3_FORCE_ASSETTYPE or int(donor_header["assetType"]))  # match donor weapon semantic lane
     header[0x24] = 0  # isDefault
 
     struct.pack_into("<I", header, 0x28, 0)  # randomDataShortCount
     struct.pack_into("<I", header, 0x2C, 0)  # indexCount
     struct.pack_into("<f", header, 0x30, framerate)
-    struct.pack_into("<f", header, 0x34, (framerate / float(numframes)) if numframes > 0 else 1.0)
+    effective_numframes = numframes if has_delta else 2
+    frequency = (framerate / float(effective_numframes)) if effective_numframes > 0 else 1.0
+    if BO3_IDLE_DIAG_FREQUENCY > 0.0:
+        frequency = float(BO3_IDLE_DIAG_FREQUENCY)
+    struct.pack_into("<f", header, 0x34, frequency)
     struct.pack_into("<f", header, 0x38, 0.0)
     struct.pack_into("<f", header, 0x3C, 0.0)
 
@@ -1501,7 +1629,7 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     struct.pack_into("<I", header, 0x54, PTR_NULL)  # randomDataByte
     struct.pack_into("<I", header, 0x58, PTR_NULL)  # randomDataInt
     struct.pack_into("<I", header, 0x5C, PTR_NULL)  # indices
-    struct.pack_into("<I", header, 0x60, PTR_NULL)  # notify
+    struct.pack_into("<I", header, 0x60, PTR_FOLLOWING if notify_count > 0 else PTR_NULL)  # notify
     struct.pack_into("<I", header, 0x64, PTR_FOLLOWING if has_delta else PTR_NULL)  # deltaPart
 
     # IMPORTANT: Pointer-follow stream order must match the real T6 loader.
@@ -1516,7 +1644,16 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     for idx in bone_string_indices:
         data.extend(struct.pack("<H", idx))
 
-    # notify (none)
+    if notify_count > 0:
+        _append_remapped_donor_notify(
+            data,
+            donor_header,
+            donor_sections,
+            donor_raw,
+            donor_index_to_string,
+            string_table,
+            donor_name,
+        )
 
     # deltaPart (serialized before dataByte/dataShort/dataInt)
     if has_delta:
@@ -1715,11 +1852,20 @@ def _build_static_pose_xanimparts_data(anim, string_table):
     trans_vec_f32 = []   # 3 * N float
     trans_bone_ids_u8 = []
     trans_bone_ids_u16 = []
+    static_diag_key = str(BO3_IDLE_DIAG_STATIC_BONE).strip().lower()
+    static_diag_translate = [float(v) for v in (BO3_IDLE_DIAG_STATIC_TRANSLATE or [0.0, 0.0, 0.0])[:3]]
+    static_diag_applied = False
 
     for bone_idx in range(num_bones):
+        bone_name = str(parts[bone_idx])
         quat, off = _frame0_bone_quat_and_offset(anim, bone_idx, zero_local_basis_offset=True)
         qx, qy, qz, qw = (_sanitize_float(v) for v in quat)
         ox, oy, oz = (_sanitize_float(v) for v in off[:3])
+        if static_diag_key and bone_name.strip().lower() == static_diag_key and any(abs(v) > 1e-6 for v in static_diag_translate):
+            ox = _sanitize_float(ox + static_diag_translate[0])
+            oy = _sanitize_float(oy + static_diag_translate[1])
+            oz = _sanitize_float(oz + static_diag_translate[2])
+            static_diag_applied = True
 
         rot_quats_i16.extend([
             quat_to_int16(qx),
@@ -1733,6 +1879,12 @@ def _build_static_pose_xanimparts_data(anim, string_table):
             trans_bone_ids_u16.append(bone_idx)
         else:
             trans_bone_ids_u8.append(bone_idx & 0xFF)
+
+    if static_diag_applied:
+        print(
+            f"  static_pose diagnostic ({anim.get('name','?')}): "
+            f"bone={BO3_IDLE_DIAG_STATIC_BONE} translate={static_diag_translate}"
+        )
 
     data_byte_count = len(trans_bone_ids_u8)
     data_short_count = len(rot_quats_i16) + len(trans_bone_ids_u16)
@@ -1862,20 +2014,33 @@ def build_zone_data(anims, zone_name):
     T6 Zone layout:
       1. XFile header (40 bytes): totalSize + externalSize + blockSizes[8]
       2. XAssetList RAW (24 bytes): loaded outside any block
-      3. VIRTUAL block: strings + XAsset array + ALL pointer-resolved data
-      4. TEMP block: only the 104-byte XAnimParts struct (reused per asset)
+      3. VIRTUAL block: scriptstring table + XAsset array
+      4. TEMP block: XAnimParts struct + pointer-resolved payloads
 
-    Key insight: When XAnimParts is loaded with PushBlock(TEMP), only the
-    104-byte struct header goes to TEMP. All pointer-resolved data (name,
-    names, dataByte, dataShort, indices, etc.) goes to VIRTUAL.
+    The standalone carrier must follow the same effective load contract that
+    our minimal-zone experiments and patched-zone lane use:
+      - the VIRTUAL stream is 4-byte aligned before the XAsset array
+      - the TEMP-backed XAnimParts region contains the full serialized asset
+        payload, not just the 104-byte header
+      - the VIRTUAL block size must account for the hidden insert-pointer
+        bookkeeping for every PTR_FOLLOWING field in the zone
     """
     string_table = {}  # name -> index
     asset_headers = []  # (header_bytes, data_bytes) per asset
+    temp_insert_pointer_bytes = 0
+    use_legacy_carrier_layout = EMIT_MODE in (
+        "static_pose",
+        "stub",
+        "donor_clone",
+        "donor_template_static_pose",
+        "donor_semantic_static_pose",
+    )
 
     # Build all assets and collect string table entries
     for anim in anims:
         header, data = build_xanimparts_data(anim, string_table)
         asset_headers.append((header, data))
+        temp_insert_pointer_bytes += count_insert_pointers(header) * 4
 
     # Now build the complete zone data
     buf = bytearray()
@@ -1903,6 +2068,8 @@ def build_zone_data(anims, zone_name):
     buf.extend(struct.pack('<I', PTR_FOLLOWING if asset_count > 0 else PTR_NULL))    # assets
 
     # ---- VIRTUAL block data ----
+    virtual_start = len(buf)
+
     # Script string pointer array + string data
     if string_count > 0:
         sorted_strings = sorted(string_table.items(), key=lambda x: x[1])
@@ -1911,34 +2078,69 @@ def build_zone_data(anims, zone_name):
         for name, idx in sorted_strings:
             buf.extend(name.encode('ascii') + b'\x00')
 
+    # Historical standalone custom-xanim carriers that OAT can actually load in
+    # this repo do not stream-pad between the scriptstring table and the XAsset
+    # array. The bo3_frames lane needs the tighter explicit layout below, but
+    # donor/static lanes should stay on the proven broad-carrier contract.
+    if not use_legacy_carrier_layout:
+        _append_align(buf, 4)
+
     # XAsset array entries
     if asset_count > 0:
         for i in range(asset_count):
             buf.extend(struct.pack('<i', ASSET_TYPE_XANIMPARTS))
             buf.extend(struct.pack('<I', PTR_FOLLOWING))
 
-    # ---- Per-asset data (104-byte struct to TEMP, rest to VIRTUAL) ----
+    virtual_stream_size = len(buf) - virtual_start
+
+    # ---- Per-asset data (full serialized asset goes to TEMP) ----
+    temp_start = len(buf)
     for header, data in asset_headers:
-        buf.extend(header)  # 104 bytes -> TEMP block
-        buf.extend(data)    # pointer-resolved data -> VIRTUAL block
+        buf.extend(header)
+        buf.extend(data)
+
+    temp_stream_size = len(buf) - temp_start
 
     # ---- Patch header ----
     total_size = len(buf) - content_start
     struct.pack_into('<I', buf, total_size_pos, total_size)
 
-    # Block sizes:
-    # TEMP = 104 bytes (one XAnimParts struct, reused per asset)
-    # VIRTUAL = totalSize (safe upper bound: all data except raw header)
-    # In practice: VIRTUAL ≈ totalSize - 24(raw) - N*104(temp structs) + alignment
-    # Using totalSize as a safe, proven-working upper bound.
     block_sizes = [0] * XFILE_BLOCK_COUNT
-    block_sizes[BLOCK_TEMP] = 104                # Only the struct header goes here
-    block_sizes[BLOCK_VIRTUAL] = total_size      # Safe upper bound
+    if use_legacy_carrier_layout:
+        # Broad-carrier contract used by the known-good standalone xanim FFs in
+        # this repo. It is intentionally loose, but OAT can --load it reliably
+        # for donor/static payloads.
+        block_sizes[BLOCK_TEMP] = 104
+        block_sizes[BLOCK_VIRTUAL] = total_size
+        insert_overhead = total_size - virtual_stream_size
+    else:
+        # Hidden XBlock insert-pointer bookkeeping is charged against VIRTUAL
+        # for every PTR_FOLLOWING the loader must materialize while walking this
+        # zone.
+        raw_insert_pointer_bytes = 0
+        if string_count > 0:
+            raw_insert_pointer_bytes += 4  # XAssetList.stringList.strings
+        if asset_count > 0:
+            raw_insert_pointer_bytes += 4  # XAssetList.assets
+            raw_insert_pointer_bytes += asset_count * 4  # XAsset.header
+        if string_count > 0:
+            raw_insert_pointer_bytes += string_count * 4  # scriptstring pointer array
+
+        virtual_insert_pointer_bytes = raw_insert_pointer_bytes + temp_insert_pointer_bytes
+        block_sizes[BLOCK_TEMP] = temp_stream_size
+        block_sizes[BLOCK_VIRTUAL] = virtual_stream_size + virtual_insert_pointer_bytes
+        insert_overhead = virtual_insert_pointer_bytes
 
     for i in range(XFILE_BLOCK_COUNT):
         struct.pack_into('<I', buf, block_sizes_pos + i * 4, block_sizes[i])
 
-    print(f"  TEMP(block 0)={block_sizes[BLOCK_TEMP]}, VIRTUAL(block 5)={block_sizes[BLOCK_VIRTUAL]}")
+    print(
+        f"  TEMP(block 0)={block_sizes[BLOCK_TEMP]}, "
+        f"VIRTUAL(block 5)={block_sizes[BLOCK_VIRTUAL]} "
+        f"(virtual_stream={virtual_stream_size}, "
+        f"insert_overhead={insert_overhead}, "
+        f"layout={'legacy' if use_legacy_carrier_layout else 'tight'})"
+    )
     print(f"  totalSize={total_size}")
 
     return bytes(buf)
@@ -2074,6 +2276,38 @@ def parse_args():
         help="How many top-motion non-root bones to log in bo3_frames idle path.",
     )
     parser.add_argument(
+        "--bo3-idle-diagnostic-bone",
+        default="",
+        help="Optional preferred bone for bo3_frames idle diagnostic motion.",
+    )
+    parser.add_argument(
+        "--bo3-idle-diagnostic-translate",
+        nargs=3,
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        metavar=("X", "Y", "Z"),
+        help="Optional additive sinusoidal translation diagnostic applied to the chosen bo3_frames idle delta bone.",
+    )
+    parser.add_argument(
+        "--bo3-idle-diagnostic-frequency",
+        type=float,
+        default=0.0,
+        help="Optional playback frequency override for bo3_frames idle diagnostics.",
+    )
+    parser.add_argument(
+        "--bo3-idle-static-bone",
+        default="",
+        help="Optional bone for a static pose translation diagnostic in bo3_frames idle mode.",
+    )
+    parser.add_argument(
+        "--bo3-idle-static-translate",
+        nargs=3,
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        metavar=("X", "Y", "Z"),
+        help="Optional additive translation applied to the chosen bo3_frames idle static baseline bone.",
+    )
+    parser.add_argument(
         "--diag-zero-bones",
         action="store_true",
         help="Force zero bones for diagnostics.",
@@ -2132,6 +2366,9 @@ def main():
     global DONOR_FALLBACK_IDLE, DONOR_MAP_HITS, DONOR_MAP_FALLBACKS, REQUIRE_NO_DONOR_FALLBACK
     global BO3_FRAMES_TARGETS, BO3_FRAMES_FALLBACK_MODE, BO3_ROOT_BONE_PRIORITY
     global BO3_NONROOT_BONE_PRIORITY, BO3_MOTION_BONE_REPORT_TOP
+    global BO3_IDLE_DIAG_BONE, BO3_IDLE_DIAG_TRANSLATE, BO3_IDLE_DIAG_FREQUENCY
+    global BO3_IDLE_DIAG_STATIC_BONE, BO3_IDLE_DIAG_STATIC_TRANSLATE
+    global BO3_DISABLE_NOTIFY, BO3_FORCE_ASSETTYPE
 
     args = parse_args()
     EMIT_MODE = str(args.emit_mode)
@@ -2155,6 +2392,16 @@ def main():
     BO3_ROOT_BONE_PRIORITY = [str(x).strip() for x in (args.bo3_root_bone_priority or []) if str(x).strip()]
     BO3_NONROOT_BONE_PRIORITY = [str(x).strip() for x in (args.bo3_nonroot_bone_priority or []) if str(x).strip()]
     BO3_MOTION_BONE_REPORT_TOP = max(1, int(args.bo3_motion_bone_report_top))
+    BO3_IDLE_DIAG_BONE = str(args.bo3_idle_diagnostic_bone).strip()
+    BO3_IDLE_DIAG_TRANSLATE = [float(v) for v in (args.bo3_idle_diagnostic_translate or [0.0, 0.0, 0.0])[:3]]
+    BO3_IDLE_DIAG_FREQUENCY = max(0.0, float(args.bo3_idle_diagnostic_frequency or 0.0))
+    BO3_IDLE_DIAG_STATIC_BONE = str(args.bo3_idle_static_bone).strip()
+    BO3_IDLE_DIAG_STATIC_TRANSLATE = [float(v) for v in (args.bo3_idle_static_translate or [0.0, 0.0, 0.0])[:3]]
+    BO3_DISABLE_NOTIFY = bool(os.environ.get("ROGUE_BO3_DISABLE_NOTIFY", "1" if BO3_DISABLE_NOTIFY else "0") not in ("0", "false", "False", ""))
+    try:
+        BO3_FORCE_ASSETTYPE = int(str(os.environ.get("ROGUE_BO3_FORCE_ASSETTYPE", str(BO3_FORCE_ASSETTYPE)) or "0").strip() or "0")
+    except Exception:
+        BO3_FORCE_ASSETTYPE = 0
     keep_bones = load_keep_bones_from_file(args.keep_bones_file) if str(args.keep_bones_file).strip() else []
 
     xanim_dir = os.path.abspath(args.xanim_dir)
@@ -2197,6 +2444,19 @@ def main():
         if BO3_NONROOT_BONE_PRIORITY:
             print(f"  bo3_nonroot_bone_priority={BO3_NONROOT_BONE_PRIORITY}")
         print(f"  bo3_motion_bone_report_top={BO3_MOTION_BONE_REPORT_TOP}")
+        if BO3_IDLE_DIAG_BONE:
+            print(f"  bo3_idle_diagnostic_bone={BO3_IDLE_DIAG_BONE}")
+        if any(abs(v) > 1e-6 for v in BO3_IDLE_DIAG_TRANSLATE):
+            print(f"  bo3_idle_diagnostic_translate={BO3_IDLE_DIAG_TRANSLATE}")
+        if BO3_IDLE_DIAG_FREQUENCY > 0.0:
+            print(f"  bo3_idle_diagnostic_frequency={BO3_IDLE_DIAG_FREQUENCY}")
+        if BO3_IDLE_DIAG_STATIC_BONE:
+            print(f"  bo3_idle_static_bone={BO3_IDLE_DIAG_STATIC_BONE}")
+        if any(abs(v) > 1e-6 for v in BO3_IDLE_DIAG_STATIC_TRANSLATE):
+            print(f"  bo3_idle_static_translate={BO3_IDLE_DIAG_STATIC_TRANSLATE}")
+        print(f"  bo3_disable_notify={1 if BO3_DISABLE_NOTIFY else 0}")
+        if BO3_FORCE_ASSETTYPE:
+            print(f"  bo3_force_assettype={BO3_FORCE_ASSETTYPE}")
         print("")
     if NEUTRALIZE_BONES:
         print(f"  neutralize_bones={sorted(NEUTRALIZE_BONES)}\n")
@@ -2257,11 +2517,10 @@ def main():
     if NEUTRALIZE_BONES:
         print(f"  Neutralized track writes: {total_neutralized}")
 
-    if EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose") or (EMIT_MODE == "bo3_frames" and BO3_FRAMES_FALLBACK_MODE == "donor_clone"):
+    if EMIT_MODE in ("donor_clone", "donor_template_static_pose", "donor_semantic_static_pose", "bo3_frames"):
         needed_donor_assets = set([DONOR_DEFAULT_ASSET])
         for anim in anims:
-            if EMIT_MODE == "bo3_frames" and anim["name"] in BO3_FRAMES_TARGETS:
-                continue
+            needed_donor_assets.add(str(anim["name"]))
             needed_donor_assets.add(_default_donor_asset_for_target(anim["name"]))
         print(f"\n  Loading donor context ({len(needed_donor_assets)} assets)...")
         DONOR_CONTEXT = _load_donor_context(
