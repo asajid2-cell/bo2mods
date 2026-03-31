@@ -8671,18 +8671,13 @@ def _runtime_patch_requires_safe_seed_mod_load() -> bool:
 
 
 def _runtime_patch_can_skip_mod_load_link_load() -> bool:
-    # Target-runtime-name patching rewrites the survival FF directly, so the
-    # standalone xanim carrier does not need to be link-loaded in that lane.
-    # Semantic-name lanes still rely on a carrier FF to satisfy custom xanim
-    # references during runtime-zone linking.
-    if use_survival_only_idle_alias_mode():
-        # The alias lane emits a runtime-only backend name (`...idlz`) that does
-        # not exist in stock fastfiles. Keep the custom carrier loaded during
-        # runtime linking so the linker can resolve that direct xanim reference
-        # instead of falling back to the stock `...idle` owner and forcing us
-        # back into unsafe post-link renames.
-        return False
-    return bo3_anim_runtime_backend_uses_target_weapon_names() and not _runtime_patch_requires_safe_seed_mod_load()
+    # Once the runtime FF carries the full target-runtime-name xanim payload
+    # directly, link-loading mod_load.ff is counterproductive:
+    #   - it can win alias ownership first (`...idlz`) and shadow the runtime FF
+    #   - in the idle alias lane it also risks XFILE_BLOCK_VIRTUAL overflow
+    # The runtime zone source already lists the xanim asset locally, so the
+    # linker does not need mod_load as a dependency carrier anymore.
+    return bo3_anim_runtime_backend_uses_target_weapon_names()
 
 
 def _compile_mod_load_variant(
