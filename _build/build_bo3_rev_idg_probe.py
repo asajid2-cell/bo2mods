@@ -9143,7 +9143,9 @@ def isolate_runtime_xanim_name_owners(runtime_map: list[dict[str, object]]) -> N
         if runtime_name != "viewmodel_zomb_mg08_idle" or semantic_name != "vm_zod_id_gun_idle":
             continue
         alias_survival = "viewmodel_zomb_mg08_idlz"
+        alias_modload = "viewmodel_zomb_mg08_idlm"
         alias_patch = "viewmodel_zomb_mg08_idlq"
+        rename_xanim_asset_in_zone(OUTPUT / MOD_LOAD_FF_NAME, MOD_LOAD_ZONE_NAME, alias_survival, alias_modload)
         rename_xanim_asset_in_zone(OUTPUT / RUNTIME_FF_NAME, RUNTIME_ZONE_NAME, runtime_name, alias_survival)
         rename_xanim_asset_in_zone(OUTPUT / MOD_PATCH_FF_NAME, MOD_PATCH_ZONE_NAME, runtime_name, alias_patch)
         return
