@@ -16,7 +16,8 @@ Debug-only x86 runtime probe for T6/Plutonium client startup.
   - `bo3_rev_debug_stock_glow`
   - `effect_26z423jf`
   - `fxt_light_glow_square`
-- Supports a narrower `render_opacity_focus` mode that only arms the render-table and submit-flags consumer traces, intended for investigating why a loaded effect renders with inconsistent opacity.
+- Supports a narrower `render_opacity_focus` mode that only arms the render-table consumer traces, intended for investigating why a loaded effect renders with inconsistent opacity.
+- Supports an `xanim_focus` mode that watches xanim and xmodel names in memory and logs the code paths, registers, strings, raw pointer refs, and backtraces involved when those names are touched at runtime.
 
 ## Build
 
@@ -26,18 +27,29 @@ powershell -ExecutionPolicy Bypass -File native/fx_runtime_probe/build_x86.ps1
 
 ## Inject
 
-Inject into the actual BO2/T6 game process:
+Inject into the actual live BO2/T6 process:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File native/fx_runtime_probe/inject_latest.ps1 -ProcessName t6zm.exe -Wait
+powershell -ExecutionPolicy Bypass -File native/fx_runtime_probe/inject_latest.ps1 -ProcessName plutonium-bootstrapper-win32 -Wait
 ```
 
 ## Mode
 
 Write `native/fx_runtime_probe/active_probe_mode.txt` before launching:
 
-- `mode=safe`
-- `mode=render_opacity_focus`
+- `safe`
+- `render_opacity_focus`
+- `xanim_focus`
+- `xanim_consumer_focus`
+- `xanim_asset_lookup_focus`
+
+The watchlist also accepts:
+
+- `xanim=vm_zod_id_gun_idle`
+- `xanim=vm_zod_id_gun_first_raise`
+- `xanim=vm_zod_id_gun_fire`
+- `xmodel=bo3_rev_v2_idg_view_...`
+- `xmodel=bo3_rev_bridge_viewhands`
 
 The restart wrapper will write this file for you.
 
@@ -53,6 +65,8 @@ Look for:
 - `format_ref_hit`
 - `watch_found`
 - `guard_hit`
+- `xanim_focus targets=...`
+- `stack_str ...`
 - `access_violation`
 - `stack ...`
 - `stack_str[...]`

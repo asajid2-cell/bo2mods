@@ -1,22 +1,20 @@
 {
-  "built_at_utc": "2026-03-21T23:25:26.482350+00:00",
-  "build_tag": "0321232501_4c7e1d",
+  "built_at_utc": "2026-04-03T19:13:00.100669+00:00",
+  "build_tag": "0403191141_75d444",
   "work_dir": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe",
   "oat_tool_architectures": {
     "runtime_linker": "x86",
-    "stable_unlinker": "x86",
-    "dev_linker": "x86",
-    "dev_unlinker": "x86"
+    "stable_unlinker": "x86"
   },
   "source_model": {
-    "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_weapon_only\\bo3_rev_idg_weapon_only.glb",
+    "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\runtime_model\\bo3_rev_v2_idg_view_0403191141_75d444_runtime_reduced.glb",
     "exists": true,
-    "sha256": "c2fbb6446e2b9f768b531fdf7361837bcc07db7a5d78757b5a3408e1f51e2cdc"
+    "sha256": "8233b3e0602445550450b982a1d3ad17b53c163efe0a2e357f13d2cfdd1c1ad8"
   },
   "outputs": {
     "runtime_ff": {
       "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\output\\so_zsurvival_zm_transit.ff",
-      "sha256": "908948bc16b62f0b7c815422856984de0d022b2535180d2c344b7e2ffbff991e",
+      "sha256": "f3c3a175502aaae2cc429d243f66b3ca1bc7a02074adc69d1187f67d77586327",
       "assets": [
         "techniqueset, ,mc_lit_sm_r0c0s0_986ezzjq",
         "material, ,mc/mtl_x2icon_gold",
@@ -1313,14 +1311,94 @@
         "material, mtl_wpn_t7_zmb_zod_idg_eyes",
         "material, mtl_wpn_t7_zmb_zod_idg_sacks",
         "material, mtl_wpn_t7_zmb_zod_idg_tentacles",
-        "script, clientscripts/mp/zm_transit.csc",
-        "script, clientscripts/mp/zombies/_bo3_rev_servant_fx_v3.csc",
-        "xanim, viewmodel_zomb_staff_fire_reload",
-        "xanim, viewmodel_zomb_staff_ads_fire",
-        "xanim, viewmodel_pdw57_reload",
-        "xanim, viewmodel_pdw57_reload_empty",
-        "xmodel, bo3_rev_v2_idg_view_0321232501_4c7e1d",
         "xanim, viewmodel_zomb_mg08_idle",
+        "rawfile, j_bullet1",
+        "rawfile, j_bullet10",
+        "rawfile, j_bullet11",
+        "rawfile, j_bullet12",
+        "rawfile, j_bullet2",
+        "rawfile, j_bullet3",
+        "rawfile, j_bullet4",
+        "rawfile, j_bullet5",
+        "rawfile, j_bullet6",
+        "rawfile, j_bullet7",
+        "rawfile, j_bullet8",
+        "rawfile, j_bullet9",
+        "rawfile, j_elbow_bulge_le",
+        "rawfile, j_flesh_le",
+        "rawfile, j_grenade_activate_clip",
+        "rawfile, j_handle2",
+        "rawfile, j_index_le_1",
+        "rawfile, j_index_le_3",
+        "rawfile, j_index_ri_0",
+        "rawfile, j_index_ri_1",
+        "rawfile, j_index_ri_2",
+        "rawfile, j_index_ri_3",
+        "rawfile, j_mid_le_0",
+        "rawfile, j_mid_le_1",
+        "rawfile, j_mid_le_2",
+        "rawfile, j_mid_le_3",
+        "rawfile, j_mid_ri_0",
+        "rawfile, j_mid_ri_1",
+        "rawfile, j_mid_ri_2",
+        "rawfile, j_mid_ri_3",
+        "rawfile, j_pinky_le_0",
+        "rawfile, j_pinky_le_1",
+        "rawfile, j_pinky_le_2",
+        "rawfile, j_pinky_le_3",
+        "rawfile, j_pinky_ri_0",
+        "rawfile, j_pinky_ri_1",
+        "rawfile, j_pinky_ri_2",
+        "rawfile, j_pinky_ri_3",
+        "rawfile, j_pinkypalm_le",
+        "rawfile, j_pinkypalm_ri",
+        "rawfile, j_ring_le_0",
+        "rawfile, j_ring_le_1",
+        "rawfile, j_ring_le_2",
+        "rawfile, j_ring_le_3",
+        "rawfile, j_ring_ri_0",
+        "rawfile, j_ring_ri_1",
+        "rawfile, j_ring_ri_2",
+        "rawfile, j_ring_ri_3",
+        "rawfile, j_ringpalm_le",
+        "rawfile, j_ringpalm_ri",
+        "rawfile, j_shorts_lift_le",
+        "rawfile, j_shoulder_ri",
+        "rawfile, j_shouldertwist_le",
+        "rawfile, j_sleave_reshape_bottom_le_2",
+        "rawfile, j_sleave_reshape_top_le_1",
+        "rawfile, j_sleave_reshape_top_le_2",
+        "rawfile, j_sleave_reshape_top_le_3",
+        "rawfile, j_sleave_reshape_top_ri_1",
+        "rawfile, j_sleave_reshape_top_ri_2",
+        "rawfile, j_sleave_reshape_top_ri_3",
+        "rawfile, j_thumb_le_0",
+        "rawfile, j_thumb_le_1",
+        "rawfile, j_thumb_le_2",
+        "rawfile, j_thumb_le_3",
+        "rawfile, j_thumb_ri_0",
+        "rawfile, j_thumb_ri_1",
+        "rawfile, j_thumb_ri_2",
+        "rawfile, j_thumb_ri_3",
+        "rawfile, j_top",
+        "rawfile, j_webbing_le",
+        "rawfile, j_webbing_ri",
+        "rawfile, j_wrist_ri",
+        "rawfile, j_wristtwist_le",
+        "rawfile, j_wristtwist_ri",
+        "rawfile, polysurface80488",
+        "rawfile, sndnt#evt_perk_bottle_open",
+        "rawfile, tag_brass",
+        "rawfile, tag_fx_hellfire",
+        "rawfile, tag_gasmask",
+        "rawfile, tag_riot_shield_dolly",
+        "rawfile, tag_weapon_left",
+        "rawfile, zm_al_gate_lod0",
+        "rawfile, zm_taunt",
+        "xmodel, bo3_rev_v2_idg_view_0403191141_75d444",
+        "xanim, viewmodel_zomb_mg08_fire",
+        "xanim, viewmodel_zomb_mg08_reload",
+        "xanim, viewmodel_zomb_mg08_reload_empty",
         "xanim, viewmodel_zomb_mg08_pullout",
         "xanim, viewmodel_zomb_mg08_putaway",
         "xanim, viewmodel_zomb_mg08_first_raise",
@@ -1369,130 +1447,74 @@
         "tracer, lmg_enemy",
         "weapon, mg08_zm",
         "keyvaluepairs, so_zsurvival_zm_transit"
-      ]
+      ],
+      "list_warning": null
     },
     "runtime_ipak": {
       "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\output\\so_zsurvival_zm_transit.ipak",
       "exists": true,
-      "sha256": "3762ff5b2f7e376f2bdc209fefec859f989eb1e5fbad3ab958207dd40f1ff5ad",
+      "sha256": "5a15d82a2375eb2434408132be5cf3e38ffa071fc72b510db9c4aef00446b055",
       "size": 3768320
     },
     "mod_load_ff": {
       "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\output\\mod_load.ff",
       "exists": true,
-      "sha256": "9f4efe7e84f422cfa81fa893748f26bd9c60bd378947e3e5d3e68e827bbf87a3",
+      "sha256": "77fd2c2d5c7d611da038e36c8852210697659a41169854eb322b728f8cbcd779",
       "assets": [
-        "techniqueset, effect_z0z25860",
-        "image, bo3rfx_fxt_shockwave_anim_1",
-        "material, bo3rfx_gfx_shockwave_anim_em",
-        "techniqueset, effect_26z423jf",
-        "image, bo3rfx_fxt_fog_slow_lg_anim",
-        "material, bo3rfx_gfx_fog_slow_lg_anim_em",
-        "image, bo3rfx_fxt_gib_metal_01",
-        "material, bo3rfx_gfx_gib_metal_01_lit",
-        "fx, zombie/fx_idgun_ground_displace_zod_zmb",
-        "image, bo3rfx_fxt_shockwave_elec_anim",
-        "material, bo3rfx_gfx_shockwave_elec_anim_em_i2048",
-        "techniqueset, effect_842ee834",
-        "image, bo3rfx_fxt_water_splash",
-        "material, bo3rfx_gfx_water_splash_em",
-        "techniqueset, effect_50567j38",
-        "image, bo3rfx_fxt_light_phosphorous",
-        "material, bo3rfx_gfx_light_phosphorous_em_i1024",
-        "image, $identitynormalmap",
-        "image, bo3rfx_fxt_decal_blast_white_01_c",
-        "material, bo3rfx_gfx_decal_exp_blast_01",
-        "material, bo3rfx_gfx_decal_exp_blast_03",
-        "techniqueset, distortion_81587199",
-        "image, bo3rfx_fxt_distort_ring_ripple",
-        "material, bo3rfx_gfx_distort_ring_ripple",
-        "material, bo3rfx_gfx_fog_slow_lg_anim_em_i1024",
-        "image, bo3rfx_fxt_fire_flame_base_2_anim",
-        "material, bo3rfx_gfx_fire_flame_base_2_anim_em_i1024",
-        "image, bo3rfx_fxt_water_bubble",
-        "material, bo3rfx_gfx_water_bubble_em",
-        "fx, zombie/fx_idgun_vortex_explo_zod_zmb",
-        "image, bo3rfx_fxt_distort_ring_hvy",
-        "material, bo3rfx_gfx_distort_ring_hvy",
-        "image, bo3rfx_fxt_dust_gen",
-        "material, bo3rfx_gfx_dust_gen_lit",
-        "image, bo3rfx_fxt_spark_blink_anim",
-        "material, bo3rfx_gfx_spark_blink_anim_em",
-        "image, bo3rfx_fxt_fog_slow_md_anim",
-        "material, bo3rfx_gfx_fog_slow_md_anim_lit",
-        "image, bo3rfx_fxt_smk_puff_light_varied",
-        "material, bo3rfx_gfx_smk_puff_light_varied",
-        "fx, zombie/fx_idgun_hole_xsm_zod_zmb",
-        "material, bo3rfx_gfx_dust_gen_em",
-        "image, bo3rfx_fxt_debris_clump",
-        "material, bo3rfx_gfx_debris_clump_em",
-        "fx, zombie/fx_idgun_hole_sm_zod_zmb",
-        "fx, zombie/fx_idgun_hole_lg_zod_zmb",
-        "fx, zombie/fx_idgun_hole_xl_zod_zmb",
-        "fx, zombie/fx_idgun_vortex_zod_zmb",
-        "fx, zombie/fx_bo3_rev_probe_namespaced_phosphorous_os",
-        "image, bo3rfx_fxt_debri_trash_multiple",
-        "image, bo3rfx_fxt_fire_flame_base_1_anim",
-        "image, bo3rfx_fxt_fog_slow_sm_anim",
-        "image, bo3rfx_fxt_gib_metal_02",
-        "image, bo3rfx_fxt_smk_whisp_anim",
-        "image, fxt_env_dust_mote_atlas",
-        "image, fxt_light_glow_square",
-        "material, bo3rfx_gfx_debris_trash_multiple_em",
-        "material, bo3rfx_gfx_fire_flame_base_1_anim_em_i1024",
-        "material, bo3rfx_gfx_fog_slow_sm_anim_lit",
-        "material, bo3rfx_gfx_gib_metal_02_lit",
-        "material, bo3rfx_gfx_smk_whisp_anim_em",
-        "keyvaluepairs, mod_load"
+        "xanim, viewmodel_zomb_mg08_idle"
       ],
       "list_warning": null
     },
     "mod_load_ipak": {
       "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\output\\mod_load.ipak",
-      "exists": true,
-      "sha256": "1f5a6c43460898b7db203d443689774ad251fa3373a0815e53641f294eaf961d",
-      "size": 13041664
+      "exists": false,
+      "sha256": "",
+      "size": 0
     }
   },
   "weapon_probe": {
     "asset": "mg08_zm",
     "starter_weapon": "m1911_zm",
     "gun_model_mode": "custom",
-    "build_tag": "0321232501_4c7e1d",
-    "use_bo3_idg_anims": false,
-    "bo3_anim_stage": "off",
+    "build_tag": "0403191141_75d444",
+    "use_bo3_idg_anims": true,
+    "bo3_anim_stage": "idleonly",
+    "anim_probe_phase": "equip_hold",
+    "run_label": "consumer_semantic_transition_compare",
     "bo3_anim_force_identity": false,
     "use_custom_idg_viewhands": false,
     "force_low_handmodel": false,
+    "force_stock_shell": true,
+    "forced_stock_shell": "c_zom_engineer_viewhands",
     "proof_expectation": {
-      "clipSize": "1",
-      "startAmmo": "10",
-      "maxAmmo": "10",
+      "clipSize": "5",
+      "startAmmo": "25",
+      "maxAmmo": "25",
       "fireTime": "0.75",
       "damage": "2000"
     },
     "staged_fields": {
       "displayName": "WEAPON_APOTHICON_SERVANT",
-      "gunModel": "bo3_rev_v2_idg_view_0321232501_4c7e1d",
-      "handModel": "",
+      "gunModel": "bo3_rev_v2_idg_view_0403191141_75d444",
+      "handModel": "c_zom_hazmat_viewhands",
       "worldModel": "t6_wpn_zmb_mg08_world",
       "projectileModel": "",
       "parentWeaponName": "mg08",
-      "clipSize": "1",
-      "startAmmo": "10",
-      "maxAmmo": "10",
+      "clipSize": "5",
+      "startAmmo": "25",
+      "maxAmmo": "25",
       "fireTime": "0.75",
       "damage": "2000",
       "idleAnim": "viewmodel_zomb_mg08_idle",
-      "fireAnim": "viewmodel_zomb_staff_fire_reload",
-      "reloadAnim": "viewmodel_pdw57_reload",
-      "reloadEmptyAnim": "viewmodel_pdw57_reload_empty",
-      "reloadQuickAnim": "viewmodel_pdw57_reload",
-      "reloadQuickEmptyAnim": "viewmodel_pdw57_reload_empty",
-      "reloadTime": "2.6",
-      "reloadEmptyTime": "3.2",
-      "reloadQuickTime": "2.6",
-      "reloadQuickEmptyTime": "3.2",
+      "fireAnim": "viewmodel_zomb_mg08_fire",
+      "reloadAnim": "viewmodel_zomb_mg08_reload",
+      "reloadEmptyAnim": "viewmodel_zomb_mg08_reload_empty",
+      "reloadQuickAnim": "",
+      "reloadQuickEmptyAnim": "",
+      "reloadTime": "4.2",
+      "reloadEmptyTime": "5.1",
+      "reloadQuickTime": "0",
+      "reloadQuickEmptyTime": "0",
       "firstRaiseAnim": "viewmodel_zomb_mg08_first_raise",
       "sprintInAnim": "viewmodel_zomb_mg08_sprint_in"
     },
@@ -1508,26 +1530,368 @@
       "clipName": "mg08"
     }
   },
+  "xanim_probe": {
+    "enabled": true,
+    "stage": "idleonly",
+    "emit_mode": "bo3_frames",
+    "runtime_backend": "target_weapon_names",
+    "force_identity": false,
+    "use_rebaked": true,
+    "source_dir": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_export_rebaked\\viewmodel",
+    "runtime_stage_dir": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_export_runtime\\viewmodel",
+    "runtime_map_report": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_reports\\xanim_runtime_map.json",
+    "runtime_patch_catalog_report": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_reports\\xanim_runtime_patch_catalog.json",
+    "runtime_patch_manifest": "Z:\\Games\\pluto_t6_full_game\\native\\fx_runtime_probe\\bin\\x86\\Release\\xanim_runtime_patches.txt",
+    "runtime_patch_payload_dir": "Z:\\Games\\pluto_t6_full_game\\native\\fx_runtime_probe\\bin\\x86\\Release\\xanim_runtime_payloads",
+    "runtime_expectations": "Z:\\Games\\pluto_t6_full_game\\native\\fx_runtime_probe\\bin\\x86\\Release\\xanim_runtime_expectations.txt",
+    "subset": [
+      "vm_zod_id_gun_idle"
+    ],
+    "donor_ff": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\zm_prison.ff",
+    "donor_zone": "zm_prison",
+    "donor_asset": "viewmodel_minigun_t6_idle",
+    "idle_diag_bone": "",
+    "idle_diag_translate": "",
+    "idle_diag_frequency": "",
+    "idle_static_bone": "",
+    "idle_static_translate": "",
+    "idle_contract_report": {
+      "donor_asset": "viewmodel_minigun_t6_idle",
+      "donor_asset_resolved": "viewmodel_minigun_t6_idle",
+      "target_name": "vm_zod_id_gun_idle",
+      "emit_mode": "bo3_frames",
+      "removed_tracks": 0,
+      "bo3_frames_target": [
+        "vm_zod_id_gun_idle"
+      ],
+      "bo3_fallback_mode": "static_pose",
+      "donor_header": {
+        "dataByteCount": 82,
+        "dataShortCount": 306,
+        "dataIntCount": 195,
+        "randomDataByteCount": 0,
+        "randomDataIntCount": 0,
+        "numframes": 2,
+        "flags": {
+          "bLoop": 0,
+          "bDelta": 0,
+          "bDelta3D": 0,
+          "bLeftHandGripIK": 0,
+          "assetType": 1,
+          "isDefault": 0
+        },
+        "boneCount": [
+          5,
+          0,
+          0,
+          1,
+          76,
+          0,
+          0,
+          65,
+          17,
+          82
+        ],
+        "notifyCount": 1,
+        "randomDataShortCount": 0,
+        "indexCount": 0,
+        "framerate": 30.0,
+        "frequency": 15.0,
+        "primedLength": 0.0,
+        "loopEntryTime": 0.0,
+        "pointers": {
+          "name": 4294967295,
+          "names": 4294967295,
+          "dataByte": 4294967295,
+          "dataShort": 4294967295,
+          "dataInt": 4294967295,
+          "randomDataShort": 0,
+          "randomDataByte": 0,
+          "randomDataInt": 0,
+          "indices": 0,
+          "notify": 4294967295,
+          "deltaPart": 0
+        }
+      },
+      "emitted_header": {
+        "dataByteCount": 89,
+        "dataShortCount": 356,
+        "dataIntCount": 267,
+        "randomDataByteCount": 0,
+        "randomDataIntCount": 0,
+        "numframes": 171,
+        "flags": {
+          "bLoop": 1,
+          "bDelta": 1,
+          "bDelta3D": 1,
+          "bLeftHandGripIK": 0,
+          "assetType": 1,
+          "isDefault": 0
+        },
+        "boneCount": [
+          0,
+          0,
+          0,
+          0,
+          89,
+          0,
+          0,
+          89,
+          0,
+          89
+        ],
+        "notifyCount": 1,
+        "randomDataShortCount": 0,
+        "indexCount": 0,
+        "framerate": 30.0,
+        "frequency": 30.0,
+        "primedLength": 0.0,
+        "loopEntryTime": 0.0,
+        "pointers": {
+          "name": 4294967295,
+          "names": 4294967295,
+          "dataByte": 4294967295,
+          "dataShort": 4294967295,
+          "dataInt": 4294967295,
+          "randomDataShort": 0,
+          "randomDataByte": 0,
+          "randomDataInt": 0,
+          "indices": 0,
+          "notify": 4294967295,
+          "deltaPart": 4294967295
+        }
+      },
+      "header_diff": {
+        "boneCount": {
+          "donor": [
+            5,
+            0,
+            0,
+            1,
+            76,
+            0,
+            0,
+            65,
+            17,
+            82
+          ],
+          "emitted": [
+            0,
+            0,
+            0,
+            0,
+            89,
+            0,
+            0,
+            89,
+            0,
+            89
+          ]
+        },
+        "dataByteCount": {
+          "donor": 82,
+          "emitted": 89
+        },
+        "dataIntCount": {
+          "donor": 195,
+          "emitted": 267
+        },
+        "dataShortCount": {
+          "donor": 306,
+          "emitted": 356
+        },
+        "flags": {
+          "donor": {
+            "bLoop": 0,
+            "bDelta": 0,
+            "bDelta3D": 0,
+            "bLeftHandGripIK": 0,
+            "assetType": 1,
+            "isDefault": 0
+          },
+          "emitted": {
+            "bLoop": 1,
+            "bDelta": 1,
+            "bDelta3D": 1,
+            "bLeftHandGripIK": 0,
+            "assetType": 1,
+            "isDefault": 0
+          }
+        },
+        "frequency": {
+          "donor": 15.0,
+          "emitted": 30.0
+        },
+        "numframes": {
+          "donor": 2,
+          "emitted": 171
+        },
+        "pointers": {
+          "donor": {
+            "name": 4294967295,
+            "names": 4294967295,
+            "dataByte": 4294967295,
+            "dataShort": 4294967295,
+            "dataInt": 4294967295,
+            "randomDataShort": 0,
+            "randomDataByte": 0,
+            "randomDataInt": 0,
+            "indices": 0,
+            "notify": 4294967295,
+            "deltaPart": 0
+          },
+          "emitted": {
+            "name": 4294967295,
+            "names": 4294967295,
+            "dataByte": 4294967295,
+            "dataShort": 4294967295,
+            "dataInt": 4294967295,
+            "randomDataShort": 0,
+            "randomDataByte": 0,
+            "randomDataInt": 0,
+            "indices": 0,
+            "notify": 4294967295,
+            "deltaPart": 4294967295
+          }
+        }
+      },
+      "donor_sections": {
+        "name": {
+          "offset": 145373447,
+          "size": 26
+        },
+        "names": {
+          "offset": 145373473,
+          "size": 164
+        },
+        "notify": {
+          "offset": 145373637,
+          "size": 8
+        },
+        "dataByte": {
+          "offset": 145373645,
+          "size": 82
+        },
+        "dataShort": {
+          "offset": 145373727,
+          "size": 612
+        },
+        "dataInt": {
+          "offset": 145374339,
+          "size": 780
+        }
+      },
+      "emitted_payload": {
+        "data_size": 4870,
+        "string_table_size": 90
+      },
+      "emitted_string_table_preview": [
+        [
+          "tag_weapon",
+          0
+        ],
+        [
+          "tag_claw_back_left_01_animate",
+          1
+        ],
+        [
+          "tag_eye_back_01_animate",
+          2
+        ],
+        [
+          "tag_eye_back_01_lid_lower_animate",
+          3
+        ],
+        [
+          "tag_eye_back_01_lid_upper_animate",
+          4
+        ],
+        [
+          "tag_eye_back_02_animate",
+          5
+        ],
+        [
+          "tag_eye_back_02_llid_lower_animate",
+          6
+        ],
+        [
+          "tag_eye_back_02_llid_upper_animate",
+          7
+        ],
+        [
+          "tag_eye_left_big_animate",
+          8
+        ],
+        [
+          "tag_eye_left_big_lid1_animate",
+          9
+        ],
+        [
+          "tag_eye_left_big_lid_animate",
+          10
+        ],
+        [
+          "tag_eye_left_small_animate",
+          11
+        ],
+        [
+          "tag_eye_left_small_lid_lower_animate",
+          12
+        ],
+        [
+          "tag_eye_left_small_lid_upper_animate",
+          13
+        ],
+        [
+          "tag_fangs_left_01_animate",
+          14
+        ],
+        [
+          "tag_fangs_left_02_animate",
+          15
+        ]
+      ],
+      "enabled": true,
+      "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_reports\\vm_zod_id_gun_idle_contract_report.json",
+      "source_export": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xanim_export_rebaked\\viewmodel\\vm_zod_id_gun_idle.xanim_export",
+      "donor_ff": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\zm_prison.ff"
+    }
+  },
   "first_person_composition": {
     "active_components": {
       "weapon_shell": "mg08_zm",
       "gunModel": {
-        "asset": "bo3_rev_v2_idg_view_0321232501_4c7e1d",
+        "asset": "bo3_rev_v2_idg_view_0403191141_75d444",
         "found": true,
-        "xmodel_json": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xmodel\\bo3_rev_v2_idg_view_0321232501_4c7e1d.json",
+        "xmodel_json": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\xmodel\\bo3_rev_v2_idg_view_0403191141_75d444.json",
         "type": "animated",
         "flags": 4718592,
-        "lod0_file": "model_export/bo3_rev_v2_idg_view_0321232501_4c7e1d_lod0.glb",
+        "lod0_file": "model_export/bo3_rev_v2_idg_view_0403191141_75d444_lod0.glb",
         "glb": {
-          "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\model_export\\bo3_rev_v2_idg_view_0321232501_4c7e1d_lod0.glb",
-          "nodes": 91,
-          "joints": 89,
+          "path": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\model_export\\bo3_rev_v2_idg_view_0403191141_75d444_lod0.glb",
+          "nodes": 65,
+          "joints": 63,
           "skins": 1,
           "meshes": 1,
           "materials": 5
         }
       },
-      "handModel": null
+      "handModel": {
+        "asset": "c_zom_hazmat_viewhands",
+        "found": true,
+        "xmodel_json": "Z:\\Games\\pluto_t6_full_game\\zone_dump\\zone_raw\\so_zsurvival_zm_transit\\xmodel\\c_zom_hazmat_viewhands.json",
+        "type": "viewhands",
+        "flags": 786432,
+        "lod0_file": "model_export/c_zom_hazmat_viewhands_lod0.glb",
+        "glb": {
+          "path": "Z:\\Games\\pluto_t6_full_game\\zone_dump\\zone_raw\\so_zsurvival_zm_transit\\model_export\\c_zom_hazmat_viewhands_lod0.glb",
+          "nodes": 63,
+          "joints": 60,
+          "skins": 1,
+          "meshes": 2,
+          "materials": 1
+        }
+      }
     },
     "zombie_viewhands_variants": {
       "c_zom_suit_viewhands": {
@@ -1565,16 +1929,16 @@
     },
     "predicted_totals": {
       "c_zom_suit_viewhands": {
-        "nodes": 155,
-        "joints": 149,
-        "over_160_nodes": false,
-        "over_160_joints": false
+        "nodes": 192,
+        "joints": 183,
+        "over_160_nodes": true,
+        "over_160_joints": true
       },
       "c_zom_hazmat_viewhands": {
-        "nodes": 154,
-        "joints": 149,
-        "over_160_nodes": false,
-        "over_160_joints": false
+        "nodes": 191,
+        "joints": 183,
+        "over_160_nodes": true,
+        "over_160_joints": true
       }
     },
     "note": "This is a build-side estimate of first-person DObj composition based on xmodel/glb inputs. It does not prove what the engine assembled at runtime, but it shows exactly what the weapon asset points at."
@@ -1585,271 +1949,67 @@
     "watchlist": "Z:\\Games\\pluto_t6_full_game\\native\\fx_runtime_probe\\active_probe_watchlist.txt",
     "watch_entries": [
       [
-        "build",
-        "0321232501_4c7e1d"
+        "xanim",
+        "viewmodel_zomb_mg08_idle"
       ],
       [
-        "mode",
-        "servant_vortex_core"
+        "xanim",
+        "viewmodel_zomb_mg08_first_raise"
       ],
       [
-        "file",
-        "so_zsurvival_zm_transit.ff"
+        "xanim",
+        "viewmodel_zomb_mg08_fire"
       ],
       [
-        "file",
-        "mod_load.ff"
+        "xanim",
+        "viewmodel_zomb_mg08_pullout"
       ],
       [
-        "file",
-        "mod_load.ipak"
+        "xanim",
+        "viewmodel_zomb_mg08_putaway"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_ground_displace_zod_zmb"
+        "xanim",
+        "viewmodel_minigun_t6_idle"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_vortex_explo_zod_zmb"
+        "xmodel",
+        "bo3_rev_v2_idg_view_0403191141_75d444"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_vortex_zod_zmb"
+        "xmodel",
+        "t6_wpn_zmb_mg08_view"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_hole_lg_zod_zmb"
+        "xmodel",
+        "viewmodel_usa_no_model"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_hole_sm_zod_zmb"
+        "xmodel",
+        "c_zom_suit_viewhands"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_hole_xsm_zod_zmb"
+        "xmodel",
+        "c_zom_hazmat_viewhands"
       ],
       [
-        "fx",
-        "zombie/fx_idgun_hole_xl_zod_zmb"
+        "xmodel",
+        "c_zom_farmgirl_viewhands"
       ],
       [
-        "fx",
-        "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os"
+        "xmodel",
+        "c_zom_reporter_viewhands"
       ],
       [
-        "material",
-        "bo3rfx_gfx_debris_clump_em"
+        "xmodel",
+        "c_zom_engineer_viewhands"
       ],
       [
-        "material",
-        "bo3rfx_gfx_debris_trash_multiple_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_decal_exp_blast_01"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_decal_exp_blast_03"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_distort_ring_hvy"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_distort_ring_ripple"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_dust_gen_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_dust_gen_lit"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fire_flame_base_1_anim_em_i1024"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fire_flame_base_2_anim_em_i1024"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fog_slow_lg_anim_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fog_slow_lg_anim_em_i1024"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fog_slow_md_anim_lit"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_fog_slow_sm_anim_lit"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_gib_metal_01_lit"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_gib_metal_02_lit"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_light_phosphorous_em_i1024"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_shockwave_anim_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_shockwave_elec_anim_em_i2048"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_smk_puff_light_varied"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_smk_whisp_anim_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_spark_blink_anim_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_water_bubble_em"
-      ],
-      [
-        "material",
-        "bo3rfx_gfx_water_splash_em"
-      ],
-      [
-        "image",
-        "$identitynormalmap"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_debri_trash_multiple"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_debris_clump"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_decal_blast_white_01_c"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_distort_ring_hvy"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_distort_ring_ripple"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_dust_gen"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_fire_flame_base_1_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_fire_flame_base_2_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_fog_slow_lg_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_fog_slow_md_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_fog_slow_sm_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_gib_metal_01"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_gib_metal_02"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_light_phosphorous"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_shockwave_anim_1"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_shockwave_elec_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_smk_puff_light_varied"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_smk_whisp_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_spark_blink_anim"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_water_bubble"
-      ],
-      [
-        "image",
-        "bo3rfx_fxt_water_splash"
-      ],
-      [
-        "image",
-        "fxt_env_dust_mote_atlas"
-      ],
-      [
-        "image",
-        "fxt_light_glow_square"
-      ],
-      [
-        "techset",
-        "effect_50567j38"
-      ],
-      [
-        "techset",
-        "effect_26z423jf"
-      ],
-      [
-        "techset",
-        "effect_842ee834"
-      ],
-      [
-        "techset",
-        "distortion_81587199"
-      ],
-      [
-        "techset",
-        "effect_z0z25860"
+        "xmodel",
+        "c_zom_oldman_viewhands"
       ]
     ],
-    "servant_fx_scope": "vortex_core",
+    "servant_fx_scope": "full",
     "servant_vortex_layer_mode": "all",
     "clientscript_templates": [
       "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\clientscripts\\mp\\zm_transit.csc.in",
@@ -1878,31 +2038,7 @@
       "i_wpn_t7_zmb_zod_tentacle_claw_mask",
       "i_wpn_t7_zmb_zod_tentacle_claw_n",
       "i_wpn_t7_zmb_zod_tentacle_claw_o",
-      "i_wpn_t7_zmb_zod_tentacle_electric_e",
-      "bo3rfx_fxt_debris_clump",
-      "bo3rfx_fxt_debri_trash_multiple",
-      "bo3rfx_fxt_decal_blast_white_01_c",
-      "bo3rfx_fxt_distort_ring_hvy",
-      "bo3rfx_fxt_distort_ring_ripple",
-      "bo3rfx_fxt_dust_gen",
-      "bo3rfx_fxt_fire_flame_base_1_anim",
-      "bo3rfx_fxt_fire_flame_base_2_anim",
-      "bo3rfx_fxt_fog_slow_lg_anim",
-      "bo3rfx_fxt_fog_slow_md_anim",
-      "bo3rfx_fxt_fog_slow_sm_anim",
-      "bo3rfx_fxt_gib_metal_01",
-      "bo3rfx_fxt_gib_metal_02",
-      "bo3rfx_fxt_light_phosphorous",
-      "bo3rfx_fxt_shockwave_anim_1",
-      "bo3rfx_fxt_shockwave_elec_anim",
-      "bo3rfx_fxt_smk_puff_light_varied",
-      "bo3rfx_fxt_smk_whisp_anim",
-      "bo3rfx_fxt_spark_blink_anim",
-      "bo3rfx_fxt_water_bubble",
-      "bo3rfx_fxt_water_splash",
-      "fxt_light_glow_square",
-      "$identitynormalmap",
-      "fxt_env_dust_mote_atlas"
+      "i_wpn_t7_zmb_zod_tentacle_electric_e"
     ],
     "staged_model_images": [
       "i_wpn_t7_zmb_zod_idg_ammo_c",
@@ -1920,197 +2056,35 @@
       "i_wpn_t7_zmb_zod_tentacle_claw_o",
       "i_wpn_t7_zmb_zod_tentacle_electric_e"
     ],
-    "staged_fx_images": [
-      "$identitynormalmap",
-      "bo3rfx_fxt_debri_trash_multiple",
-      "bo3rfx_fxt_debris_clump",
-      "bo3rfx_fxt_decal_blast_white_01_c",
-      "bo3rfx_fxt_distort_ring_hvy",
-      "bo3rfx_fxt_distort_ring_ripple",
-      "bo3rfx_fxt_dust_gen",
-      "bo3rfx_fxt_fire_flame_base_1_anim",
-      "bo3rfx_fxt_fire_flame_base_2_anim",
-      "bo3rfx_fxt_fog_slow_lg_anim",
-      "bo3rfx_fxt_fog_slow_md_anim",
-      "bo3rfx_fxt_fog_slow_sm_anim",
-      "bo3rfx_fxt_gib_metal_01",
-      "bo3rfx_fxt_gib_metal_02",
-      "bo3rfx_fxt_light_phosphorous",
-      "bo3rfx_fxt_shockwave_anim_1",
-      "bo3rfx_fxt_shockwave_elec_anim",
-      "bo3rfx_fxt_smk_puff_light_varied",
-      "bo3rfx_fxt_smk_whisp_anim",
-      "bo3rfx_fxt_spark_blink_anim",
-      "bo3rfx_fxt_water_bubble",
-      "bo3rfx_fxt_water_splash",
-      "fxt_env_dust_mote_atlas",
-      "fxt_light_glow_square"
-    ],
+    "staged_fx_images": [],
     "loose_image_aliases": {
-      ",$identitynormalmap": "$identitynormalmap",
-      ",bo3rfx_fxt_debri_trash_multiple": "bo3rfx_fxt_debri_trash_multiple",
-      ",bo3rfx_fxt_debris_clump": "bo3rfx_fxt_debris_clump",
-      ",bo3rfx_fxt_decal_blast_white_01_c": "bo3rfx_fxt_decal_blast_white_01_c",
-      ",bo3rfx_fxt_distort_ring_hvy": "bo3rfx_fxt_distort_ring_hvy",
-      ",bo3rfx_fxt_distort_ring_ripple": "bo3rfx_fxt_distort_ring_ripple",
-      ",bo3rfx_fxt_dust_gen": "bo3rfx_fxt_dust_gen",
-      ",bo3rfx_fxt_fire_flame_base_1_anim": "bo3rfx_fxt_fire_flame_base_1_anim",
-      ",bo3rfx_fxt_fire_flame_base_2_anim": "bo3rfx_fxt_fire_flame_base_2_anim",
-      ",bo3rfx_fxt_fog_slow_lg_anim": "bo3rfx_fxt_fog_slow_lg_anim",
-      ",bo3rfx_fxt_fog_slow_md_anim": "bo3rfx_fxt_fog_slow_md_anim",
-      ",bo3rfx_fxt_fog_slow_sm_anim": "bo3rfx_fxt_fog_slow_sm_anim",
-      ",bo3rfx_fxt_gib_metal_01": "bo3rfx_fxt_gib_metal_01",
-      ",bo3rfx_fxt_gib_metal_02": "bo3rfx_fxt_gib_metal_02",
-      ",bo3rfx_fxt_light_phosphorous": "bo3rfx_fxt_light_phosphorous",
-      ",bo3rfx_fxt_shockwave_anim_1": "bo3rfx_fxt_shockwave_anim_1",
-      ",bo3rfx_fxt_shockwave_elec_anim": "bo3rfx_fxt_shockwave_elec_anim",
-      ",bo3rfx_fxt_smk_puff_light_varied": "bo3rfx_fxt_smk_puff_light_varied",
-      ",bo3rfx_fxt_smk_whisp_anim": "bo3rfx_fxt_smk_whisp_anim",
-      ",bo3rfx_fxt_spark_blink_anim": "bo3rfx_fxt_spark_blink_anim",
-      ",bo3rfx_fxt_water_bubble": "bo3rfx_fxt_water_bubble",
-      ",bo3rfx_fxt_water_splash": "bo3rfx_fxt_water_splash",
-      ",fxt_env_dust_mote_atlas": "fxt_env_dust_mote_atlas",
-      ",fxt_light_glow_square": "fxt_light_glow_square"
+      ",i_wpn_t7_zmb_zod_idg_ammo_c": "i_wpn_t7_zmb_zod_idg_ammo_c",
+      ",i_wpn_t7_zmb_zod_idg_ammo_n": "i_wpn_t7_zmb_zod_idg_ammo_n",
+      ",i_wpn_t7_zmb_zod_idg_ammo_o": "i_wpn_t7_zmb_zod_idg_ammo_o",
+      ",i_wpn_t7_zmb_zod_idg_ammo_s": "i_wpn_t7_zmb_zod_idg_ammo_s",
+      ",i_wpn_t7_zmb_zod_tentacle_ambient_c": "i_wpn_t7_zmb_zod_tentacle_ambient_c",
+      ",i_wpn_t7_zmb_zod_tentacle_ambient_g": "i_wpn_t7_zmb_zod_tentacle_ambient_g",
+      ",i_wpn_t7_zmb_zod_tentacle_ambient_n": "i_wpn_t7_zmb_zod_tentacle_ambient_n",
+      ",i_wpn_t7_zmb_zod_tentacle_ambient_t": "i_wpn_t7_zmb_zod_tentacle_ambient_t",
+      ",i_wpn_t7_zmb_zod_tentacle_claw_c": "i_wpn_t7_zmb_zod_tentacle_claw_c",
+      ",i_wpn_t7_zmb_zod_tentacle_claw_g": "i_wpn_t7_zmb_zod_tentacle_claw_g",
+      ",i_wpn_t7_zmb_zod_tentacle_claw_mask": "i_wpn_t7_zmb_zod_tentacle_claw_mask",
+      ",i_wpn_t7_zmb_zod_tentacle_claw_n": "i_wpn_t7_zmb_zod_tentacle_claw_n",
+      ",i_wpn_t7_zmb_zod_tentacle_claw_o": "i_wpn_t7_zmb_zod_tentacle_claw_o",
+      ",i_wpn_t7_zmb_zod_tentacle_electric_e": "i_wpn_t7_zmb_zod_tentacle_electric_e"
     },
-    "staged_fx": [
-      "zombie/fx_idgun_ground_displace_zod_zmb",
-      "zombie/fx_idgun_vortex_explo_zod_zmb",
-      "zombie/fx_idgun_vortex_zod_zmb",
-      "zombie/fx_idgun_hole_lg_zod_zmb",
-      "zombie/fx_idgun_hole_sm_zod_zmb",
-      "zombie/fx_idgun_hole_xsm_zod_zmb",
-      "zombie/fx_idgun_hole_xl_zod_zmb",
-      "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os"
-    ],
-    "raw_fx_compatibility": {
-      "supported_visual_types": [
-        "billboardSprite",
-        "cloud",
-        "decal",
-        "line",
-        "orientedSprite",
-        "rotatedSprite",
-        "tail"
-      ],
-      "experimental_visual_types": [
-        "trail"
-      ],
-      "unsupported_visual_types": [
-        "model",
-        "runner"
-      ],
-      "ignored_features": [
-        "dynamicLight2"
-      ],
-      "fatal_effects": [],
-      "warning_effects": [
-        {
-          "effect": "zombie/fx_idgun_hole_xl_zod_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        },
-        {
-          "effect": "zombie/fx_idgun_muz_1p_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        },
-        {
-          "effect": "zombie/fx_idgun_muz_3p_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        },
-        {
-          "effect": "zombie/fx_idgun_projectile_zod_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        },
-        {
-          "effect": "zombie/fx_idgun_vortex_explo_zod_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        },
-        {
-          "effect": "zombie/fx_idgun_vortex_zod_zmb",
-          "reasons": [
-            "ignored features: dynamicLight2"
-          ]
-        }
-      ]
-    }
+    "staged_fx": [],
+    "raw_fx_compatibility": {}
   },
   "fx_load_lane": {
-    "enabled": true,
+    "enabled": false,
     "zone_name": "mod_load",
     "ff_name": "mod_load.ff",
     "ipak_name": "mod_load.ipak",
     "expected_manifest": {
-      "fx": [
-        "zombie/fx_idgun_ground_displace_zod_zmb",
-        "zombie/fx_idgun_vortex_explo_zod_zmb",
-        "zombie/fx_idgun_vortex_zod_zmb",
-        "zombie/fx_idgun_hole_lg_zod_zmb",
-        "zombie/fx_idgun_hole_sm_zod_zmb",
-        "zombie/fx_idgun_hole_xsm_zod_zmb",
-        "zombie/fx_idgun_hole_xl_zod_zmb",
-        "zombie/fx_bo3_rev_probe_namespaced_phosphorous_os"
-      ],
-      "materials": [
-        "bo3rfx_gfx_debris_clump_em",
-        "bo3rfx_gfx_debris_trash_multiple_em",
-        "bo3rfx_gfx_decal_exp_blast_01",
-        "bo3rfx_gfx_decal_exp_blast_03",
-        "bo3rfx_gfx_distort_ring_hvy",
-        "bo3rfx_gfx_distort_ring_ripple",
-        "bo3rfx_gfx_dust_gen_em",
-        "bo3rfx_gfx_dust_gen_lit",
-        "bo3rfx_gfx_fire_flame_base_1_anim_em_i1024",
-        "bo3rfx_gfx_fire_flame_base_2_anim_em_i1024",
-        "bo3rfx_gfx_fog_slow_lg_anim_em",
-        "bo3rfx_gfx_fog_slow_lg_anim_em_i1024",
-        "bo3rfx_gfx_fog_slow_md_anim_lit",
-        "bo3rfx_gfx_fog_slow_sm_anim_lit",
-        "bo3rfx_gfx_gib_metal_01_lit",
-        "bo3rfx_gfx_gib_metal_02_lit",
-        "bo3rfx_gfx_light_phosphorous_em_i1024",
-        "bo3rfx_gfx_shockwave_anim_em",
-        "bo3rfx_gfx_shockwave_elec_anim_em_i2048",
-        "bo3rfx_gfx_smk_puff_light_varied",
-        "bo3rfx_gfx_smk_whisp_anim_em",
-        "bo3rfx_gfx_spark_blink_anim_em",
-        "bo3rfx_gfx_water_bubble_em",
-        "bo3rfx_gfx_water_splash_em"
-      ],
-      "images": [
-        "$identitynormalmap",
-        "bo3rfx_fxt_debri_trash_multiple",
-        "bo3rfx_fxt_debris_clump",
-        "bo3rfx_fxt_decal_blast_white_01_c",
-        "bo3rfx_fxt_distort_ring_hvy",
-        "bo3rfx_fxt_distort_ring_ripple",
-        "bo3rfx_fxt_dust_gen",
-        "bo3rfx_fxt_fire_flame_base_1_anim",
-        "bo3rfx_fxt_fire_flame_base_2_anim",
-        "bo3rfx_fxt_fog_slow_lg_anim",
-        "bo3rfx_fxt_fog_slow_md_anim",
-        "bo3rfx_fxt_fog_slow_sm_anim",
-        "bo3rfx_fxt_gib_metal_01",
-        "bo3rfx_fxt_gib_metal_02",
-        "bo3rfx_fxt_light_phosphorous",
-        "bo3rfx_fxt_shockwave_anim_1",
-        "bo3rfx_fxt_shockwave_elec_anim",
-        "bo3rfx_fxt_smk_puff_light_varied",
-        "bo3rfx_fxt_smk_whisp_anim",
-        "bo3rfx_fxt_spark_blink_anim",
-        "bo3rfx_fxt_water_bubble",
-        "bo3rfx_fxt_water_splash",
-        "fxt_env_dust_mote_atlas",
-        "fxt_light_glow_square"
-      ]
+      "fx": [],
+      "materials": [],
+      "images": []
     }
   },
   "zone_contract": {
@@ -2119,107 +2093,105 @@
     "fx_load_zone_source": "Z:\\Games\\pluto_t6_full_game\\_build\\bo3_rev_idg_probe\\zone_source\\mod_load.zone"
   },
   "deploy_mode": {
-    "to_mod": true,
+    "to_mod": false,
     "to_base": true,
     "allow_stripped_survival_ff": false,
     "stub_zm_viewhands": false,
     "use_custom_idg_viewhands": false,
     "force_low_handmodel": false,
-    "use_bo3_raw_fx": true,
-    "use_dedicated_bo3_fx_load_ff": true,
+    "use_bo3_raw_fx": false,
+    "use_dedicated_bo3_fx_load_ff": false,
     "bo3_fx_load_zone": "mod_load",
-    "raw_fx_stage": "full",
+    "raw_fx_stage": "off",
     "raw_fx_strict": false,
-    "use_bo3_servant_client_fx": true,
+    "use_bo3_servant_client_fx": false,
     "skip_loose_image_deploy": false,
     "skip_script_sync": false,
     "gun_model_mode": "custom",
-    "custom_model_asset": "bo3_rev_v2_idg_view_0321232501_4c7e1d"
+    "custom_model_asset": "bo3_rev_v2_idg_view_0403191141_75d444"
   },
   "deployed_to": [
-    "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all",
-    "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all",
     "Z:\\Games\\pluto_t6_full_game\\zone\\all",
     "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\scripts",
     "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\clientscripts\\mp\\zombies"
   ],
   "deployed_outputs": {
+    "Z:\\Games\\pluto_t6_full_game\\zone\\all": {
+      "so_zsurvival_zm_transit.ff": {
+        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\so_zsurvival_zm_transit.ff",
+        "exists": true,
+        "sha256": "f3c3a175502aaae2cc429d243f66b3ca1bc7a02074adc69d1187f67d77586327",
+        "size": 16291328
+      },
+      "so_zsurvival_zm_transit.ipak": {
+        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\so_zsurvival_zm_transit.ipak",
+        "exists": true,
+        "sha256": "5a15d82a2375eb2434408132be5cf3e38ffa071fc72b510db9c4aef00446b055",
+        "size": 3768320
+      },
+      "mod_load.ff": {
+        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\mod_load.ff",
+        "exists": true,
+        "sha256": "77fd2c2d5c7d611da038e36c8852210697659a41169854eb322b728f8cbcd779",
+        "size": 1472
+      },
+      "mod_load.ipak": {
+        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\mod_load.ipak",
+        "exists": false,
+        "sha256": "",
+        "size": 0
+      }
+    },
     "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all": {
       "so_zsurvival_zm_transit.ff": {
         "path": "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all\\so_zsurvival_zm_transit.ff",
         "exists": true,
-        "sha256": "908948bc16b62f0b7c815422856984de0d022b2535180d2c344b7e2ffbff991e",
-        "size": 16325376
+        "sha256": "f3c3a175502aaae2cc429d243f66b3ca1bc7a02074adc69d1187f67d77586327",
+        "size": 16291328
       },
       "so_zsurvival_zm_transit.ipak": {
         "path": "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all\\so_zsurvival_zm_transit.ipak",
         "exists": true,
-        "sha256": "3762ff5b2f7e376f2bdc209fefec859f989eb1e5fbad3ab958207dd40f1ff5ad",
+        "sha256": "5a15d82a2375eb2434408132be5cf3e38ffa071fc72b510db9c4aef00446b055",
         "size": 3768320
       },
       "mod_load.ff": {
         "path": "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all\\mod_load.ff",
         "exists": true,
-        "sha256": "9f4efe7e84f422cfa81fa893748f26bd9c60bd378947e3e5d3e68e827bbf87a3",
-        "size": 24896
+        "sha256": "77fd2c2d5c7d611da038e36c8852210697659a41169854eb322b728f8cbcd779",
+        "size": 1472
       },
       "mod_load.ipak": {
         "path": "Z:\\Games\\pluto_t6_full_game\\mods\\bo3_rev\\zone\\all\\mod_load.ipak",
-        "exists": true,
-        "sha256": "1f5a6c43460898b7db203d443689774ad251fa3373a0815e53641f294eaf961d",
-        "size": 13041664
+        "exists": false,
+        "sha256": "",
+        "size": 0
       }
     },
     "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all": {
       "so_zsurvival_zm_transit.ff": {
         "path": "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all\\so_zsurvival_zm_transit.ff",
         "exists": true,
-        "sha256": "908948bc16b62f0b7c815422856984de0d022b2535180d2c344b7e2ffbff991e",
-        "size": 16325376
+        "sha256": "f3c3a175502aaae2cc429d243f66b3ca1bc7a02074adc69d1187f67d77586327",
+        "size": 16291328
       },
       "so_zsurvival_zm_transit.ipak": {
         "path": "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all\\so_zsurvival_zm_transit.ipak",
         "exists": true,
-        "sha256": "3762ff5b2f7e376f2bdc209fefec859f989eb1e5fbad3ab958207dd40f1ff5ad",
+        "sha256": "5a15d82a2375eb2434408132be5cf3e38ffa071fc72b510db9c4aef00446b055",
         "size": 3768320
       },
       "mod_load.ff": {
         "path": "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all\\mod_load.ff",
         "exists": true,
-        "sha256": "9f4efe7e84f422cfa81fa893748f26bd9c60bd378947e3e5d3e68e827bbf87a3",
-        "size": 24896
+        "sha256": "77fd2c2d5c7d611da038e36c8852210697659a41169854eb322b728f8cbcd779",
+        "size": 1472
       },
       "mod_load.ipak": {
         "path": "C:\\Users\\Ahmed\\AppData\\Local\\Plutonium\\storage\\t6\\mods\\bo3_rev\\zone\\all\\mod_load.ipak",
-        "exists": true,
-        "sha256": "1f5a6c43460898b7db203d443689774ad251fa3373a0815e53641f294eaf961d",
-        "size": 13041664
-      }
-    },
-    "Z:\\Games\\pluto_t6_full_game\\zone\\all": {
-      "so_zsurvival_zm_transit.ff": {
-        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\so_zsurvival_zm_transit.ff",
-        "exists": true,
-        "sha256": "908948bc16b62f0b7c815422856984de0d022b2535180d2c344b7e2ffbff991e",
-        "size": 16325376
-      },
-      "so_zsurvival_zm_transit.ipak": {
-        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\so_zsurvival_zm_transit.ipak",
-        "exists": true,
-        "sha256": "3762ff5b2f7e376f2bdc209fefec859f989eb1e5fbad3ab958207dd40f1ff5ad",
-        "size": 3768320
-      },
-      "mod_load.ff": {
-        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\mod_load.ff",
-        "exists": true,
-        "sha256": "9f4efe7e84f422cfa81fa893748f26bd9c60bd378947e3e5d3e68e827bbf87a3",
-        "size": 24896
-      },
-      "mod_load.ipak": {
-        "path": "Z:\\Games\\pluto_t6_full_game\\zone\\all\\mod_load.ipak",
-        "exists": true,
-        "sha256": "1f5a6c43460898b7db203d443689774ad251fa3373a0815e53641f294eaf961d",
-        "size": 13041664
+        "exists": false,
+        "sha256": "",
+        "size": 0
       }
     }
   },

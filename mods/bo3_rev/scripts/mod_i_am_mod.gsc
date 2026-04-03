@@ -23,9 +23,14 @@ bo3_rev_probe_mode()
     return "custom";
 }
 
+bo3_rev_native_probe_mode()
+{
+    return "xanim_consumer_focus";
+}
+
 bo3_rev_probe_model_asset()
 {
-    return "bo3_rev_v2_idg_view_0321232501_4c7e1d";
+    return "bo3_rev_v2_idg_view_0403191141_75d444";
 }
 
 bo3_rev_probe_world_model_asset()
@@ -40,7 +45,7 @@ bo3_rev_bridge_world_model_asset()
 
 bo3_rev_build_tag()
 {
-    return "0321232501_4c7e1d";
+    return "0403191141_75d444";
 }
 
 bo3_rev_probe_is_tactical_grenade()
@@ -60,47 +65,72 @@ bo3_rev_demo_default_hits_to_down()
 
 bo3_rev_expected_clip()
 {
-    return 1;
+    return 5;
 }
 
 bo3_rev_expected_engine_max()
 {
-    return 10;
+    return 25;
 }
 
 bo3_rev_expected_hud_reserve()
 {
-    return 9;
+    return 20;
+}
+
+bo3_rev_runtime_idle_anim()
+{
+    return "viewmodel_zomb_mg08_idle";
+}
+
+bo3_rev_runtime_first_raise_anim()
+{
+    return "viewmodel_zomb_mg08_first_raise";
+}
+
+bo3_rev_runtime_raise_anim()
+{
+    return "viewmodel_zomb_mg08_pullout";
+}
+
+bo3_rev_runtime_drop_anim()
+{
+    return "viewmodel_zomb_mg08_putaway";
+}
+
+bo3_rev_runtime_fire_anim()
+{
+    return "viewmodel_zomb_mg08_fire";
 }
 
 bo3_rev_raw_fx_stage()
 {
-    return "full";
+    return "off";
 }
 
 bo3_rev_use_raw_fx()
 {
-    return 1;
+    return 0;
 }
 
 bo3_rev_use_raw_fx_muzzle()
 {
-    return 1;
+    return 0;
 }
 
 bo3_rev_use_raw_fx_projectile()
 {
-    return 1;
+    return 0;
 }
 
 bo3_rev_use_raw_fx_impact()
 {
-    return 1;
+    return 0;
 }
 
 bo3_rev_use_raw_fx_vortex()
 {
-    return 1;
+    return 0;
 }
 
 bo3_rev_use_raw_fx_strict()
@@ -110,7 +140,32 @@ bo3_rev_use_raw_fx_strict()
 
 bo3_rev_use_client_fx_bridge()
 {
+    return 0;
+}
+
+bo3_rev_anim_grant_delay_seconds()
+{
+    return 0;
+}
+
+bo3_rev_anim_phase()
+{
+    return "equip_hold";
+}
+
+bo3_rev_run_label()
+{
+    return "consumer_semantic_transition_compare";
+}
+
+bo3_rev_force_stock_shell_enabled()
+{
     return 1;
+}
+
+bo3_rev_forced_stock_shell()
+{
+    return "c_zom_engineer_viewhands";
 }
 
 bo3_rev_servant_projectile_anchor_targetname()
@@ -250,6 +305,8 @@ bo3_rev_start()
     level thread bo3_rev_level_command_listener( "sayall" );
     level thread bo3_rev_level_command_listener( "sayteam" );
     level thread bo3_rev_demo_spawn_tuner();
+    if ( bo3_rev_animation_observation_enabled() )
+        level thread bo3_rev_animation_observation_lane();
     level thread bo3_rev_on_player_connect();
 }
 
@@ -301,14 +358,48 @@ bo3_rev_on_player_spawn()
         }
         else if ( !isdefined( self.bo3_rev_servant_fire_watcher_started ) )
         {
-            self.bo3_rev_servant_fire_watcher_started = 1;
-            self thread bo3_rev_servant_fire_watcher();
+            if ( bo3_rev_should_trace_fire_motion() )
+            {
+                self.bo3_rev_servant_fire_watcher_started = 1;
+                self thread bo3_rev_servant_fire_watcher();
+            }
+        }
+
+        if ( !isdefined( self.bo3_rev_attack_input_probe_started ) )
+        {
+            self.bo3_rev_attack_input_probe_started = 1;
+            self thread bo3_rev_attack_input_probe();
+        }
+
+        if ( bo3_rev_force_stock_shell_enabled() && !isdefined( self.bo3_rev_stock_shell_watcher_started ) )
+        {
+            self.bo3_rev_stock_shell_watcher_started = 1;
+            self thread bo3_rev_stock_shell_watcher();
+        }
+
+        self bo3_rev_log_shell_state( "spawn_initial" );
+        if ( bo3_rev_force_stock_shell_enabled() )
+        {
+            self bo3_rev_force_stock_shell( "spawn" );
+            self bo3_rev_log_shell_state( "spawn_forced" );
         }
 
         if ( bo3_rev_use_custom_viewmodel() && !isdefined( self.bo3_rev_viewmodel_watcher_started ) )
         {
             self.bo3_rev_viewmodel_watcher_started = 1;
             self thread bo3_rev_viewmodel_swap_watcher();
+        }
+
+        grant_delay = bo3_rev_anim_grant_delay_seconds();
+        if ( isdefined( grant_delay ) && grant_delay > 0 )
+        {
+            bo3_rev_log_event(
+                "grant_delay",
+                "stage=arming_probe"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";delay=" + grant_delay
+            );
+            wait grant_delay;
         }
 
         bo3_rev_grant_starting_loadout();
@@ -338,9 +429,12 @@ bo3_rev_grant_starting_loadout()
     starter_weapon = bo3_rev_starter_weapon();
 
     bo3_rev_log_player_state( self, "pre_grant" );
+    self bo3_rev_log_shell_state( "pre_grant" );
 
     if ( bo3_rev_use_custom_viewmodel() )
         bo3_rev_prepare_low_bone_viewmodel();
+    else if ( bo3_rev_force_stock_shell_enabled() )
+        self bo3_rev_force_stock_shell( "pre_grant" );
 
     if ( !self hasweapon( starter_weapon ) )
     {
@@ -363,39 +457,44 @@ bo3_rev_grant_starting_loadout()
         }
 
         bo3_rev_log_player_state( self, "post_switch" );
-        bo3_rev_log_event(
-            "grant",
-            "weapon=" + probe_weapon
-            + ";starter=" + starter_weapon
-            + ";build_tag=" + bo3_rev_build_tag()
-            + ";gave_ok=" + gave_ok
-            + ";switch_ok=1"
-            + ";current=" + bo3_rev_safe_str( self getcurrentweapon() )
-            + ";expect_clip=" + bo3_rev_expected_clip()
-            + ";expect_max=" + bo3_rev_expected_engine_max()
+    bo3_rev_log_event(
+        "grant",
+        "weapon=" + probe_weapon
+        + ";starter=" + starter_weapon
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";idle_anim=" + bo3_rev_runtime_idle_anim()
+        + ";raise_anim=" + bo3_rev_runtime_raise_anim()
+        + ";drop_anim=" + bo3_rev_runtime_drop_anim()
+        + ";first_raise_anim=" + bo3_rev_runtime_first_raise_anim()
+        + ";fire_anim=" + bo3_rev_runtime_fire_anim()
+        + ";gave_ok=" + gave_ok
+        + ";switch_ok=1"
+        + ";current=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";expect_clip=" + bo3_rev_expected_clip()
+        + ";expect_max=" + bo3_rev_expected_engine_max()
         );
         self iprintln( "^2bo3_rev:^7 tactical probe active [" + bo3_rev_build_tag() + "]: " + probe_weapon + " HUD should read " + bo3_rev_expected_clip() );
         return;
     }
 
-    if ( self hasweapon( probe_weapon ) && probe_weapon != "m1911_zm" && self hasweapon( "m1911_zm" ) )
-    {
-        self takeweapon( "m1911_zm" );
-        wait 0.05;
-    }
+    if ( bo3_rev_should_trace_equip_hold_motion() )
+        self bo3_rev_trace_equip_hold_motion( starter_weapon, probe_weapon );
 
-    if ( self hasweapon( "m14_zm" ) && probe_weapon != "m14_zm" )
-    {
-        self takeweapon( "m14_zm" );
-        wait 0.05;
-    }
+    switch_ok = bo3_rev_activate_probe_weapon( probe_weapon );
 
-    self switchtoweaponimmediate( probe_weapon );
-    wait 0.05;
-    if ( self getcurrentweapon() != probe_weapon )
+    if ( switch_ok )
     {
-        self switchtoweapon( probe_weapon );
-        wait 0.05;
+        if ( !bo3_rev_animation_observation_enabled() && self hasweapon( probe_weapon ) && probe_weapon != "m1911_zm" && self hasweapon( "m1911_zm" ) )
+        {
+            self takeweapon( "m1911_zm" );
+            wait 0.05;
+        }
+
+        if ( !bo3_rev_animation_observation_enabled() && self hasweapon( "m14_zm" ) && probe_weapon != "m14_zm" )
+        {
+            self takeweapon( "m14_zm" );
+            wait 0.05;
+        }
     }
 
     bo3_rev_log_player_state( self, "post_switch" );
@@ -404,18 +503,1053 @@ bo3_rev_grant_starting_loadout()
         "weapon=" + probe_weapon
         + ";starter=" + starter_weapon
         + ";build_tag=" + bo3_rev_build_tag()
+        + ";idle_anim=" + bo3_rev_runtime_idle_anim()
+        + ";raise_anim=" + bo3_rev_runtime_raise_anim()
+        + ";drop_anim=" + bo3_rev_runtime_drop_anim()
+        + ";first_raise_anim=" + bo3_rev_runtime_first_raise_anim()
+        + ";fire_anim=" + bo3_rev_runtime_fire_anim()
         + ";gave_ok=" + gave_ok
-        + ";switch_ok=" + ( self getcurrentweapon() == probe_weapon )
+        + ";switch_ok=" + switch_ok
         + ";current=" + bo3_rev_safe_str( self getcurrentweapon() )
         + ";expect_clip=" + bo3_rev_expected_clip()
         + ";expect_max=" + bo3_rev_expected_engine_max()
     );
+    if ( switch_ok )
+    {
+        if ( bo3_rev_consumer_capture_heartbeat_enabled() )
+            self thread bo3_rev_consumer_capture_heartbeat( probe_weapon );
+        self thread bo3_rev_trace_first_raise_motion( starter_weapon, probe_weapon );
+        if ( bo3_rev_should_trace_pullout_motion() )
+            self thread bo3_rev_auto_switch_probe_loop( starter_weapon, probe_weapon );
+    }
     self iprintln( "^2bo3_rev:^7 probe active [" + bo3_rev_build_tag() + "]: " + probe_weapon + " HUD should read " + bo3_rev_expected_clip() + "/" + bo3_rev_expected_hud_reserve() + " if override won" );
+}
+
+bo3_rev_activate_probe_weapon(probe_weapon)
+{
+    if ( !self hasweapon( probe_weapon ) )
+        return false;
+
+    attempts = 30;
+    for ( i = 0; i < attempts; i++ )
+    {
+        self switchtoweaponimmediate( probe_weapon );
+        wait 0.05;
+
+        if ( self getcurrentweapon() == probe_weapon )
+            return true;
+
+        self switchtoweapon( probe_weapon );
+        wait 0.10;
+
+        if ( self getcurrentweapon() == probe_weapon )
+            return true;
+    }
+
+    return false;
+}
+
+bo3_rev_trace_equip_hold_motion(starter_weapon, probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( starter_weapon ) || starter_weapon == "" )
+        return;
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+    if ( starter_weapon == probe_weapon )
+        return;
+    if ( !self hasweapon( starter_weapon ) )
+        return;
+
+    current_weapon = self getcurrentweapon();
+    if ( current_weapon != starter_weapon )
+        return;
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=equip_hold_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";probe=" + bo3_rev_safe_str( probe_weapon )
+        + ";cur=" + bo3_rev_safe_str( current_weapon )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+    );
+
+    wait 0.90;
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=equip_hold_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";probe=" + bo3_rev_safe_str( probe_weapon )
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+    );
 }
 
 bo3_rev_use_custom_viewmodel()
 {
     return false;
+}
+
+bo3_rev_trace_first_raise_motion(starter_weapon, probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+
+    start_ms = gettime();
+    while ( gettime() - start_ms < 1200 )
+    {
+        if ( self getcurrentweapon() == probe_weapon )
+            break;
+        wait 0.05;
+    }
+
+    if ( self getcurrentweapon() != probe_weapon )
+        return;
+
+    base_flash = self gettagorigin( "tag_flash" );
+    base_weapon = self gettagorigin( "tag_weapon" );
+    base_brass = self gettagorigin( "tag_brass" );
+    base_clip = self gettagorigin( "tag_clip" );
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=first_raise_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";flash=" + bo3_rev_safe_str( base_flash )
+        + ";tag_weapon=" + bo3_rev_safe_str( base_weapon )
+        + ";tag_brass=" + bo3_rev_safe_str( base_brass )
+        + ";tag_clip=" + bo3_rev_safe_str( base_clip )
+    );
+
+    max_flash_delta_sq = 0;
+    max_weapon_delta_sq = 0;
+    max_brass_delta_sq = 0;
+    max_clip_delta_sq = 0;
+
+    for ( i = 0; i < 30; i++ )
+    {
+        wait 0.05;
+
+        if ( self getcurrentweapon() != probe_weapon )
+            break;
+
+        flash = self gettagorigin( "tag_flash" );
+        weapon_tag = self gettagorigin( "tag_weapon" );
+        brass_tag = self gettagorigin( "tag_brass" );
+        clip_tag = self gettagorigin( "tag_clip" );
+        flash_delta_sq = 0;
+        weapon_delta_sq = 0;
+        brass_delta_sq = 0;
+        clip_delta_sq = 0;
+
+        if ( !isdefined( base_flash ) && isdefined( flash ) )
+            base_flash = flash;
+
+        if ( !isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            base_weapon = weapon_tag;
+        if ( !isdefined( base_brass ) && isdefined( brass_tag ) )
+            base_brass = brass_tag;
+        if ( !isdefined( base_clip ) && isdefined( clip_tag ) )
+            base_clip = clip_tag;
+
+        if ( isdefined( base_flash ) && isdefined( flash ) )
+            flash_delta_sq = distancesquared( flash, base_flash );
+
+        if ( isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            weapon_delta_sq = distancesquared( weapon_tag, base_weapon );
+        if ( isdefined( base_brass ) && isdefined( brass_tag ) )
+            brass_delta_sq = distancesquared( brass_tag, base_brass );
+        if ( isdefined( base_clip ) && isdefined( clip_tag ) )
+            clip_delta_sq = distancesquared( clip_tag, base_clip );
+
+        if ( flash_delta_sq > max_flash_delta_sq )
+            max_flash_delta_sq = flash_delta_sq;
+
+        if ( weapon_delta_sq > max_weapon_delta_sq )
+            max_weapon_delta_sq = weapon_delta_sq;
+        if ( brass_delta_sq > max_brass_delta_sq )
+            max_brass_delta_sq = brass_delta_sq;
+        if ( clip_delta_sq > max_clip_delta_sq )
+            max_clip_delta_sq = clip_delta_sq;
+
+        if ( i == 0 || i == 4 || i == 9 || i == 19 || i == 29 )
+        {
+            bo3_rev_log_event(
+                "anim_probe",
+                "stage=first_raise_sample"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";tick=" + i
+                + ";weapon=" + probe_weapon
+                + ";flash=" + bo3_rev_safe_str( flash )
+                + ";tag_weapon=" + bo3_rev_safe_str( weapon_tag )
+                + ";tag_brass=" + bo3_rev_safe_str( brass_tag )
+                + ";tag_clip=" + bo3_rev_safe_str( clip_tag )
+                + ";flash_delta_sq=" + flash_delta_sq
+                + ";tag_weapon_delta_sq=" + weapon_delta_sq
+                + ";tag_brass_delta_sq=" + brass_delta_sq
+                + ";tag_clip_delta_sq=" + clip_delta_sq
+            );
+        }
+    }
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=first_raise_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";max_flash_delta_sq=" + max_flash_delta_sq
+        + ";max_tag_weapon_delta_sq=" + max_weapon_delta_sq
+        + ";max_tag_brass_delta_sq=" + max_brass_delta_sq
+        + ";max_tag_clip_delta_sq=" + max_clip_delta_sq
+    );
+
+    self thread bo3_rev_trace_idle_motion( starter_weapon, probe_weapon );
+}
+
+bo3_rev_trace_idle_motion(starter_weapon, probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+
+    wait 0.35;
+
+    if ( self getcurrentweapon() != probe_weapon )
+        return;
+
+    base_flash = self gettagorigin( "tag_flash" );
+    base_weapon = self gettagorigin( "tag_weapon" );
+    base_bolt = self gettagorigin( "j_bolt" );
+    base_reload = self gettagorigin( "j_reload" );
+    base_clip = self gettagorigin( "tag_clip" );
+    base_clip_turn = self gettagorigin( "tag_clip_turn" );
+    base_gascap = self gettagorigin( "j_gascap" );
+    base_ring = self gettagorigin( "j_ring" );
+    base_gasmask = self gettagorigin( "tag_gasmask" );
+    base_j_top = self gettagorigin( "j_top" );
+    base_j_handle2 = self gettagorigin( "j_handle2" );
+    base_weapon_left = self gettagorigin( "tag_weapon_left" );
+    base_brass = self gettagorigin( "tag_brass" );
+    base_bullet1 = self gettagorigin( "j_bullet1" );
+    base_bullet2 = self gettagorigin( "j_bullet2" );
+    base_eye_left_big_lid = self gettagorigin( "tag_eye_left_big_lid_animate" );
+    base_jaw_lower_2 = self gettagorigin( "tag_jaw_lower_2_animate" );
+    base_tentacle_bottom_left_4 = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=idle_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";tag_flash=" + bo3_rev_safe_str( base_flash )
+        + ";tag_weapon=" + bo3_rev_safe_str( base_weapon )
+        + ";j_bolt=" + bo3_rev_safe_str( base_bolt )
+        + ";j_reload=" + bo3_rev_safe_str( base_reload )
+        + ";tag_clip=" + bo3_rev_safe_str( base_clip )
+        + ";tag_clip_turn=" + bo3_rev_safe_str( base_clip_turn )
+        + ";j_gascap=" + bo3_rev_safe_str( base_gascap )
+        + ";j_ring=" + bo3_rev_safe_str( base_ring )
+        + ";tag_gasmask=" + bo3_rev_safe_str( base_gasmask )
+        + ";j_top=" + bo3_rev_safe_str( base_j_top )
+        + ";j_handle2=" + bo3_rev_safe_str( base_j_handle2 )
+        + ";tag_weapon_left=" + bo3_rev_safe_str( base_weapon_left )
+        + ";tag_brass=" + bo3_rev_safe_str( base_brass )
+        + ";j_bullet1=" + bo3_rev_safe_str( base_bullet1 )
+        + ";j_bullet2=" + bo3_rev_safe_str( base_bullet2 )
+        + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( base_eye_left_big_lid )
+        + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( base_jaw_lower_2 )
+        + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( base_tentacle_bottom_left_4 )
+    );
+
+    max_flash_delta_sq = 0;
+    max_weapon_delta_sq = 0;
+    max_bolt_delta_sq = 0;
+    max_reload_delta_sq = 0;
+    max_clip_delta_sq = 0;
+    max_clip_turn_delta_sq = 0;
+    max_gascap_delta_sq = 0;
+    max_ring_delta_sq = 0;
+    max_gasmask_delta_sq = 0;
+    max_j_top_delta_sq = 0;
+    max_j_handle2_delta_sq = 0;
+    max_weapon_left_delta_sq = 0;
+    max_brass_delta_sq = 0;
+    max_bullet1_delta_sq = 0;
+    max_bullet2_delta_sq = 0;
+    max_eye_left_big_lid_delta_sq = 0;
+    max_jaw_lower_2_delta_sq = 0;
+    max_tentacle_bottom_left_4_delta_sq = 0;
+
+    for ( i = 0; i < 40; i++ )
+    {
+        wait 0.05;
+
+        if ( self getcurrentweapon() != probe_weapon )
+            break;
+
+        flash = self gettagorigin( "tag_flash" );
+        weapon_tag = self gettagorigin( "tag_weapon" );
+        bolt_tag = self gettagorigin( "j_bolt" );
+        reload_tag = self gettagorigin( "j_reload" );
+        clip_tag = self gettagorigin( "tag_clip" );
+        clip_turn_tag = self gettagorigin( "tag_clip_turn" );
+        gascap_tag = self gettagorigin( "j_gascap" );
+        ring_tag = self gettagorigin( "j_ring" );
+        gasmask_tag = self gettagorigin( "tag_gasmask" );
+        j_top_tag = self gettagorigin( "j_top" );
+        j_handle2_tag = self gettagorigin( "j_handle2" );
+        weapon_left_tag = self gettagorigin( "tag_weapon_left" );
+        brass_tag = self gettagorigin( "tag_brass" );
+        bullet1_tag = self gettagorigin( "j_bullet1" );
+        bullet2_tag = self gettagorigin( "j_bullet2" );
+        eye_left_big_lid_tag = self gettagorigin( "tag_eye_left_big_lid_animate" );
+        jaw_lower_2_tag = self gettagorigin( "tag_jaw_lower_2_animate" );
+        tentacle_bottom_left_4_tag = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+
+        flash_delta_sq = 0;
+        weapon_delta_sq = 0;
+        bolt_delta_sq = 0;
+        reload_delta_sq = 0;
+        clip_delta_sq = 0;
+        clip_turn_delta_sq = 0;
+        gascap_delta_sq = 0;
+        ring_delta_sq = 0;
+        gasmask_delta_sq = 0;
+        j_top_delta_sq = 0;
+        j_handle2_delta_sq = 0;
+        weapon_left_delta_sq = 0;
+        brass_delta_sq = 0;
+        bullet1_delta_sq = 0;
+        bullet2_delta_sq = 0;
+        eye_left_big_lid_delta_sq = 0;
+        jaw_lower_2_delta_sq = 0;
+        tentacle_bottom_left_4_delta_sq = 0;
+
+        if ( isdefined( base_flash ) && isdefined( flash ) )
+            flash_delta_sq = distancesquared( flash, base_flash );
+        if ( isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            weapon_delta_sq = distancesquared( weapon_tag, base_weapon );
+        if ( isdefined( base_bolt ) && isdefined( bolt_tag ) )
+            bolt_delta_sq = distancesquared( bolt_tag, base_bolt );
+        if ( isdefined( base_reload ) && isdefined( reload_tag ) )
+            reload_delta_sq = distancesquared( reload_tag, base_reload );
+        if ( isdefined( base_clip ) && isdefined( clip_tag ) )
+            clip_delta_sq = distancesquared( clip_tag, base_clip );
+        if ( isdefined( base_clip_turn ) && isdefined( clip_turn_tag ) )
+            clip_turn_delta_sq = distancesquared( clip_turn_tag, base_clip_turn );
+        if ( isdefined( base_gascap ) && isdefined( gascap_tag ) )
+            gascap_delta_sq = distancesquared( gascap_tag, base_gascap );
+        if ( isdefined( base_ring ) && isdefined( ring_tag ) )
+            ring_delta_sq = distancesquared( ring_tag, base_ring );
+        if ( isdefined( base_gasmask ) && isdefined( gasmask_tag ) )
+            gasmask_delta_sq = distancesquared( gasmask_tag, base_gasmask );
+        if ( isdefined( base_j_top ) && isdefined( j_top_tag ) )
+            j_top_delta_sq = distancesquared( j_top_tag, base_j_top );
+        if ( isdefined( base_j_handle2 ) && isdefined( j_handle2_tag ) )
+            j_handle2_delta_sq = distancesquared( j_handle2_tag, base_j_handle2 );
+        if ( isdefined( base_weapon_left ) && isdefined( weapon_left_tag ) )
+            weapon_left_delta_sq = distancesquared( weapon_left_tag, base_weapon_left );
+        if ( isdefined( base_brass ) && isdefined( brass_tag ) )
+            brass_delta_sq = distancesquared( brass_tag, base_brass );
+        if ( isdefined( base_bullet1 ) && isdefined( bullet1_tag ) )
+            bullet1_delta_sq = distancesquared( bullet1_tag, base_bullet1 );
+        if ( isdefined( base_bullet2 ) && isdefined( bullet2_tag ) )
+            bullet2_delta_sq = distancesquared( bullet2_tag, base_bullet2 );
+        if ( isdefined( base_eye_left_big_lid ) && isdefined( eye_left_big_lid_tag ) )
+            eye_left_big_lid_delta_sq = distancesquared( eye_left_big_lid_tag, base_eye_left_big_lid );
+        if ( isdefined( base_jaw_lower_2 ) && isdefined( jaw_lower_2_tag ) )
+            jaw_lower_2_delta_sq = distancesquared( jaw_lower_2_tag, base_jaw_lower_2 );
+        if ( isdefined( base_tentacle_bottom_left_4 ) && isdefined( tentacle_bottom_left_4_tag ) )
+            tentacle_bottom_left_4_delta_sq = distancesquared( tentacle_bottom_left_4_tag, base_tentacle_bottom_left_4 );
+
+        if ( flash_delta_sq > max_flash_delta_sq )
+            max_flash_delta_sq = flash_delta_sq;
+        if ( weapon_delta_sq > max_weapon_delta_sq )
+            max_weapon_delta_sq = weapon_delta_sq;
+        if ( bolt_delta_sq > max_bolt_delta_sq )
+            max_bolt_delta_sq = bolt_delta_sq;
+        if ( reload_delta_sq > max_reload_delta_sq )
+            max_reload_delta_sq = reload_delta_sq;
+        if ( clip_delta_sq > max_clip_delta_sq )
+            max_clip_delta_sq = clip_delta_sq;
+        if ( clip_turn_delta_sq > max_clip_turn_delta_sq )
+            max_clip_turn_delta_sq = clip_turn_delta_sq;
+        if ( gascap_delta_sq > max_gascap_delta_sq )
+            max_gascap_delta_sq = gascap_delta_sq;
+        if ( ring_delta_sq > max_ring_delta_sq )
+            max_ring_delta_sq = ring_delta_sq;
+        if ( gasmask_delta_sq > max_gasmask_delta_sq )
+            max_gasmask_delta_sq = gasmask_delta_sq;
+        if ( j_top_delta_sq > max_j_top_delta_sq )
+            max_j_top_delta_sq = j_top_delta_sq;
+        if ( j_handle2_delta_sq > max_j_handle2_delta_sq )
+            max_j_handle2_delta_sq = j_handle2_delta_sq;
+        if ( weapon_left_delta_sq > max_weapon_left_delta_sq )
+            max_weapon_left_delta_sq = weapon_left_delta_sq;
+        if ( brass_delta_sq > max_brass_delta_sq )
+            max_brass_delta_sq = brass_delta_sq;
+        if ( bullet1_delta_sq > max_bullet1_delta_sq )
+            max_bullet1_delta_sq = bullet1_delta_sq;
+        if ( bullet2_delta_sq > max_bullet2_delta_sq )
+            max_bullet2_delta_sq = bullet2_delta_sq;
+        if ( eye_left_big_lid_delta_sq > max_eye_left_big_lid_delta_sq )
+            max_eye_left_big_lid_delta_sq = eye_left_big_lid_delta_sq;
+        if ( jaw_lower_2_delta_sq > max_jaw_lower_2_delta_sq )
+            max_jaw_lower_2_delta_sq = jaw_lower_2_delta_sq;
+        if ( tentacle_bottom_left_4_delta_sq > max_tentacle_bottom_left_4_delta_sq )
+            max_tentacle_bottom_left_4_delta_sq = tentacle_bottom_left_4_delta_sq;
+
+        if ( i == 0 || i == 4 || i == 9 || i == 19 || i == 39 )
+        {
+            bo3_rev_log_event(
+                "anim_probe",
+                "stage=idle_sample"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";tick=" + i
+                + ";weapon=" + probe_weapon
+                + ";tag_flash=" + bo3_rev_safe_str( flash )
+                + ";tag_weapon=" + bo3_rev_safe_str( weapon_tag )
+                + ";j_bolt=" + bo3_rev_safe_str( bolt_tag )
+                + ";j_reload=" + bo3_rev_safe_str( reload_tag )
+                + ";tag_clip=" + bo3_rev_safe_str( clip_tag )
+                + ";tag_clip_turn=" + bo3_rev_safe_str( clip_turn_tag )
+                + ";j_gascap=" + bo3_rev_safe_str( gascap_tag )
+                + ";j_ring=" + bo3_rev_safe_str( ring_tag )
+                + ";tag_gasmask=" + bo3_rev_safe_str( gasmask_tag )
+                + ";j_top=" + bo3_rev_safe_str( j_top_tag )
+                + ";j_handle2=" + bo3_rev_safe_str( j_handle2_tag )
+                + ";tag_weapon_left=" + bo3_rev_safe_str( weapon_left_tag )
+                + ";tag_brass=" + bo3_rev_safe_str( brass_tag )
+                + ";j_bullet1=" + bo3_rev_safe_str( bullet1_tag )
+                + ";j_bullet2=" + bo3_rev_safe_str( bullet2_tag )
+                + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( eye_left_big_lid_tag )
+                + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( jaw_lower_2_tag )
+                + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( tentacle_bottom_left_4_tag )
+                + ";tag_flash_delta_sq=" + flash_delta_sq
+                + ";tag_weapon_delta_sq=" + weapon_delta_sq
+                + ";j_bolt_delta_sq=" + bolt_delta_sq
+                + ";j_reload_delta_sq=" + reload_delta_sq
+                + ";tag_clip_delta_sq=" + clip_delta_sq
+                + ";tag_clip_turn_delta_sq=" + clip_turn_delta_sq
+                + ";j_gascap_delta_sq=" + gascap_delta_sq
+                + ";j_ring_delta_sq=" + ring_delta_sq
+                + ";tag_gasmask_delta_sq=" + gasmask_delta_sq
+                + ";j_top_delta_sq=" + j_top_delta_sq
+                + ";j_handle2_delta_sq=" + j_handle2_delta_sq
+                + ";tag_weapon_left_delta_sq=" + weapon_left_delta_sq
+                + ";tag_brass_delta_sq=" + brass_delta_sq
+                + ";j_bullet1_delta_sq=" + bullet1_delta_sq
+                + ";j_bullet2_delta_sq=" + bullet2_delta_sq
+                + ";tag_eye_left_big_lid_animate_delta_sq=" + eye_left_big_lid_delta_sq
+                + ";tag_jaw_lower_2_animate_delta_sq=" + jaw_lower_2_delta_sq
+                + ";tag_tentacle_bottom_left_4_animate_delta_sq=" + tentacle_bottom_left_4_delta_sq
+            );
+        }
+    }
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=idle_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";max_tag_flash_delta_sq=" + max_flash_delta_sq
+        + ";max_tag_weapon_delta_sq=" + max_weapon_delta_sq
+        + ";max_j_bolt_delta_sq=" + max_bolt_delta_sq
+        + ";max_j_reload_delta_sq=" + max_reload_delta_sq
+        + ";max_tag_clip_delta_sq=" + max_clip_delta_sq
+        + ";max_tag_clip_turn_delta_sq=" + max_clip_turn_delta_sq
+        + ";max_j_gascap_delta_sq=" + max_gascap_delta_sq
+        + ";max_j_ring_delta_sq=" + max_ring_delta_sq
+        + ";max_tag_gasmask_delta_sq=" + max_gasmask_delta_sq
+        + ";max_j_top_delta_sq=" + max_j_top_delta_sq
+        + ";max_j_handle2_delta_sq=" + max_j_handle2_delta_sq
+        + ";max_tag_weapon_left_delta_sq=" + max_weapon_left_delta_sq
+        + ";max_tag_brass_delta_sq=" + max_brass_delta_sq
+        + ";max_j_bullet1_delta_sq=" + max_bullet1_delta_sq
+        + ";max_j_bullet2_delta_sq=" + max_bullet2_delta_sq
+        + ";max_tag_eye_left_big_lid_animate_delta_sq=" + max_eye_left_big_lid_delta_sq
+        + ";max_tag_jaw_lower_2_animate_delta_sq=" + max_jaw_lower_2_delta_sq
+        + ";max_tag_tentacle_bottom_left_4_animate_delta_sq=" + max_tentacle_bottom_left_4_delta_sq
+    );
+
+    if ( bo3_rev_should_trace_putaway_motion() )
+        self thread bo3_rev_trace_putaway_motion( starter_weapon, probe_weapon );
+}
+
+bo3_rev_trace_fire_motion(probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+
+    if ( self getcurrentweapon() != probe_weapon )
+        return;
+
+    base_flash = self gettagorigin( "tag_flash" );
+    base_weapon = self gettagorigin( "tag_weapon" );
+    base_clip = self gettagorigin( "tag_clip" );
+    base_gasmask = self gettagorigin( "tag_gasmask" );
+    base_eye_left_big_lid = self gettagorigin( "tag_eye_left_big_lid_animate" );
+    base_jaw_lower_2 = self gettagorigin( "tag_jaw_lower_2_animate" );
+    base_tentacle_bottom_left_4 = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+    ammo_clip = self getweaponammoclip( probe_weapon );
+    ammo_stock = self getweaponammostock( probe_weapon );
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=fire_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";ammo_clip=" + ammo_clip
+        + ";ammo_stock=" + ammo_stock
+        + ";tag_flash=" + bo3_rev_safe_str( base_flash )
+        + ";tag_weapon=" + bo3_rev_safe_str( base_weapon )
+        + ";tag_clip=" + bo3_rev_safe_str( base_clip )
+        + ";tag_gasmask=" + bo3_rev_safe_str( base_gasmask )
+        + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( base_eye_left_big_lid )
+        + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( base_jaw_lower_2 )
+        + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( base_tentacle_bottom_left_4 )
+    );
+
+    max_flash_delta_sq = 0;
+    max_weapon_delta_sq = 0;
+    max_clip_delta_sq = 0;
+    max_gasmask_delta_sq = 0;
+    max_eye_left_big_lid_delta_sq = 0;
+    max_jaw_lower_2_delta_sq = 0;
+    max_tentacle_bottom_left_4_delta_sq = 0;
+
+    for ( i = 0; i < 24; i++ )
+    {
+        wait 0.05;
+
+        if ( self getcurrentweapon() != probe_weapon )
+            break;
+
+        flash = self gettagorigin( "tag_flash" );
+        weapon_tag = self gettagorigin( "tag_weapon" );
+        clip_tag = self gettagorigin( "tag_clip" );
+        gasmask_tag = self gettagorigin( "tag_gasmask" );
+        eye_left_big_lid_tag = self gettagorigin( "tag_eye_left_big_lid_animate" );
+        jaw_lower_2_tag = self gettagorigin( "tag_jaw_lower_2_animate" );
+        tentacle_bottom_left_4_tag = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+
+        flash_delta_sq = 0;
+        weapon_delta_sq = 0;
+        clip_delta_sq = 0;
+        gasmask_delta_sq = 0;
+        eye_left_big_lid_delta_sq = 0;
+        jaw_lower_2_delta_sq = 0;
+        tentacle_bottom_left_4_delta_sq = 0;
+
+        if ( isdefined( base_flash ) && isdefined( flash ) )
+            flash_delta_sq = distancesquared( flash, base_flash );
+        if ( isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            weapon_delta_sq = distancesquared( weapon_tag, base_weapon );
+        if ( isdefined( base_clip ) && isdefined( clip_tag ) )
+            clip_delta_sq = distancesquared( clip_tag, base_clip );
+        if ( isdefined( base_gasmask ) && isdefined( gasmask_tag ) )
+            gasmask_delta_sq = distancesquared( gasmask_tag, base_gasmask );
+        if ( isdefined( base_eye_left_big_lid ) && isdefined( eye_left_big_lid_tag ) )
+            eye_left_big_lid_delta_sq = distancesquared( eye_left_big_lid_tag, base_eye_left_big_lid );
+        if ( isdefined( base_jaw_lower_2 ) && isdefined( jaw_lower_2_tag ) )
+            jaw_lower_2_delta_sq = distancesquared( jaw_lower_2_tag, base_jaw_lower_2 );
+        if ( isdefined( base_tentacle_bottom_left_4 ) && isdefined( tentacle_bottom_left_4_tag ) )
+            tentacle_bottom_left_4_delta_sq = distancesquared( tentacle_bottom_left_4_tag, base_tentacle_bottom_left_4 );
+
+        if ( flash_delta_sq > max_flash_delta_sq )
+            max_flash_delta_sq = flash_delta_sq;
+        if ( weapon_delta_sq > max_weapon_delta_sq )
+            max_weapon_delta_sq = weapon_delta_sq;
+        if ( clip_delta_sq > max_clip_delta_sq )
+            max_clip_delta_sq = clip_delta_sq;
+        if ( gasmask_delta_sq > max_gasmask_delta_sq )
+            max_gasmask_delta_sq = gasmask_delta_sq;
+        if ( eye_left_big_lid_delta_sq > max_eye_left_big_lid_delta_sq )
+            max_eye_left_big_lid_delta_sq = eye_left_big_lid_delta_sq;
+        if ( jaw_lower_2_delta_sq > max_jaw_lower_2_delta_sq )
+            max_jaw_lower_2_delta_sq = jaw_lower_2_delta_sq;
+        if ( tentacle_bottom_left_4_delta_sq > max_tentacle_bottom_left_4_delta_sq )
+            max_tentacle_bottom_left_4_delta_sq = tentacle_bottom_left_4_delta_sq;
+
+        if ( i == 0 || i == 2 || i == 5 || i == 11 || i == 23 )
+        {
+            bo3_rev_log_event(
+                "anim_probe",
+                "stage=fire_sample"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";tick=" + i
+                + ";weapon=" + probe_weapon
+                + ";tag_flash=" + bo3_rev_safe_str( flash )
+                + ";tag_weapon=" + bo3_rev_safe_str( weapon_tag )
+                + ";tag_clip=" + bo3_rev_safe_str( clip_tag )
+                + ";tag_gasmask=" + bo3_rev_safe_str( gasmask_tag )
+                + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( eye_left_big_lid_tag )
+                + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( jaw_lower_2_tag )
+                + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( tentacle_bottom_left_4_tag )
+                + ";tag_flash_delta_sq=" + flash_delta_sq
+                + ";tag_weapon_delta_sq=" + weapon_delta_sq
+                + ";tag_clip_delta_sq=" + clip_delta_sq
+                + ";tag_gasmask_delta_sq=" + gasmask_delta_sq
+                + ";tag_eye_left_big_lid_animate_delta_sq=" + eye_left_big_lid_delta_sq
+                + ";tag_jaw_lower_2_animate_delta_sq=" + jaw_lower_2_delta_sq
+                + ";tag_tentacle_bottom_left_4_animate_delta_sq=" + tentacle_bottom_left_4_delta_sq
+            );
+        }
+    }
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=fire_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";ammo_clip=" + self getweaponammoclip( probe_weapon )
+        + ";ammo_stock=" + self getweaponammostock( probe_weapon )
+        + ";max_tag_flash_delta_sq=" + max_flash_delta_sq
+        + ";max_tag_weapon_delta_sq=" + max_weapon_delta_sq
+        + ";max_tag_clip_delta_sq=" + max_clip_delta_sq
+        + ";max_tag_gasmask_delta_sq=" + max_gasmask_delta_sq
+        + ";max_tag_eye_left_big_lid_animate_delta_sq=" + max_eye_left_big_lid_delta_sq
+        + ";max_tag_jaw_lower_2_animate_delta_sq=" + max_jaw_lower_2_delta_sq
+        + ";max_tag_tentacle_bottom_left_4_animate_delta_sq=" + max_tentacle_bottom_left_4_delta_sq
+    );
+}
+
+bo3_rev_trace_pullout_motion(starter_weapon, probe_weapon, cycle_idx)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+
+    start_ms = gettime();
+    while ( gettime() - start_ms < 1200 )
+    {
+        if ( self getcurrentweapon() == probe_weapon )
+            break;
+        wait 0.05;
+    }
+
+    if ( self getcurrentweapon() != probe_weapon )
+        return;
+
+    base_flash = self gettagorigin( "tag_flash" );
+    base_weapon = self gettagorigin( "tag_weapon" );
+    base_bolt = self gettagorigin( "j_bolt" );
+    base_gasmask = self gettagorigin( "tag_gasmask" );
+    base_eye_left_big_lid = self gettagorigin( "tag_eye_left_big_lid_animate" );
+    base_jaw_lower_2 = self gettagorigin( "tag_jaw_lower_2_animate" );
+    base_tentacle_bottom_left_4 = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=pullout_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";cycle=" + cycle_idx
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";tag_flash=" + bo3_rev_safe_str( base_flash )
+        + ";tag_weapon=" + bo3_rev_safe_str( base_weapon )
+        + ";j_bolt=" + bo3_rev_safe_str( base_bolt )
+        + ";tag_gasmask=" + bo3_rev_safe_str( base_gasmask )
+        + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( base_eye_left_big_lid )
+        + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( base_jaw_lower_2 )
+        + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( base_tentacle_bottom_left_4 )
+    );
+
+    max_flash_delta_sq = 0;
+    max_weapon_delta_sq = 0;
+    max_bolt_delta_sq = 0;
+    max_gasmask_delta_sq = 0;
+    max_eye_left_big_lid_delta_sq = 0;
+    max_jaw_lower_2_delta_sq = 0;
+    max_tentacle_bottom_left_4_delta_sq = 0;
+
+    for ( i = 0; i < 24; i++ )
+    {
+        wait 0.05;
+
+        if ( self getcurrentweapon() != probe_weapon )
+            break;
+
+        flash = self gettagorigin( "tag_flash" );
+        weapon_tag = self gettagorigin( "tag_weapon" );
+        bolt_tag = self gettagorigin( "j_bolt" );
+        gasmask_tag = self gettagorigin( "tag_gasmask" );
+        eye_left_big_lid_tag = self gettagorigin( "tag_eye_left_big_lid_animate" );
+        jaw_lower_2_tag = self gettagorigin( "tag_jaw_lower_2_animate" );
+        tentacle_bottom_left_4_tag = self gettagorigin( "tag_tentacle_bottom_left_4_animate" );
+        flash_delta_sq = 0;
+        weapon_delta_sq = 0;
+        bolt_delta_sq = 0;
+        gasmask_delta_sq = 0;
+        eye_left_big_lid_delta_sq = 0;
+        jaw_lower_2_delta_sq = 0;
+        tentacle_bottom_left_4_delta_sq = 0;
+
+        if ( isdefined( base_flash ) && isdefined( flash ) )
+            flash_delta_sq = distancesquared( flash, base_flash );
+        if ( isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            weapon_delta_sq = distancesquared( weapon_tag, base_weapon );
+        if ( isdefined( base_bolt ) && isdefined( bolt_tag ) )
+            bolt_delta_sq = distancesquared( bolt_tag, base_bolt );
+        if ( isdefined( base_gasmask ) && isdefined( gasmask_tag ) )
+            gasmask_delta_sq = distancesquared( gasmask_tag, base_gasmask );
+        if ( isdefined( base_eye_left_big_lid ) && isdefined( eye_left_big_lid_tag ) )
+            eye_left_big_lid_delta_sq = distancesquared( eye_left_big_lid_tag, base_eye_left_big_lid );
+        if ( isdefined( base_jaw_lower_2 ) && isdefined( jaw_lower_2_tag ) )
+            jaw_lower_2_delta_sq = distancesquared( jaw_lower_2_tag, base_jaw_lower_2 );
+        if ( isdefined( base_tentacle_bottom_left_4 ) && isdefined( tentacle_bottom_left_4_tag ) )
+            tentacle_bottom_left_4_delta_sq = distancesquared( tentacle_bottom_left_4_tag, base_tentacle_bottom_left_4 );
+
+        if ( flash_delta_sq > max_flash_delta_sq )
+            max_flash_delta_sq = flash_delta_sq;
+        if ( weapon_delta_sq > max_weapon_delta_sq )
+            max_weapon_delta_sq = weapon_delta_sq;
+        if ( bolt_delta_sq > max_bolt_delta_sq )
+            max_bolt_delta_sq = bolt_delta_sq;
+        if ( gasmask_delta_sq > max_gasmask_delta_sq )
+            max_gasmask_delta_sq = gasmask_delta_sq;
+        if ( eye_left_big_lid_delta_sq > max_eye_left_big_lid_delta_sq )
+            max_eye_left_big_lid_delta_sq = eye_left_big_lid_delta_sq;
+        if ( jaw_lower_2_delta_sq > max_jaw_lower_2_delta_sq )
+            max_jaw_lower_2_delta_sq = jaw_lower_2_delta_sq;
+        if ( tentacle_bottom_left_4_delta_sq > max_tentacle_bottom_left_4_delta_sq )
+            max_tentacle_bottom_left_4_delta_sq = tentacle_bottom_left_4_delta_sq;
+
+        if ( i == 0 || i == 2 || i == 5 || i == 11 || i == 23 )
+        {
+            bo3_rev_log_event(
+                "anim_probe",
+                "stage=pullout_sample"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";cycle=" + cycle_idx
+                + ";tick=" + i
+                + ";weapon=" + probe_weapon
+                + ";tag_flash=" + bo3_rev_safe_str( flash )
+                + ";tag_weapon=" + bo3_rev_safe_str( weapon_tag )
+                + ";j_bolt=" + bo3_rev_safe_str( bolt_tag )
+                + ";tag_gasmask=" + bo3_rev_safe_str( gasmask_tag )
+                + ";tag_eye_left_big_lid_animate=" + bo3_rev_safe_str( eye_left_big_lid_tag )
+                + ";tag_jaw_lower_2_animate=" + bo3_rev_safe_str( jaw_lower_2_tag )
+                + ";tag_tentacle_bottom_left_4_animate=" + bo3_rev_safe_str( tentacle_bottom_left_4_tag )
+                + ";tag_flash_delta_sq=" + flash_delta_sq
+                + ";tag_weapon_delta_sq=" + weapon_delta_sq
+                + ";j_bolt_delta_sq=" + bolt_delta_sq
+                + ";tag_gasmask_delta_sq=" + gasmask_delta_sq
+                + ";tag_eye_left_big_lid_animate_delta_sq=" + eye_left_big_lid_delta_sq
+                + ";tag_jaw_lower_2_animate_delta_sq=" + jaw_lower_2_delta_sq
+                + ";tag_tentacle_bottom_left_4_animate_delta_sq=" + tentacle_bottom_left_4_delta_sq
+            );
+        }
+    }
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=pullout_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";cycle=" + cycle_idx
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";weapon=" + probe_weapon
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";max_tag_flash_delta_sq=" + max_flash_delta_sq
+        + ";max_tag_weapon_delta_sq=" + max_weapon_delta_sq
+        + ";max_j_bolt_delta_sq=" + max_bolt_delta_sq
+        + ";max_tag_gasmask_delta_sq=" + max_gasmask_delta_sq
+        + ";max_tag_eye_left_big_lid_animate_delta_sq=" + max_eye_left_big_lid_delta_sq
+        + ";max_tag_jaw_lower_2_animate_delta_sq=" + max_jaw_lower_2_delta_sq
+        + ";max_tag_tentacle_bottom_left_4_animate_delta_sq=" + max_tentacle_bottom_left_4_delta_sq
+    );
+}
+
+bo3_rev_trace_putaway_motion(starter_weapon, probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( starter_weapon ) || starter_weapon == "" )
+        return;
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+    if ( starter_weapon == probe_weapon )
+        return;
+    if ( !self hasweapon( starter_weapon ) )
+        return;
+    if ( self getcurrentweapon() != probe_weapon )
+        return;
+
+    wait 0.20;
+
+    self switchtoweaponimmediate( starter_weapon );
+    wait 0.05;
+    self switchtoweapon( starter_weapon );
+
+    start_ms = gettime();
+    while ( gettime() - start_ms < 1200 )
+    {
+        if ( self getcurrentweapon() != probe_weapon )
+            break;
+        wait 0.05;
+    }
+
+    current_weapon = self getcurrentweapon();
+    if ( current_weapon == probe_weapon )
+        return;
+
+    base_flash = self gettagorigin( "tag_flash" );
+    base_weapon = self gettagorigin( "tag_weapon" );
+    base_brass = self gettagorigin( "tag_brass" );
+    base_clip = self gettagorigin( "tag_clip" );
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=putaway_begin"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";probe=" + bo3_rev_safe_str( probe_weapon )
+        + ";cur=" + bo3_rev_safe_str( current_weapon )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";tag_flash=" + bo3_rev_safe_str( base_flash )
+        + ";tag_weapon=" + bo3_rev_safe_str( base_weapon )
+        + ";tag_brass=" + bo3_rev_safe_str( base_brass )
+        + ";tag_clip=" + bo3_rev_safe_str( base_clip )
+    );
+
+    max_flash_delta_sq = 0;
+    max_weapon_delta_sq = 0;
+    max_brass_delta_sq = 0;
+    max_clip_delta_sq = 0;
+
+    for ( i = 0; i < 24; i++ )
+    {
+        wait 0.05;
+
+        if ( self getcurrentweapon() == probe_weapon )
+            break;
+
+        flash = self gettagorigin( "tag_flash" );
+        weapon_tag = self gettagorigin( "tag_weapon" );
+        brass_tag = self gettagorigin( "tag_brass" );
+        clip_tag = self gettagorigin( "tag_clip" );
+
+        flash_delta_sq = 0;
+        weapon_delta_sq = 0;
+        brass_delta_sq = 0;
+        clip_delta_sq = 0;
+
+        if ( isdefined( base_flash ) && isdefined( flash ) )
+            flash_delta_sq = distancesquared( flash, base_flash );
+        if ( isdefined( base_weapon ) && isdefined( weapon_tag ) )
+            weapon_delta_sq = distancesquared( weapon_tag, base_weapon );
+        if ( isdefined( base_brass ) && isdefined( brass_tag ) )
+            brass_delta_sq = distancesquared( brass_tag, base_brass );
+        if ( isdefined( base_clip ) && isdefined( clip_tag ) )
+            clip_delta_sq = distancesquared( clip_tag, base_clip );
+
+        if ( flash_delta_sq > max_flash_delta_sq )
+            max_flash_delta_sq = flash_delta_sq;
+        if ( weapon_delta_sq > max_weapon_delta_sq )
+            max_weapon_delta_sq = weapon_delta_sq;
+        if ( brass_delta_sq > max_brass_delta_sq )
+            max_brass_delta_sq = brass_delta_sq;
+        if ( clip_delta_sq > max_clip_delta_sq )
+            max_clip_delta_sq = clip_delta_sq;
+
+        if ( i == 0 || i == 2 || i == 5 || i == 11 || i == 23 )
+        {
+            bo3_rev_log_event(
+                "anim_probe",
+                "stage=putaway_sample"
+                + ";build_tag=" + bo3_rev_build_tag()
+                + ";tick=" + i
+                + ";starter=" + bo3_rev_safe_str( starter_weapon )
+                + ";probe=" + bo3_rev_safe_str( probe_weapon )
+                + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+                + ";tag_flash=" + bo3_rev_safe_str( flash )
+                + ";tag_weapon=" + bo3_rev_safe_str( weapon_tag )
+                + ";tag_brass=" + bo3_rev_safe_str( brass_tag )
+                + ";tag_clip=" + bo3_rev_safe_str( clip_tag )
+                + ";tag_flash_delta_sq=" + flash_delta_sq
+                + ";tag_weapon_delta_sq=" + weapon_delta_sq
+                + ";tag_brass_delta_sq=" + brass_delta_sq
+                + ";tag_clip_delta_sq=" + clip_delta_sq
+            );
+        }
+    }
+
+    bo3_rev_log_event(
+        "anim_probe",
+        "stage=putaway_end"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";starter=" + bo3_rev_safe_str( starter_weapon )
+        + ";probe=" + bo3_rev_safe_str( probe_weapon )
+        + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";max_tag_flash_delta_sq=" + max_flash_delta_sq
+        + ";max_tag_weapon_delta_sq=" + max_weapon_delta_sq
+        + ";max_tag_brass_delta_sq=" + max_brass_delta_sq
+        + ";max_tag_clip_delta_sq=" + max_clip_delta_sq
+    );
+}
+
+bo3_rev_auto_switch_probe_loop(starter_weapon, probe_weapon)
+{
+    self endon( "disconnect" );
+
+    if ( !isdefined( starter_weapon ) || starter_weapon == "" )
+        return;
+    if ( !isdefined( probe_weapon ) || probe_weapon == "" )
+        return;
+    if ( starter_weapon == probe_weapon )
+        return;
+
+    wait 1.0;
+
+    if ( !self hasweapon( starter_weapon ) || !self hasweapon( probe_weapon ) )
+    {
+        bo3_rev_log_event(
+            "anim_probe",
+            "stage=pullout_skip"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";starter_has=" + self hasweapon( starter_weapon )
+            + ";probe_has=" + self hasweapon( probe_weapon )
+        );
+        return;
+    }
+
+    for ( cycle = 0; cycle < 4; cycle++ )
+    {
+        self switchtoweaponimmediate( starter_weapon );
+        wait 0.20;
+        self switchtoweapon( starter_weapon );
+        wait 0.45;
+
+        if ( self hasweapon( probe_weapon ) )
+        {
+            self takeweapon( probe_weapon );
+            wait 0.10;
+        }
+
+        bo3_rev_try_give_weapon( probe_weapon );
+        wait 0.10;
+
+        bo3_rev_log_event(
+            "anim_probe",
+            "stage=raise_cycle"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";cycle=" + cycle
+            + ";from=" + bo3_rev_safe_str( starter_weapon )
+            + ";to=" + bo3_rev_safe_str( probe_weapon )
+            + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+        );
+
+        self switchtoweapon( probe_weapon );
+        self thread bo3_rev_trace_first_raise_motion( starter_weapon, probe_weapon );
+        self thread bo3_rev_trace_pullout_motion( starter_weapon, probe_weapon, cycle );
+        wait 1.35;
+    }
+}
+
+bo3_rev_animation_observation_enabled()
+{
+    return true;
+}
+
+bo3_rev_should_trace_pullout_motion()
+{
+    phase = bo3_rev_anim_phase();
+    return phase == "pullout" || phase == "combined";
+}
+
+bo3_rev_should_trace_putaway_motion()
+{
+    phase = bo3_rev_anim_phase();
+    return phase == "putaway";
+}
+
+bo3_rev_should_trace_equip_hold_motion()
+{
+    phase = bo3_rev_anim_phase();
+    return phase == "equip_hold";
+}
+
+bo3_rev_should_trace_fire_motion()
+{
+    phase = bo3_rev_anim_phase();
+    return phase == "fire" || phase == "combined";
+}
+
+bo3_rev_consumer_capture_heartbeat_enabled()
+{
+    return bo3_rev_native_probe_mode() == "xanim_consumer_focus";
+}
+
+bo3_rev_consumer_capture_heartbeat(probe_weapon)
+{
+    self endon( "disconnect" );
+
+    for ( tick = 1; tick <= 8; tick++ )
+    {
+        bo3_rev_log_event(
+            "consumer_heartbeat",
+            "tick=" + tick
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";phase=" + bo3_rev_anim_phase()
+            + ";probe=" + bo3_rev_safe_str( probe_weapon )
+            + ";cur=" + bo3_rev_safe_str( self getcurrentweapon() )
+            + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        );
+        wait 0.35;
+    }
+}
+
+bo3_rev_animation_observation_lane()
+{
+    level endon( "game_ended" );
+
+    for ( ;; )
+    {
+        wait 0.25;
+
+        if ( !bo3_rev_is_zombies_map() )
+            continue;
+
+        common_scripts\utility::flag_clear( "spawn_zombies" );
+
+        if ( isdefined( level.zombie_total ) && level.zombie_total > 0 )
+            level.zombie_total = 0;
+
+        if ( isdefined( level.zombie_ai_limit ) )
+            level.zombie_ai_limit = 0;
+
+        if ( isdefined( level.zombie_actor_limit ) )
+            level.zombie_actor_limit = 0;
+
+        bo3_rev_kill_all_active_enemies();
+    }
 }
 
 bo3_rev_level_command_listener(event_name)
@@ -1123,6 +2257,9 @@ bo3_rev_init_effects()
 
 bo3_rev_prepare_low_bone_viewmodel()
 {
+    if ( isdefined( self.bo3_rev_disable_viewmodel_force ) && self.bo3_rev_disable_viewmodel_force )
+        return;
+
     cur_vm = self getviewmodel();
     target_vm = bo3_rev_bridge_viewmodel();
 
@@ -1147,11 +2284,36 @@ bo3_rev_prepare_low_bone_viewmodel()
     self setviewmodel( target_vm );
     wait 0.05;
 
+    applied_vm = self getviewmodel();
+    if ( applied_vm != target_vm )
+    {
+        fail_count = 1;
+        if ( isdefined( self.bo3_rev_viewmodel_force_failures ) )
+            fail_count = self.bo3_rev_viewmodel_force_failures + 1;
+        self.bo3_rev_viewmodel_force_failures = fail_count;
+        if ( fail_count >= 3 )
+            self.bo3_rev_disable_viewmodel_force = 1;
+
+        bo3_rev_log_event(
+            "viewmodel",
+            "stage=pre_grant_rejected"
+            + ";from=" + bo3_rev_safe_str( cur_vm )
+            + ";to=" + bo3_rev_safe_str( applied_vm )
+            + ";target=" + target_vm
+            + ";default=" + bo3_rev_safe_str( self.bo3_rev_default_vm )
+            + ";fail_count=" + fail_count
+            + ";disabled=" + ( isdefined( self.bo3_rev_disable_viewmodel_force ) && self.bo3_rev_disable_viewmodel_force )
+        );
+        return;
+    }
+
+    self.bo3_rev_viewmodel_force_failures = 0;
+
     bo3_rev_log_event(
         "viewmodel",
         "stage=pre_grant_low"
         + ";from=" + bo3_rev_safe_str( cur_vm )
-        + ";to=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";to=" + bo3_rev_safe_str( applied_vm )
         + ";target=" + target_vm
         + ";default=" + bo3_rev_safe_str( self.bo3_rev_default_vm )
     );
@@ -1290,12 +2452,123 @@ bo3_rev_state_debug_watcher()
 
 bo3_rev_target_viewmodel()
 {
-    return "bo3_rev_idg_viewhands";
+    return "";
 }
 
 bo3_rev_bridge_viewmodel()
 {
     return "bo3_rev_bridge_viewhands";
+}
+
+bo3_rev_log_shell_state(stage)
+{
+    bo3_rev_log_event(
+        "shell",
+        "stage=" + stage
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";run_label=" + bo3_rev_run_label()
+        + ";phase=" + bo3_rev_anim_phase()
+        + ";cur_weapon=" + bo3_rev_safe_str( self getcurrentweapon() )
+        + ";vm=" + bo3_rev_safe_str( self getviewmodel() )
+        + ";target=" + bo3_rev_safe_str( bo3_rev_forced_stock_shell() )
+        + ";force_enabled=" + bo3_rev_force_stock_shell_enabled()
+        + ";default_vm=" + bo3_rev_safe_str( self.bo3_rev_default_vm )
+    );
+}
+
+bo3_rev_force_stock_shell(stage)
+{
+    target_vm = bo3_rev_forced_stock_shell();
+    cur_vm = self getviewmodel();
+
+    if ( !bo3_rev_force_stock_shell_enabled() )
+        return true;
+
+    if ( !isdefined( target_vm ) || target_vm == "" )
+        return false;
+
+    if ( !isdefined( self.bo3_rev_default_vm ) || self.bo3_rev_default_vm == "" )
+    {
+        if ( isdefined( cur_vm ) && cur_vm != "" && cur_vm != target_vm )
+            self.bo3_rev_default_vm = cur_vm;
+    }
+
+    if ( cur_vm == target_vm )
+    {
+        bo3_rev_log_event(
+            "shell",
+            "stage=" + stage + "_already"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";run_label=" + bo3_rev_run_label()
+            + ";vm=" + bo3_rev_safe_str( cur_vm )
+            + ";target=" + target_vm
+        );
+        return true;
+    }
+
+    precachemodel( target_vm );
+    self setviewmodel( target_vm );
+    wait 0.05;
+    applied_vm = self getviewmodel();
+    if ( applied_vm != target_vm )
+    {
+        bo3_rev_log_event(
+            "shell",
+            "stage=" + stage + "_rejected"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";run_label=" + bo3_rev_run_label()
+            + ";from=" + bo3_rev_safe_str( cur_vm )
+            + ";to=" + bo3_rev_safe_str( applied_vm )
+            + ";target=" + target_vm
+            + ";default_vm=" + bo3_rev_safe_str( self.bo3_rev_default_vm )
+        );
+        return false;
+    }
+
+    bo3_rev_log_event(
+        "shell",
+        "stage=" + stage + "_set"
+        + ";build_tag=" + bo3_rev_build_tag()
+        + ";run_label=" + bo3_rev_run_label()
+        + ";from=" + bo3_rev_safe_str( cur_vm )
+        + ";to=" + bo3_rev_safe_str( applied_vm )
+        + ";target=" + target_vm
+        + ";default_vm=" + bo3_rev_safe_str( self.bo3_rev_default_vm )
+    );
+    return true;
+}
+
+bo3_rev_stock_shell_watcher()
+{
+    self endon( "disconnect" );
+
+    target_vm = bo3_rev_forced_stock_shell();
+    if ( !isdefined( target_vm ) || target_vm == "" )
+        return;
+
+    while ( bo3_rev_force_stock_shell_enabled() )
+    {
+        wait 0.25;
+
+        if ( !bo3_rev_is_zombies_map() )
+            continue;
+
+        cur_vm = self getviewmodel();
+        if ( !isdefined( cur_vm ) || cur_vm == target_vm )
+            continue;
+
+        bo3_rev_log_event(
+            "shell",
+            "stage=watch_drift"
+            + ";build_tag=" + bo3_rev_build_tag()
+            + ";run_label=" + bo3_rev_run_label()
+            + ";from=" + bo3_rev_safe_str( cur_vm )
+            + ";target=" + target_vm
+            + ";cur_weapon=" + bo3_rev_safe_str( self getcurrentweapon() )
+        );
+
+        self bo3_rev_force_stock_shell( "watch" );
+    }
 }
 
 bo3_rev_viewmodel_swap_watcher()
@@ -1318,6 +2591,12 @@ bo3_rev_viewmodel_swap_watcher()
         bridge_vm = bo3_rev_bridge_viewmodel();
         probe_weapon = bo3_rev_probe_weapon();
 
+        if ( !isdefined( target_vm ) || target_vm == "" )
+            continue;
+
+        if ( isdefined( self.bo3_rev_disable_viewmodel_force ) && self.bo3_rev_disable_viewmodel_force )
+            continue;
+
         if ( !isdefined( self.bo3_rev_default_vm ) || self.bo3_rev_default_vm == "" || self.bo3_rev_default_vm == "viewmodel_usa_no_model" || self.bo3_rev_default_vm == target_vm || self.bo3_rev_default_vm == bridge_vm )
         {
             if ( isdefined( cur_vm ) && cur_vm != "" && cur_vm != "viewmodel_usa_no_model" && cur_vm != target_vm && cur_vm != bridge_vm )
@@ -1331,11 +2610,35 @@ bo3_rev_viewmodel_swap_watcher()
                 precachemodel( target_vm );
                 self setviewmodel( target_vm );
                 wait 0.01;
+                applied_vm = self getviewmodel();
+                if ( applied_vm != target_vm )
+                {
+                    fail_count = 1;
+                    if ( isdefined( self.bo3_rev_viewmodel_force_failures ) )
+                        fail_count = self.bo3_rev_viewmodel_force_failures + 1;
+                    self.bo3_rev_viewmodel_force_failures = fail_count;
+                    if ( fail_count >= 5 )
+                        self.bo3_rev_disable_viewmodel_force = 1;
+
+                    bo3_rev_log_event(
+                        "viewmodel",
+                        "stage=set_rejected"
+                        + ";from=" + bo3_rev_safe_str( cur_vm )
+                        + ";to=" + bo3_rev_safe_str( applied_vm )
+                        + ";target=" + target_vm
+                        + ";cur=" + bo3_rev_safe_str( cur_wpn )
+                        + ";fail_count=" + fail_count
+                        + ";disabled=" + ( isdefined( self.bo3_rev_disable_viewmodel_force ) && self.bo3_rev_disable_viewmodel_force )
+                    );
+                    continue;
+                }
+
+                self.bo3_rev_viewmodel_force_failures = 0;
                 bo3_rev_log_event(
                     "viewmodel",
                     "stage=set"
                     + ";from=" + bo3_rev_safe_str( cur_vm )
-                    + ";to=" + bo3_rev_safe_str( self getviewmodel() )
+                    + ";to=" + bo3_rev_safe_str( applied_vm )
                     + ";target=" + target_vm
                     + ";cur=" + bo3_rev_safe_str( cur_wpn )
                 );
@@ -1919,6 +3222,16 @@ bo3_rev_servant_fire_watcher()
         if ( self getcurrentweapon() != bo3_rev_probe_weapon() )
             continue;
 
+        bo3_rev_log_event(
+            "weapon_fired",
+            "build_tag=" + bo3_rev_build_tag()
+            + ";weapon=" + bo3_rev_probe_weapon()
+            + ";ammo_clip=" + self getweaponammoclip( bo3_rev_probe_weapon() )
+            + ";ammo_stock=" + self getweaponammostock( bo3_rev_probe_weapon() )
+        );
+
+        self thread bo3_rev_trace_fire_motion( bo3_rev_probe_weapon() );
+
         now = gettime();
         if ( isdefined( self.bo3_rev_servant_last_fire_ms ) && now - self.bo3_rev_servant_last_fire_ms < bo3_rev_servant_cooldown_ms() )
             continue;
@@ -1940,6 +3253,55 @@ bo3_rev_servant_fire_watcher()
 
         self.bo3_rev_servant_last_fire_ms = now;
         self thread bo3_rev_servant_fire_once();
+    }
+}
+
+bo3_rev_attack_input_probe()
+{
+    self endon( "disconnect" );
+
+    last_pressed = false;
+    last_ads = false;
+
+    for ( ;; )
+    {
+        cur_weapon = self getcurrentweapon();
+        attack_pressed = self attackbuttonpressed();
+        ads_pressed = self adsbuttonpressed();
+
+        if ( cur_weapon == bo3_rev_probe_weapon() )
+        {
+            if ( attack_pressed != last_pressed )
+            {
+                bo3_rev_log_event(
+                    "input_probe",
+                    "kind=attack"
+                    + ";state=" + attack_pressed
+                    + ";weapon=" + bo3_rev_safe_str( cur_weapon )
+                    + ";build_tag=" + bo3_rev_build_tag()
+                );
+                last_pressed = attack_pressed;
+            }
+
+            if ( ads_pressed != last_ads )
+            {
+                bo3_rev_log_event(
+                    "input_probe",
+                    "kind=ads"
+                    + ";state=" + ads_pressed
+                    + ";weapon=" + bo3_rev_safe_str( cur_weapon )
+                    + ";build_tag=" + bo3_rev_build_tag()
+                );
+                last_ads = ads_pressed;
+            }
+        }
+        else
+        {
+            last_pressed = false;
+            last_ads = false;
+        }
+
+        wait 0.05;
     }
 }
 

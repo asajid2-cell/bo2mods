@@ -137,6 +137,11 @@ BO3_IDLE_DIAG_FREQUENCY = 0.0
 BO3_IDLE_DIAG_STATIC_BONE = ""
 BO3_IDLE_DIAG_STATIC_TRANSLATE = [0.0, 0.0, 0.0]
 BO3_DISABLE_NOTIFY = os.environ.get("ROGUE_BO3_DISABLE_NOTIFY", "0") not in ("0", "false", "False", "")
+FORCE_LOOP_ANIM_NAMES = {
+    str(token).strip().lower()
+    for token in str(os.environ.get("ROGUE_XANIM_FORCE_LOOP_NAMES", "") or "").split(",")
+    if str(token).strip()
+}
 try:
     BO3_FORCE_ASSETTYPE = int(str(os.environ.get("ROGUE_BO3_FORCE_ASSETTYPE", "0") or "0").strip() or "0")
 except Exception:
@@ -912,13 +917,35 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
     if len(donor_data_short) != int(donor_header["dataShortCount"]) * 2:
         raise RuntimeError("donor template dataShort size mismatch")
     preserve_donor_rotations = int(donor_header["dataShortCount"]) != rotated_count * 4
-    if int(donor_header["dataIntCount"]) != translated_count * 3:
+    donor_data_int = b""
+    if donor_header["dataInt_ptr"] == PTR_FOLLOWING and "dataInt" in donor_sections:
+        s = donor_sections["dataInt"]
+        donor_data_int = donor_raw[s["offset"]:s["offset"] + s["size"]]
+    if len(donor_data_int) != int(donor_header["dataIntCount"]) * 4:
+        raise RuntimeError("donor template dataInt size mismatch")
+    normal_translated_count = int(donor_header["boneCount"][5])
+    precise_translated_count = int(donor_header["boneCount"][6])
+    static_translated_count = int(donor_header["boneCount"][7])
+    dynamic_translated_count = normal_translated_count + precise_translated_count
+    donor_data_int_count = int(donor_header["dataIntCount"])
+    preserve_donor_translations = False
+    mixed_dynamic_translations = False
+    if donor_data_int_count == translated_count * 3:
+        preserve_donor_translations = False
+    elif donor_data_int_count == (static_translated_count * 3) + (dynamic_translated_count * 6):
+        mixed_dynamic_translations = True
+    else:
         raise RuntimeError(
-            f"donor template unsupported dataInt layout: count={donor_header['dataIntCount']} translated={translated_count}"
+            "donor template unsupported dataInt layout: "
+            f"count={donor_header['dataIntCount']} translated={translated_count} "
+            f"staticTranslated={static_translated_count} dynamicTranslated={dynamic_translated_count}"
         )
 
     frame0 = _pick_frame(anim)
     source_name_to_idx = {str(name).strip().lower(): idx for idx, name in enumerate(anim.get("parts", []))}
+    static_diag_key = str(BO3_IDLE_DIAG_STATIC_BONE).strip().lower()
+    static_diag_translate = [float(v) for v in (BO3_IDLE_DIAG_STATIC_TRANSLATE or [0.0, 0.0, 0.0])[:3]]
+    static_diag_applied = False
 
     def source_state_for_name(name):
         idx = source_name_to_idx.get(str(name).strip().lower())
@@ -982,18 +1009,48 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
             for q in quat:
                 out.extend(struct.pack("<h", quat_to_int16(_sanitize_float(q))))
 
-    # 6) dataInt: donor translated-set order, but pose sampled from the source anim
-    for donor_bone_idx in donor_perm[:translated_count]:
-        bone_name = donor_names[donor_bone_idx]
-        bone = source_state_for_name(bone_name)
-        if bone:
-            off = bone.get("offset", [0.0, 0.0, 0.0])
-        else:
-            off = [0.0, 0.0, 0.0]
-        ox, oy, oz = (_sanitize_float(v) for v in off[:3])
-        out.extend(struct.pack("<f", ox))
-        out.extend(struct.pack("<f", oy))
-        out.extend(struct.pack("<f", oz))
+    # 6) dataInt:
+    #   - simple/static donor layouts: translated-set order sampled from the source anim
+    #   - mixed dynamic donor layouts: keep donor dynamic mins/size tail intact, but still
+    #     allow source/static diagnostic injection into the leading static-translation slice
+    if not mixed_dynamic_translations:
+        for donor_bone_idx in donor_perm[:translated_count]:
+            bone_name = donor_names[donor_bone_idx]
+            bone = source_state_for_name(bone_name)
+            if bone:
+                off = bone.get("offset", [0.0, 0.0, 0.0])
+            else:
+                off = [0.0, 0.0, 0.0]
+            ox, oy, oz = (_sanitize_float(v) for v in off[:3])
+            if static_diag_key and str(bone_name).strip().lower() == static_diag_key and any(abs(v) > 1e-6 for v in static_diag_translate):
+                ox = _sanitize_float(ox + static_diag_translate[0])
+                oy = _sanitize_float(oy + static_diag_translate[1])
+                oz = _sanitize_float(oz + static_diag_translate[2])
+                static_diag_applied = True
+            out.extend(struct.pack("<f", ox))
+            out.extend(struct.pack("<f", oy))
+            out.extend(struct.pack("<f", oz))
+    else:
+        donor_data_int_values = list(struct.unpack("<" + ("f" * donor_data_int_count), donor_data_int))
+        static_value_count = static_translated_count * 3
+        static_values = donor_data_int_values[:static_value_count]
+        dynamic_tail_values = donor_data_int_values[static_value_count:]
+
+        # We do not yet have the exact donor translation-bone mapping for animated backend
+        # layouts. Until that mapping is decoded, preserve the donor static slice shape and
+        # apply any requested diagnostic translation uniformly so the runtime win is still
+        # observable without corrupting the donor dynamic tail.
+        if any(abs(v) > 1e-6 for v in static_diag_translate):
+            for i in range(0, len(static_values), 3):
+                static_values[i + 0] = _sanitize_float(static_values[i + 0] + static_diag_translate[0])
+                static_values[i + 1] = _sanitize_float(static_values[i + 1] + static_diag_translate[1])
+                static_values[i + 2] = _sanitize_float(static_values[i + 2] + static_diag_translate[2])
+            static_diag_applied = True
+
+        for value in static_values:
+            out.extend(struct.pack("<f", _sanitize_float(value)))
+        for value in dynamic_tail_values:
+            out.extend(struct.pack("<f", _sanitize_float(value)))
 
     # 7) randomDataShort: preserve donor payload exactly. Stock T6 weapon
     # xanims can require this section even when we are only injecting custom
@@ -1005,6 +1062,12 @@ def _build_donor_template_static_pose_xanimparts_data(anim, string_table):
         if len(src) != expected:
             raise RuntimeError(f"donor randomDataShort size mismatch for '{donor_name}'")
         out.extend(src)
+
+    if static_diag_applied:
+        print(
+            f"  donor_template_static_pose diagnostic ({anim.get('name','?')}): "
+            f"bone={BO3_IDLE_DIAG_STATIC_BONE} translate={static_diag_translate}"
+        )
 
     return bytes(header), bytes(out)
 
@@ -1587,7 +1650,7 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     struct.pack_into("<H", header, 0x0C, 0)  # randomDataIntCount
     struct.pack_into("<H", header, 0x0E, numframes if has_delta else 2)
 
-    header[0x10] = 0  # bLoop
+    header[0x10] = 1 if _force_loop_for_anim(name) else 0  # bLoop
     header[0x11] = 1 if has_delta else 0  # bDelta
     header[0x12] = 1 if has_delta_trans else 0  # bDelta3D
     header[0x13] = 0  # bLeftHandGripIK
@@ -1614,7 +1677,12 @@ def _build_bo3_frames_idle_xanimparts_data(anim, string_table):
     struct.pack_into("<I", header, 0x2C, 0)  # indexCount
     struct.pack_into("<f", header, 0x30, framerate)
     effective_numframes = numframes if has_delta else 2
-    frequency = (framerate / float(effective_numframes)) if effective_numframes > 0 else 1.0
+    if has_delta and effective_numframes > 2:
+        # Long custom clips should advance at their authored frame rate; the
+        # old framerate/numframes formula makes them effectively static live.
+        frequency = framerate
+    else:
+        frequency = (framerate / float(effective_numframes)) if effective_numframes > 0 else 1.0
     if BO3_IDLE_DIAG_FREQUENCY > 0.0:
         frequency = float(BO3_IDLE_DIAG_FREQUENCY)
     struct.pack_into("<f", header, 0x34, frequency)
@@ -1704,6 +1772,20 @@ def _sanitize_float(v, fallback=0.0):
     return float(fallback)
 
 
+def _force_loop_for_anim(anim_name: str) -> bool:
+    key = str(anim_name or "").strip().lower()
+    if not key:
+        return False
+    if "idle" in key:
+        return True
+    if key in FORCE_LOOP_ANIM_NAMES:
+        return True
+    for token in FORCE_LOOP_ANIM_NAMES:
+        if token.endswith("*") and key.startswith(token[:-1]):
+            return True
+    return False
+
+
 def _pick_frame(anim):
     if anim['frames']:
         k = min(anim['frames'].keys())
@@ -1751,7 +1833,7 @@ def _build_stub_xanimparts_data(anim, string_table):
     struct.pack_into('<H', header, 0x0C, 0)               # randomDataIntCount
     struct.pack_into('<H', header, 0x0E, max(0, min(65535, int(STUB_NUMFRAMES))))  # numframes
 
-    header[0x10] = 0  # bLoop
+    header[0x10] = 1 if _force_loop_for_anim(name) else 0  # bLoop
     header[0x11] = 0  # bDelta
     header[0x12] = 0  # bDelta3D
     header[0x13] = 0  # bLeftHandGripIK
@@ -1900,7 +1982,7 @@ def _build_static_pose_xanimparts_data(anim, string_table):
     struct.pack_into('<H', header, 0x0E, numframes)
 
     # Keep these conservative for stability while validating the compiler.
-    header[0x10] = 0  # bLoop
+    header[0x10] = 1 if _force_loop_for_anim(name) else 0  # bLoop
     header[0x11] = 0  # bDelta
     header[0x12] = 0  # bDelta3D
     header[0x13] = 0  # bLeftHandGripIK

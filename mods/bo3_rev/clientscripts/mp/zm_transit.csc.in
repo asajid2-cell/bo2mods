@@ -25,7 +25,6 @@
 #include clientscripts\mp\zombies\_zm_weap_riotshield;
 #include clientscripts\mp\zombies\_zm_weap_cymbal_monkey;
 #include clientscripts\mp\zombies\_zm_weap_jetgun;
-#include clientscripts\mp\zombies\_bo3_rev_servant_fx_v3;
 #include clientscripts\mp\_visionset_mgr;
 #include clientscripts\mp\zombies\_zm_equipment;
 
@@ -46,9 +45,25 @@ init_gamemodes()
 main()
 {
     println( "[bo3_rev][csc] zm_transit main build=__BUILD_TAG__" );
+    if ( getdvar( #"ui_zm_gamemodegroup" ) == "zsurvival" )
+    {
+        if ( getdvar( #"ui_zm_mapstartlocation" ) == "" )
+            setdvar( #"ui_zm_mapstartlocation", "transit" );
+
+        println(
+            "[bo3_rev][csc] preserving transit client survival mode"
+            + ";gametype=" + getdvar( #"ui_gametype" )
+            + ";loc=" + getdvar( #"ui_zm_mapstartlocation" )
+            + ";build=__BUILD_TAG__"
+        );
+    }
+
     level thread clientscripts\mp\zm_transit_ffotd::main_start();
     level.default_start_location = "transit";
-    level.default_game_mode = "zclassic";
+    if ( getdvar( #"ui_zm_gamemodegroup" ) == "zsurvival" )
+        level.default_game_mode = getdvar( #"ui_gametype" );
+    else
+        level.default_game_mode = "zclassic";
     level._no_water_risers = 1;
     level.riser_fx_on_client = 1;
     level.setupcustomcharacterexerts = ::setup_personality_character_exerts;
@@ -209,7 +224,8 @@ lerp_infog_alpha( up )
 register_client_fields()
 {
     println( "[bo3_rev][csc] zm_transit register_client_fields build=__BUILD_TAG__" );
-    if ( level.scr_zm_ui_gametype == "zclassic" )
+    start_location = getdvar( #"ui_zm_mapstartlocation" );
+    if ( level.scr_zm_ui_gametype == "zclassic" && start_location == "transit" )
     {
         registerclientfield( "vehicle", "the_bus_spawned", 1, 1, "int", ::bus_spawned, 0 );
         registerclientfield( "vehicle", "bus_flashing_lights", 1, 1, "int", clientscripts\mp\zm_transit_bus::bus_flashing_lights, 0 );
@@ -222,6 +238,16 @@ register_client_fields()
         registerclientfield( "allplayers", "screecher_maxis_lights", 1, 1, "int", ::maxis_lights_watcher, 0 );
         registerclientfield( "allplayers", "sq_tower_sparks", 1, 1, "int", ::sq_tower_watcher, 0 );
     }
+    else if ( level.scr_zm_ui_gametype == "zclassic" && start_location == "town" )
+    {
+        println( "[bo3_rev][csc] zm_transit registering town wallbuy clientfields;loc=" + start_location + ";mode=" + level.scr_zm_ui_gametype );
+        registerclientfield( "world", "m14_zm_(1125, 872.2, 15)", 1, 2, "int", clientscripts\mp\zombies\_zm_weapons::wallbuy_callback, 0 );
+        registerclientfield( "world", "mp5k_zm_(611.1, -993.1, 181)", 1, 2, "int", clientscripts\mp\zombies\_zm_weapons::wallbuy_callback, 0 );
+        registerclientfield( "world", "rottweil72_zm_(1068.3, -1245, 5)", 1, 2, "int", clientscripts\mp\zombies\_zm_weapons::wallbuy_callback, 0 );
+        registerclientfield( "world", "tazer_knuckles_zm_(2411, 438, 4)", 1, 2, "int", clientscripts\mp\zombies\_zm_weapons::wallbuy_callback, 0 );
+    }
+    else
+        println( "[bo3_rev][csc] zm_transit skipping transit-only clientfields;loc=" + start_location + ";mode=" + level.scr_zm_ui_gametype );
 
     // Must occur during the clientfield registration window (this function),
     // otherwise the server will disconnect with EXE_CLIENT_FIELD_MISMATCH.

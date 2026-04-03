@@ -72,37 +72,18 @@ function Resolve-TargetProcess {
         return $direct
     }
 
-    $all = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $CurrentScriptPid }
-
-    $named = $all | Where-Object {
-        $_.Name -ieq $RequestedName -or $_.Name -ieq "$exeStemLocal.exe"
-    } | Select-Object -First 1
-    if ($named) {
-        return Get-Process -Id $named.ProcessId -ErrorAction SilentlyContinue
+    # Avoid Win32_Process/CIM on this machine: it can block long enough to miss
+    # the inject window. Prefer plain Get-Process resolution only.
+    $bootstrapper = Get-Process -Name "plutonium-bootstrapper-win32" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Id -ne $CurrentScriptPid } |
+        Sort-Object StartTime |
+        Select-Object -First 1
+    if ($bootstrapper) {
+        return $bootstrapper
     }
 
     if ($AllowBootstrapperFallback) {
-        $tokenHosts = $all | Where-Object {
-            $_.Name -ieq "plutonium-bootstrapper-win32.exe" -and
-            $_.CommandLine -and
-            $_.CommandLine -match [regex]::Escape($exeStemLocal)
-        } | Select-Object -First 1
-        if ($tokenHosts) {
-            return Get-Process -Id $tokenHosts.ProcessId -ErrorAction SilentlyContinue
-        }
-    }
-
-    $tokenHosts = $all | Where-Object {
-        $_.Name -ieq "plutonium-bootstrapper-win32.exe" -and
-        $_.CommandLine -and
-        (
-            $_.CommandLine -match [regex]::Escape($RequestedName) -or
-            $_.CommandLine -match [regex]::Escape($exeStemLocal) -or
-            ($exeStemLocal -ieq "t6zm" -and $_.CommandLine -match '\bt6zm\b')
-        )
-    } | Select-Object -First 1
-    if ($tokenHosts) {
-        return Get-Process -Id $tokenHosts.ProcessId -ErrorAction SilentlyContinue
+        return $bootstrapper
     }
 
     return $null

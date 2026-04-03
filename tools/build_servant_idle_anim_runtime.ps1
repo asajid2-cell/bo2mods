@@ -3,14 +3,15 @@ param(
     [string]$EmitMode = "bo3_frames",
     [switch]$ForceIdentity,
     [switch]$IdleDiagnostic,
-    [string]$IdleDiagnosticBone = "tag_gasmask",
+    [string]$IdleDiagnosticBone = "j_top",
     [string]$IdleDiagnosticTranslate = "0,0,40",
     [double]$IdleDiagnosticFrequency = 15.0,
-    [string]$IdleStaticBone = "tag_weapon",
+    [string]$IdleStaticBone = "tag_gasmask",
     [string]$IdleStaticTranslate = "0,0,120",
     [string]$IdleAnimOverride = "",
     [string]$FirstRaiseAnimOverride = "",
     [string]$FireAnimOverride = "",
+    [string]$Map = "zm_transit",
     [switch]$Launch,
     [switch]$InjectProbe,
     [ValidateSet("safe", "render_opacity_focus", "xanim_focus")]
@@ -21,7 +22,7 @@ $ErrorActionPreference = "Stop"
 
 $root = "Z:\Games\pluto_t6_full_game"
 $buildScript = Join-Path $root "_build\build_bo3_rev_idg_probe.py"
-$oracleFf = Join-Path $root "zone\all\so_zsurvival_zm_transit.ff"
+$oracleFf = Join-Path $root "zone\all\zm_prison.ff"
 $restartScript = Join-Path $root "tools\restart_t6_probe_cycle.ps1"
 
 if (-not (Test-Path $buildScript)) {
@@ -43,21 +44,23 @@ $env:ROGUE_DEPLOY_TO_MOD = "1"
 $env:ROGUE_DEPLOY_TO_BASE = "0"
 $env:ROGUE_ALLOW_STRIPPED_SURVIVAL_FF = "1"
 $env:ROGUE_SKIP_MOD_LOAD_SYNC = "0"
-$env:ROGUE_SKIP_MOD_PATCH_SYNC = "1"
-$env:ROGUE_FORCE_LOW_HANDMODEL = "1"
-$env:ROGUE_USE_CUSTOM_IDG_VIEWHANDS = "1"
-$env:ROGUE_STUB_ZM_VIEWHANDS = "1"
+$env:ROGUE_SKIP_MOD_PATCH_SYNC = "0"
+$env:ROGUE_FORCE_LOW_HANDMODEL = "0"
+$env:ROGUE_USE_CUSTOM_IDG_VIEWHANDS = "0"
+$env:ROGUE_STUB_ZM_VIEWHANDS = "0"
+$env:ROGUE_GUN_MODEL_MODE = "custom"
 $env:ROGUE_USE_BO3_IDG_ANIMS = "1"
 $env:ROGUE_BO3_ANIM_STAGE = "idleonly"
 $env:ROGUE_BO3_ANIM_SUBSET = "vm_zod_id_gun_idle"
 $env:ROGUE_BO3_ANIM_EMIT_MODE = $EmitMode
 $env:ROGUE_BO3_ANIM_RUNTIME_BACKEND = "target_weapon_names"
-$env:ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER = "1"
-$env:ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES = "1"
+$env:ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER = $(if ($env:ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER) { $env:ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER } else { "1" })
+$env:ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES = $(if ($env:ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES) { $env:ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES } else { "1" })
+$env:ROGUE_XANIM_FORCE_LOOP_NAMES = $(if ($env:ROGUE_XANIM_FORCE_LOOP_NAMES) { $env:ROGUE_XANIM_FORCE_LOOP_NAMES } else { "bo3_rev_dbg_fire*" })
 $env:ROGUE_USE_REBAKED_BO3_XANIMS = "1"
 $env:ROGUE_BO3_ANIM_DONOR_FF = $oracleFf
-$env:ROGUE_BO3_ANIM_DONOR_ZONE = "so_zsurvival_zm_transit"
-$env:ROGUE_BO3_ANIM_DONOR_ASSET = "viewmodel_zomb_mg08_idle"
+$env:ROGUE_BO3_ANIM_DONOR_ZONE = "zm_prison"
+$env:ROGUE_BO3_ANIM_DONOR_ASSET = "viewmodel_minigun_t6_idle"
 $env:ROGUE_PATCH_RUNTIME_BACKEND_FF = "1"
 $env:ROGUE_USE_BO3_FX_LOAD_FF = "0"
 $env:ROGUE_BO3_FX_LOAD_ZONE = "mod_load"
@@ -88,7 +91,7 @@ if ($IdleDiagnostic) {
     $env:ROGUE_BO3_IDLE_DIAG_STATIC_TRANSLATE = ""
 }
 
-$env:ROGUE_WEAPON_IDLE_ANIM_OVERRIDE = $IdleAnimOverride
+$env:ROGUE_WEAPON_IDLE_ANIM_OVERRIDE = $(if ([string]::IsNullOrWhiteSpace($IdleAnimOverride)) { "viewmodel_zomb_mg08_idle" } else { $IdleAnimOverride })
 $env:ROGUE_WEAPON_FIRST_RAISE_ANIM_OVERRIDE = $FirstRaiseAnimOverride
 $env:ROGUE_WEAPON_FIRE_ANIM_OVERRIDE = $FireAnimOverride
 
@@ -98,7 +101,9 @@ Write-Host "  ROGUE_BO3_ANIM_STAGE=$($env:ROGUE_BO3_ANIM_STAGE)"
 Write-Host "  ROGUE_BO3_ANIM_SUBSET=$($env:ROGUE_BO3_ANIM_SUBSET)"
 Write-Host "  ROGUE_BO3_ANIM_EMIT_MODE=$($env:ROGUE_BO3_ANIM_EMIT_MODE)"
 Write-Host "  ROGUE_BO3_ANIM_RUNTIME_BACKEND=$($env:ROGUE_BO3_ANIM_RUNTIME_BACKEND)"
+Write-Host "  ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER=$($env:ROGUE_BO3_ANIM_RUNTIME_STAGE_DONOR_ORDER)"
 Write-Host "  ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES=$($env:ROGUE_BO3_ANIM_RUNTIME_BIND_ALIASES)"
+Write-Host "  ROGUE_XANIM_FORCE_LOOP_NAMES=$($env:ROGUE_XANIM_FORCE_LOOP_NAMES)"
 Write-Host "  ROGUE_WEAPON_IDLE_ANIM_OVERRIDE=$($env:ROGUE_WEAPON_IDLE_ANIM_OVERRIDE)"
 Write-Host "  ROGUE_WEAPON_FIRST_RAISE_ANIM_OVERRIDE=$($env:ROGUE_WEAPON_FIRST_RAISE_ANIM_OVERRIDE)"
 Write-Host "  ROGUE_WEAPON_FIRE_ANIM_OVERRIDE=$($env:ROGUE_WEAPON_FIRE_ANIM_OVERRIDE)"
@@ -124,6 +129,9 @@ $restartArgs = @(
 )
 if ($Launch) {
     $restartArgs += "-Launch"
+    if (-not [string]::IsNullOrWhiteSpace($Map)) {
+        $restartArgs += @("-Map", $Map)
+    }
 }
 if ($InjectProbe) {
     $restartArgs += "-InjectProbe"
