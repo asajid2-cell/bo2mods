@@ -1,0 +1,109 @@
+{
+  "entities": [
+    {
+      "classname": "worldspawn"
+    },
+    {
+      "classname": "info_player_start",
+      "angles": "0 90 0",
+      "origin": "0 0 96",
+      "guid": "COSMO_PSTART_01"
+    },
+    {
+      "classname": "mp_global_intermission",
+      "angles": "0 90 0",
+      "origin": "32 0 96",
+      "guid": "COSMO_INTER_01"
+    },
+    {
+      "classname": "script_struct",
+      "angles": "0 90 0",
+      "origin": "0 0 96",
+      "targetname": "initial_spawn_points",
+      "_color": "1 1 0",
+      "script_int": "2",
+      "script_noteworthy": "initial_spawn",
+      "radius": "32",
+      "guid": "COSMO_INITSPAWN_01"
+    },
+    {
+      "classname": "script_struct",
+      "angles": "0 90 0",
+      "origin": "48 0 96",
+      "targetname": "initial_spawn_points",
+      "_color": "1 0 1",
+      "script_int": "1",
+      "script_noteworthy": "initial_spawn",
+      "radius": "32",
+      "guid": "COSMO_INITSPAWN_02"
+    },
+    {
+      "classname": "script_struct",
+      "angles": "0 180 0",
+      "origin": "0 48 96",
+      "targetname": "initial_spawn_points",
+      "_color": "1 1 0",
+      "script_int": "2",
+      "script_noteworthy": "initial_spawn",
+      "radius": "32",
+      "guid": "COSMO_INITSPAWN_03"
+    },
+    {
+      "classname": "script_struct",
+      "angles": "0 180 0",
+      "origin": "48 48 96",
+      "targetname": "initial_spawn_points",
+      "_color": "1 0 1",
+      "script_int": "1",
+      "script_noteworthy": "initial_spawn",
+      "radius": "32",
+      "guid": "COSMO_INITSPAWN_04"
+    },
+    {
+      "classname": "node_pathnode",
+      "origin": "128 0 96",
+      "guid": "COSMO_NODE_01"
+    },
+    {
+      "classname": "node_pathnode",
+      "origin": "-128 0 96",
+      "guid": "COSMO_NODE_02"
+    },
+    {
+      "classname": "node_pathnode",
+      "origin": "0 128 96",
+      "guid": "COSMO_NODE_03"
+    },
+    {
+      "classname": "node_pathnode",
+      "origin": "0 -128 96",
+      "guid": "COSMO_NODE_04"
+    },
+    {
+      "classname": "actor_zm_nuked_basic_02",
+      "model": "char_ger_honorgd_fullbody",
+      "export": "2",
+      "spawnflags": "3",
+      "script_noteworthy": "zombie_spawner",
+      "script_disable_bleeder": "1",
+      "script_forcespawn": "1",
+      "count": "9999",
+      "origin": "256 0 96",
+      "angles": "0 180 0",
+      "guid": "COSMO_ZSPAWN_01"
+    },
+    {
+      "classname": "actor_zm_nuked_basic_02",
+      "model": "char_ger_honorgd_fullbody",
+      "export": "2",
+      "spawnflags": "3",
+      "script_noteworthy": "zombie_spawner",
+      "script_disable_bleeder": "1",
+      "script_forcespawn": "1",
+      "count": "9999",
+      "origin": "-256 0 96",
+      "angles": "0 0 0",
+      "guid": "COSMO_ZSPAWN_02"
+    }
+  ]
+}

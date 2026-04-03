@@ -1,0 +1,15 @@
+// Transit carrier patch zone for the cosmodrome custom-map lane.
+// This FF only owns the script overrides needed to steer the stock
+// transit slot onto the custom world without duplicating full BSP assets.
+>game,T6
+>name,zm_transit_patch
+
+rawfile,maps/mp/zm_transit.gsc
+rawfile,maps/mp/zm_cosmodrome_standard.gsc
+rawfile,maps/mp/gametypes_zm/_zm_gametype.gsc
+rawfile,clientscripts/mp/zm_transit.csc
+
+script,maps/mp/zm_transit.gsc
+script,maps/mp/zm_cosmodrome_standard.gsc
+script,maps/mp/gametypes_zm/_zm_gametype.gsc
+script,clientscripts/mp/zm_transit.csc
