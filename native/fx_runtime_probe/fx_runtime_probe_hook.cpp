@@ -557,6 +557,7 @@ uint32_t hash_memory_fnv1a(uintptr_t addr, size_t size);
 bool is_known_materialization_plus5_value(uint32_t value);
 bool is_known_materialization_plus6_value(uint32_t value);
 bool is_executable_address(uintptr_t addr);
+std::string classify_consumer_value(uint32_t value, std::string* detail_out);
 void record_observed_asset_address(const char* kind, const char* asset_name, uintptr_t addr, const char* source, uintptr_t related_addr = 0);
 std::vector<uint32_t> capture_dword_window_values(uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
 void log_consumer_dword_window_correlations(const char* context, uintptr_t base_addr, int before_slots, const std::vector<uint32_t>& values);
@@ -1675,6 +1676,27 @@ const char* watched_asset_kind(const std::string& text)
     return nullptr;
 }
 
+int count_watched_asset_pointers_near(uintptr_t base_addr, int before_slots = 8, int after_slots = 16)
+{
+    if (!base_addr)
+        return 0;
+
+    int hit_count = 0;
+    for (int slot = -before_slots; slot <= after_slots; ++slot)
+    {
+        const uintptr_t slot_addr = base_addr + static_cast<uintptr_t>(slot * static_cast<int>(sizeof(uint32_t)));
+        uint32_t value = 0;
+        if (!safe_copy_memory(slot_addr, &value, sizeof(value)) || !value)
+            continue;
+
+        const std::string text = safe_read_ascii_string(static_cast<uintptr_t>(value), 64);
+        if (watched_asset_kind(text))
+            ++hit_count;
+    }
+
+    return hit_count;
+}
+
 void log_watched_asset_pointers_near(const char* context, uintptr_t base_addr, int before_slots = 8, int after_slots = 16)
 {
     if (!context || !base_addr)
@@ -1710,6 +1732,43 @@ void log_watched_asset_pointers_near(const char* context, uintptr_t base_addr, i
 
         if (++hit_count >= 12)
             break;
+    }
+}
+
+void log_viewmodel_one_hop_watch_scan(const char* context, uintptr_t base_addr, int before_slots = 2, int after_slots = 8)
+{
+    if (!context || !base_addr)
+        return;
+
+    int logged = 0;
+    for (int slot = -before_slots; slot <= after_slots && logged < 6; ++slot)
+    {
+        const uintptr_t slot_addr = base_addr + static_cast<uintptr_t>(slot * static_cast<int>(sizeof(uint32_t)));
+        uint32_t value = 0;
+        if (!safe_copy_memory(slot_addr, &value, sizeof(value)) || !value || value == base_addr)
+            continue;
+
+        std::string detail;
+        const std::string kind = classify_consumer_value(value, &detail);
+        if (kind != "ptr_heap" && kind != "ptr_region" && kind != "ptr_module")
+            continue;
+
+        const int hits = count_watched_asset_pointers_near(static_cast<uintptr_t>(value), 0, 8);
+        if (hits <= 0)
+            continue;
+
+        log_line(
+            "viewmodel_one_hop_hit context=%s base=0x%08lX slot=%+d slotAddr=0x%08lX value=0x%08lX kind=%s hits=%d detail=%s",
+            context,
+            static_cast<unsigned long>(base_addr),
+            slot,
+            static_cast<unsigned long>(slot_addr),
+            static_cast<unsigned long>(value),
+            kind.c_str(),
+            hits,
+            detail.c_str());
+        log_watched_asset_pointers_near("viewmodel_one_hop", static_cast<uintptr_t>(value), 0, 8);
+        ++logged;
     }
 }
 
@@ -7769,30 +7828,26 @@ void log_viewmodel_render_snapshot_phase(const char* phase, unsigned seq, unsign
         inferred);
 
     if (owning_base)
-    {
-        log_consumer_anchor_snapshot("viewmodel_owning", phase, owning_base, 4, 8);
         log_watched_asset_pointers_near("viewmodel_owning", owning_base);
-    }
     if (render)
-    {
-        log_consumer_anchor_snapshot("viewmodel_render", phase, render, 4, 8);
         log_watched_asset_pointers_near("viewmodel_render", render);
-    }
     if (render_plus_8)
-    {
-        log_consumer_anchor_snapshot("viewmodel_render_plus_8", phase, render_plus_8, 4, 8);
         log_watched_asset_pointers_near("viewmodel_render_plus_8", render_plus_8);
-    }
     if (lookup)
-    {
-        log_consumer_anchor_snapshot("viewmodel_lookup", phase, lookup, 4, 8);
         log_watched_asset_pointers_near("viewmodel_lookup", lookup);
-    }
     if (selector_root)
-    {
-        log_consumer_anchor_snapshot("viewmodel_selector_root", phase, selector_root, 16, 8);
-        try_log_consumer_render_edi_family(phase, selector_root, true);
-    }
+        log_watched_asset_pointers_near("viewmodel_selector_root", selector_root);
+
+    if (owning_base)
+        log_viewmodel_one_hop_watch_scan("viewmodel_owning", owning_base);
+    if (render)
+        log_viewmodel_one_hop_watch_scan("viewmodel_render", render);
+    if (render_plus_8)
+        log_viewmodel_one_hop_watch_scan("viewmodel_render_plus_8", render_plus_8);
+    if (lookup)
+        log_viewmodel_one_hop_watch_scan("viewmodel_lookup", lookup);
+    if (selector_root)
+        log_viewmodel_one_hop_watch_scan("viewmodel_selector_root", selector_root);
 }
 
 DWORD WINAPI viewmodel_render_snapshot_thread(void*)
@@ -7817,9 +7872,6 @@ DWORD WINAPI viewmodel_render_snapshot_thread(void*)
         const uintptr_t lookup = g_viewmodel_render_sample.lookup.load();
         const uintptr_t selector_root = g_viewmodel_render_sample.selector_root.load();
 
-        Sleep(125);
-        log_viewmodel_render_snapshot_phase("deferred_125ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
-        Sleep(375);
         log_viewmodel_render_snapshot_phase("deferred_500ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
         Sleep(1000);
         log_viewmodel_render_snapshot_phase("deferred_1500ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
