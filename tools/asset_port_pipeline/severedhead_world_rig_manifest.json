@@ -1,0 +1,42 @@
+{
+  "t6_bone_cap": 26,
+  "hands_keep_bones": [],
+  "required_bones": [
+    "tag_weapon",
+    "j_head",
+    "j_jaw",
+    "tag_brass",
+    "tag_flash"
+  ],
+  "weapon_keep_bones": [
+    "tag_weapon",
+    "j_head",
+    "j_brow_le",
+    "j_brow_ri",
+    "j_cheek_le",
+    "j_cheek_ri",
+    "j_cheekpuff_le",
+    "j_cheekpuff_ri",
+    "j_eye_lid_bot_le",
+    "j_eye_lid_bot_ri",
+    "j_eye_lid_top_le",
+    "j_eye_lid_top_ri",
+    "j_eyeball_le",
+    "j_eyeball_ri",
+    "j_jaw",
+    "j_tongue",
+    "j_levator_le",
+    "j_levator_ri",
+    "j_lip_bot_le",
+    "j_lip_bot_ri",
+    "j_lip_top_le",
+    "j_lip_top_ri",
+    "j_mouth_le",
+    "j_mouth_ri",
+    "tag_brass",
+    "tag_flash"
+  ],
+  "optional_bones": [],
+  "explicit_parent_overrides": {},
+  "explicit_weight_remap": {}
+}

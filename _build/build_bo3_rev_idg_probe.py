@@ -10213,10 +10213,16 @@ def render_probe_script() -> None:
             "}\n"
         )
 
-    script_output = active_script_output()
-    script_output.parent.mkdir(parents=True, exist_ok=True)
-    script_output.write_text(rendered, encoding="utf-8")
-    print(f"Rendered probe script -> {script_output}")
+    outputs = []
+    primary_output = active_script_output()
+    outputs.append(primary_output)
+    if WORK_SCRIPT_OUTPUT not in outputs:
+        outputs.append(WORK_SCRIPT_OUTPUT)
+
+    for script_output in outputs:
+        script_output.parent.mkdir(parents=True, exist_ok=True)
+        script_output.write_text(rendered, encoding="utf-8")
+        print(f"Rendered probe script -> {script_output}")
 
 
 def render_clientscript_template(template: Path, output: Path, work_output: Path) -> None:

@@ -15,6 +15,11 @@ param(
     [string]$RunLabel = "",
     [switch]$ForceStockShell,
     [string]$ForcedStockShell = "c_zom_engineer_viewhands",
+    [ValidateSet("custom", "base", "literal")]
+    [string]$GunModelMode = "custom",
+    [switch]$ForceLowHandmodel,
+    [switch]$DisableStockSurvivorCarrier,
+    [switch]$UseCustomIdgViewhands,
     [string]$IdleDiagBone = "",
     [string]$IdleDiagTranslate = "",
     [string]$IdleDiagFrequency = "",
@@ -33,7 +38,7 @@ param(
     [ValidateSet("semantic_names", "target_weapon_names")]
     [string]$RuntimeBackend = "target_weapon_names",
     [bool]$PatchRuntimeBackendFF = $false,
-    [ValidateSet("safe", "render_opacity_focus", "xanim_focus", "xanim_consumer_focus")]
+    [ValidateSet("safe", "bootstrap_guard_only", "render_opacity_focus", "viewmodel_render_focus", "xanim_focus", "xanim_consumer_focus", "xanim_asset_lookup_focus", "producer_compact_override_focus", "class_family_materialization_writepath")]
     [string]$ProbeMode = "safe"
 )
 
@@ -112,10 +117,11 @@ $env:ROGUE_SKIP_SCRIPT_SYNC = "0"
 $env:ROGUE_REQUIRE_APPDATA_SYNC = "1"
 $env:ROGUE_USE_FULL_ZONE_SOURCE = "1"
 $env:ROGUE_USE_MAP_FULL_ZONE_SOURCE = "0"
-$env:ROGUE_FORCE_LOW_HANDMODEL = "0"
-$env:ROGUE_USE_STOCK_SURVIVOR_CARRIER = "1"
+$env:ROGUE_GUN_MODEL_MODE = $GunModelMode
+$env:ROGUE_FORCE_LOW_HANDMODEL = $(if ($ForceLowHandmodel) { "1" } else { "0" })
+$env:ROGUE_USE_STOCK_SURVIVOR_CARRIER = $(if ($DisableStockSurvivorCarrier) { "0" } else { "1" })
 $env:ROGUE_STOCK_SURVIVOR_HANDMODEL = "c_zom_hazmat_viewhands"
-$env:ROGUE_USE_CUSTOM_IDG_VIEWHANDS = "0"
+$env:ROGUE_USE_CUSTOM_IDG_VIEWHANDS = $(if ($UseCustomIdgViewhands) { "1" } else { "0" })
 $env:ROGUE_STUB_ZM_VIEWHANDS = "0"
 $env:ROGUE_IDG_VIEW_GLB = (Join-Path $root "_build\bo3_rev_idg_weapon_only\bo3_rev_idg_weapon_only.glb")
 $env:ROGUE_USE_BO3_IDG_ANIMS = "1"

@@ -60,6 +60,9 @@ constexpr DWORD kBootstrapHashNullGuardRva = 0x003FC590;
 constexpr DWORD kBootstrapHashNullGuardResumeRva = 0x003FC599;
 constexpr DWORD kCustomMapGuardStringRva = 0x22C86F76;
 constexpr int kConsumerStepTraceInstructions = 12;
+constexpr int kConsumerEntryStepTraceInstructions = 24;
+constexpr int kBridgeToFirstProducerStepTraceInstructions = 96;
+constexpr int kProducerClassStepTraceInstructions = 24;
 constexpr int kXanimStepTraceInstructions = 24;
 constexpr int kXanimFallthroughStepTraceInstructions = 96;
 constexpr int kXanimPostFallthroughStepTraceInstructions = 96;
@@ -86,9 +89,11 @@ enum class ProbeMode
     Safe,
     BootstrapGuardOnly,
     RenderOpacityFocus,
+    ViewmodelRenderFocus,
     XanimFocus,
     XanimConsumerFocus,
     XanimAssetLookupFocus,
+    ProducerCompactOverrideFocus,
     ClassFamilyMaterializationWritepath,
 };
 
@@ -229,6 +234,24 @@ struct MaterializationProducerSnapshot
     std::string selected_signature;
 };
 
+struct TemporalSelectorRootObservation
+{
+    uintptr_t addr {};
+    uintptr_t page_base {};
+    DWORD first_tick {};
+    DWORD last_tick {};
+    unsigned sightings {};
+    bool watch_armed {};
+    uint32_t plus1 {};
+    uint32_t plus2 {};
+    uint32_t plus3 {};
+    uint32_t plus4 {};
+    uint32_t plus5 {};
+    uint32_t plus6 {};
+    uint32_t plus7 {};
+    uint32_t plus8 {};
+};
+
 struct StepTraceState
 {
     std::string label;
@@ -237,6 +260,81 @@ struct StepTraceState
     uintptr_t last_eip {};
     int steps_remaining {};
     int total_steps {};
+    uintptr_t wrapper_base {};
+    DWORD wrapper_arm_tick {};
+    bool wrapper_initialized {};
+    bool wrapper_prepopulated {};
+    bool wrapper_any_change {};
+    uint32_t wrapper_initial_values[3] {};
+    uint32_t wrapper_last_values[3] {};
+    bool wrapper_slot_changed[3] {};
+    uintptr_t producer_class_ptr {};
+    DWORD producer_arm_tick {};
+    bool producer_initialized {};
+    bool producer_any_change {};
+    uint32_t producer_initial_values[6] {};
+    uint32_t producer_last_values[6] {};
+    bool producer_field_changed[6] {};
+    bool force_complete {};
+};
+
+struct EntryWrapperOverrideConfig
+{
+    bool enabled {};
+    bool patch_minus1 {};
+    bool patch_plus3 {};
+    bool use_minus1_rva {};
+    bool use_plus3_rva {};
+    uint32_t minus1_value {};
+    uint32_t plus3_value {};
+    uint32_t minus1_rva {};
+    uint32_t plus3_rva {};
+    unsigned target_hit {1};
+    std::string label;
+    std::string apply_label;
+};
+
+struct ProducerCompactOverrideConfig
+{
+    bool enabled {};
+    bool patch_pointer_swap_34 {};
+    bool patch_pointer_family_from_initial {};
+    bool patch_class_head_from_initial {};
+    bool patch_class_head {};
+    bool patch_class_plus2_from_initial {};
+    bool patch_class_plus2 {};
+    bool patch_class_plus3_from_initial {};
+    bool patch_class_plus3 {};
+    bool patch_class_plus4_from_initial {};
+    bool patch_class_plus4 {};
+    bool patch_class_plus5_from_initial {};
+    bool patch_class_plus5 {};
+    bool patch_class_plus6 {};
+    bool trace_target_family_steps {};
+    bool trace_bridge_to_first_producer {};
+    bool stop_after_bridge_candidate_birth {};
+    bool arm_render_from_startup {true};
+    bool follow_on_render {};
+    unsigned target_hit {1};
+    bool target_first_distinct_after_initial {};
+    unsigned bridge_trace_steps {kBridgeToFirstProducerStepTraceInstructions};
+    bool require_bridge_bucket {};
+    uint32_t bridge_required_minus1 {};
+    uint32_t bridge_required_plus3 {};
+    uint32_t class_head_value {};
+    uint32_t class_plus2_value {};
+    uint32_t class_plus3_value {};
+    uint32_t class_plus4_value {};
+    uint32_t class_plus5_value {};
+    uint32_t class_plus6_value {};
+    uintptr_t initial_class_ptr {};
+    uint32_t initial_class_head {};
+    uint32_t initial_class_slot2 {};
+    uint32_t initial_class_slot3 {};
+    uint32_t initial_class_slot4 {};
+    uint32_t initial_class_slot5 {};
+    bool initial_family_seen {};
+    std::string label;
 };
 
 struct XanimExpectationSection
@@ -290,6 +388,18 @@ struct ObservedAssetAddress
     uintptr_t related_addr {};
 };
 
+struct SeedNormalizationState
+{
+    bool active {};
+    bool first_family_logged {};
+    unsigned long long trace_id {};
+    DWORD birth_tick {};
+    uintptr_t seed_ptr {};
+    uintptr_t birth_eip {};
+    std::string birth_reg;
+    uint32_t seed_slots[7] {};
+};
+
 struct ConsumerObjectState
 {
     std::string context;
@@ -341,6 +451,7 @@ std::atomic<bool> g_xanim_asset_census_started {false};
 std::atomic<bool> g_consumer_first_hit_logged {false};
 std::atomic<bool> g_consumer_deferred_snapshots_started {false};
 std::atomic<int> g_unhandled_breakpoint_logs {0};
+std::atomic<bool> g_selector_root_temporal_started {false};
 
 std::vector<ModuleInfoLite> g_modules;
 std::unordered_set<std::string> g_watch_images;
@@ -370,11 +481,19 @@ std::vector<TouchTraceTarget> g_touch_targets;
 std::unordered_map<uintptr_t, std::vector<size_t>> g_touch_pages;
 std::vector<PolicyFieldWatch> g_policy_field_watches;
 std::unordered_map<uintptr_t, std::vector<size_t>> g_policy_field_pages;
+std::unordered_map<uintptr_t, TemporalSelectorRootObservation> g_temporal_selector_roots;
 
 thread_local uintptr_t g_tls_rearm_addr = 0;
 thread_local bool g_tls_in_veh = false;
 thread_local PendingPolicyWriteTrace g_tls_policy_write_trace;
 MaterializationProducerSnapshot g_latest_materialization_producer;
+EntryWrapperOverrideConfig g_entry_wrapper_override;
+std::atomic<bool> g_entry_wrapper_override_applied {false};
+ProducerCompactOverrideConfig g_producer_compact_override;
+std::atomic<bool> g_producer_compact_override_applied {false};
+SeedNormalizationState g_seed_normalization;
+std::atomic<bool> g_producer_follow_on_render_armed {false};
+std::atomic<bool> g_producer_class_trace_started {false};
 
 decltype(&CreateFileA) g_real_create_file_a = nullptr;
 decltype(&CreateFileW) g_real_create_file_w = nullptr;
@@ -396,6 +515,22 @@ void add_touch_target_locked(const std::string& label, const std::string& text, 
 void arm_touch_trace_pages();
 void arm_selector_root_policy_watches_locked(const char* phase, uintptr_t selector_root);
 void arm_policy_field_pages_locked();
+void load_entry_wrapper_override();
+void load_producer_compact_override();
+bool capture_entry_wrapper_values(uintptr_t wrapper_base, uint32_t* minus3, uint32_t* minus1, uint32_t* plus3);
+void log_entry_wrapper_snapshot(const char* reason, unsigned long long trace_id, uintptr_t eip, uintptr_t wrapper_base, uint32_t minus3, uint32_t minus1, uint32_t plus3, int step);
+void maybe_apply_entry_wrapper_override(unsigned long long trace_id, uintptr_t eip, uintptr_t wrapper_base, const std::string& point_label, unsigned hit);
+bool capture_producer_class_values(uintptr_t class_ptr, uint32_t* class_head, uint32_t* class_slot2, uint32_t* class_slot3, uint32_t* class_slot4, uint32_t* class_slot5, uint32_t* class_slot6);
+void log_producer_class_snapshot(const char* reason, unsigned long long trace_id, uintptr_t eip, uintptr_t class_ptr, uint32_t class_head, uint32_t class_slot2, uint32_t class_slot3, uint32_t class_slot4, uint32_t class_slot5, uint32_t class_slot6, int step = -1);
+void prime_producer_class_trace_state_locked(StepTraceState& state, unsigned long long trace_id, const CONTEXT& ctx, uintptr_t class_ptr);
+void trace_producer_class_step_locked(StepTraceState& state, const CONTEXT& ctx, int step_number);
+bool maybe_prime_bridge_producer_candidate_locked(StepTraceState& state, const CONTEXT& ctx, int step_number);
+void maybe_apply_producer_compact_override(unsigned hit, unsigned long long trace_id, const std::string& path, CONTEXT& ctx, uintptr_t class_ptr, uint32_t class_head, uint32_t* class_slot2, uint32_t* class_slot3, uint32_t* class_slot4, uint32_t* class_slot5, uint32_t* class_slot6);
+void maybe_arm_follow_on_render_trace_after_asset_lookup();
+void begin_step_trace_locked(DWORD thread_id, const char* label, unsigned long long trace_id, const std::string& path, uintptr_t start_eip, int steps);
+bool bytes_match(uintptr_t addr, const BYTE* expected, size_t size);
+void prime_entry_wrapper_trace_state_locked(StepTraceState& state, const CONTEXT& ctx);
+void trace_entry_wrapper_step_locked(StepTraceState& state, const CONTEXT& ctx, int step_number);
 uintptr_t find_touch_target_addr_locked(const char* text);
 bool region_is_readable(const MEMORY_BASIC_INFORMATION& mbi);
 const char* module_name_for_addr(uintptr_t value, unsigned long* rva_out);
@@ -405,6 +540,9 @@ bool pointer_readable(uintptr_t addr, size_t size = 1);
 std::string safe_read_ascii_string(uintptr_t addr, size_t max_chars);
 uint32_t fnv1a_hash_bytes(const unsigned char* data, size_t size);
 uint32_t hash_memory_fnv1a(uintptr_t addr, size_t size);
+bool is_known_materialization_plus5_value(uint32_t value);
+bool is_known_materialization_plus6_value(uint32_t value);
+bool is_executable_address(uintptr_t addr);
 void record_observed_asset_address(const char* kind, const char* asset_name, uintptr_t addr, const char* source, uintptr_t related_addr = 0);
 std::vector<uint32_t> capture_dword_window_values(uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
 void log_consumer_dword_window_correlations(const char* context, uintptr_t base_addr, int before_slots, const std::vector<uint32_t>& values);
@@ -416,10 +554,12 @@ void log_consumer_span_snapshot(const char* context, const char* phase, uintptr_
 void arm_consumer_upstream_return_traces_from_stack_locked(const CONTEXT& ctx, unsigned long long trace_id, const std::string& path);
 void log_consumer_upstream_hit_context(const std::string& label, unsigned hit, const CONTEXT& ctx);
 void log_consumer_render_hit_context(unsigned hit, const CONTEXT& ctx);
-void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx);
+void log_consumer_asset_lookup_hit_context(unsigned hit, unsigned long long trace_id, const std::string& path, CONTEXT& ctx);
+void log_consumer_asset_lookup_entry_hit_context(unsigned hit, const CONTEXT& ctx, unsigned long long trace_id, const std::string& path);
 void try_log_consumer_render_edi_family(const char* phase, uintptr_t edi, bool include_extended_children);
 void log_materialization_producer_snapshot(const char* reason);
 void log_selector_root_compact_snapshot(const char* reason, const char* phase, uintptr_t selector_root);
+DWORD WINAPI selector_root_temporal_thread(void*);
 bool start_consumer_deferred_snapshots_once(const char* trigger_key, const char* trigger_label, uintptr_t trigger_addr, const std::vector<ConsumerAnchorSnapshot>& anchors);
 bool start_consumer_deferred_snapshots_once_locked(const char* trigger_key, const char* trigger_label, uintptr_t trigger_addr, const std::vector<ConsumerAnchorSnapshot>& anchors);
 CallerSelection capture_relevant_caller();
@@ -429,6 +569,8 @@ void apply_runtime_patches_via_expectations();
 int apply_runtime_patches_near_name_addrs(const char* target_name, const std::vector<uintptr_t>& name_addrs);
 void scan_live_named_asset_refs(const char* prefix, const char* target_name, uintptr_t target_name_addr);
 void scan_live_xanim_asset_candidates(const char* target_name, uintptr_t target_name_addr);
+bool maybe_arm_selector_root_from_pointer_family_locked(const char* phase, const char* label, uintptr_t base, int max_slots = 4);
+void probe_entry_selector_root_candidates_locked(const char* phase, const CONTEXT& ctx);
 
 std::string narrow_from_wide(const std::wstring& value)
 {
@@ -883,20 +1025,38 @@ const char* probe_mode_name()
         return "xanim_consumer_focus";
     case ProbeMode::XanimAssetLookupFocus:
         return "xanim_asset_lookup_focus";
+    case ProbeMode::ProducerCompactOverrideFocus:
+        return "producer_compact_override_focus";
     case ProbeMode::ClassFamilyMaterializationWritepath:
         return "class_family_materialization_writepath";
     case ProbeMode::RenderOpacityFocus:
         return "render_opacity_focus";
+    case ProbeMode::ViewmodelRenderFocus:
+        return "viewmodel_render_focus";
     case ProbeMode::Safe:
     default:
         return "safe";
     }
 }
 
+bool is_render_only_focus_mode()
+{
+    return g_probe_mode == ProbeMode::RenderOpacityFocus ||
+        g_probe_mode == ProbeMode::ViewmodelRenderFocus;
+}
+
+const char* producer_compact_target_mode_name()
+{
+    return g_producer_compact_override.target_first_distinct_after_initial
+        ? "first_distinct_after_initial"
+        : "exact_hit";
+}
+
 bool is_minimal_consumer_focus_mode()
 {
     return g_probe_mode == ProbeMode::XanimConsumerFocus ||
         g_probe_mode == ProbeMode::XanimAssetLookupFocus ||
+        g_probe_mode == ProbeMode::ProducerCompactOverrideFocus ||
         g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath;
 }
 
@@ -944,6 +1104,8 @@ DWORD consumer_arm_initial_delay_ms()
     if (g_probe_mode == ProbeMode::XanimFocus)
         return 12000;
     if (g_probe_mode == ProbeMode::XanimAssetLookupFocus)
+        return 250;
+    if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus)
         return 250;
     if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath)
         return 0;
@@ -1726,6 +1888,14 @@ bool is_pointer_like_value(uint32_t value)
     return kind == "ptr_heap" || kind == "ptr_region" || kind == "ptr_module";
 }
 
+bool is_selector_root_pointer_value(uint32_t value)
+{
+    std::string kind;
+    if (!classify_consumer_pointer_target(value, &kind))
+        return false;
+    return kind == "ptr_heap" || kind == "ptr_module";
+}
+
 bool looks_like_selector_root(uintptr_t base)
 {
     if (!base)
@@ -1735,9 +1905,13 @@ bool looks_like_selector_root(uintptr_t base)
     if (!safe_copy_memory(base, slots, sizeof(slots)))
         return false;
 
-    if (!is_pointer_like_value(slots[2]) || !is_pointer_like_value(slots[3]))
+    if (!is_selector_root_pointer_value(slots[2]) || !is_selector_root_pointer_value(slots[3]))
         return false;
-    if (slots[4] && !is_pointer_like_value(slots[4]))
+    if (slots[4] && !is_selector_root_pointer_value(slots[4]))
+        return false;
+    if (slots[5] && !is_known_materialization_plus5_value(slots[5]))
+        return false;
+    if (slots[6] && !is_known_materialization_plus6_value(slots[6]))
         return false;
 
     std::string kind5;
@@ -1748,6 +1922,221 @@ bool looks_like_selector_root(uintptr_t base)
         return false;
 
     return true;
+}
+
+bool is_known_materialization_plus5_value(uint32_t value)
+{
+    switch (value)
+    {
+    case 0x00070101:
+    case 0x01030105:
+    case 0x01070105:
+    case 0x00010101:
+    case 0x00020101:
+    case 0x00120105:
+    case 0x01150105:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool is_known_materialization_plus6_value(uint32_t value)
+{
+    return value == 0x00000201 || value == 0x00000203;
+}
+
+bool has_known_class_head_prefix(uintptr_t addr)
+{
+    if (!addr || !pointer_readable(addr, 4 * sizeof(uint32_t)))
+        return false;
+
+    uint32_t dwords[4] {};
+    if (!safe_copy_memory(addr, dwords, sizeof(dwords)))
+        return false;
+
+    if (dwords[0] != 0x706D6970 ||  // "pimp"
+        dwords[1] != 0x6365745F ||  // "_tec"
+        dwords[2] != 0x71696E68)    // "hinq"
+    {
+        return false;
+    }
+
+    return dwords[3] == 0x735F6575 || // "ue_s"
+           dwords[3] == 0x6C5F6575;   // "ue_l"
+}
+
+uintptr_t find_function_prologue_near(uintptr_t addr, size_t max_back)
+{
+    if (!addr || max_back < 3)
+        return 0;
+
+    const uintptr_t start = addr > max_back ? addr - max_back : 0;
+    const size_t span = addr - start;
+    if (span < 3)
+        return 0;
+
+    std::vector<unsigned char> buffer(span, 0);
+    if (!safe_copy_memory(start, buffer.data(), span))
+        return 0;
+
+    for (size_t i = span - 3; i > 0; --i)
+    {
+        if (buffer[i] == 0x55 && buffer[i + 1] == 0x8B && buffer[i + 2] == 0xEC)
+            return start + i;
+    }
+
+    return 0;
+}
+
+bool looks_like_temporal_selector_root_candidate(
+    uintptr_t base,
+    uint32_t* plus1_out = nullptr,
+    uint32_t* plus2_out = nullptr,
+    uint32_t* plus3_out = nullptr,
+    uint32_t* plus4_out = nullptr,
+    uint32_t* plus5_out = nullptr,
+    uint32_t* plus6_out = nullptr,
+    uint32_t* plus7_out = nullptr,
+    uint32_t* plus8_out = nullptr)
+{
+    if (!base)
+        return false;
+
+    uint32_t slots[9] {};
+    if (!safe_copy_memory(base, slots, sizeof(slots)))
+        return false;
+
+    const uint32_t plus1 = slots[1];
+    const uint32_t plus2 = slots[2];
+    const uint32_t plus3 = slots[3];
+    const uint32_t plus4 = slots[4];
+    const uint32_t plus5 = slots[5];
+    const uint32_t plus6 = slots[6];
+    const uint32_t plus7 = slots[7];
+    const uint32_t plus8 = slots[8];
+    const uint32_t self_plus_0x20 = static_cast<uint32_t>(base + 0x20);
+    const uint32_t self_plus_0x30 = static_cast<uint32_t>(base + 0x30);
+    const bool slot3_self = plus3 == self_plus_0x20;
+    const bool slot4_self = plus4 == self_plus_0x20;
+
+    if (!is_pointer_like_value(slots[0]))
+        return false;
+    if (!has_known_class_head_prefix(slots[0]))
+        return false;
+    if (plus1 != 0x00010080)
+        return false;
+    if (!is_pointer_like_value(plus2))
+        return false;
+    if (!slot3_self && plus3 != 0 && !is_pointer_like_value(plus3))
+        return false;
+    if (!slot4_self && plus4 != 0 && !is_pointer_like_value(plus4))
+        return false;
+    if (!slot3_self && !slot4_self)
+        return false;
+    if (plus5 != 0 && !is_known_materialization_plus5_value(plus5))
+        return false;
+    if (plus6 != 0 && !is_known_materialization_plus6_value(plus6))
+        return false;
+    if (plus7 && !is_pointer_like_value(plus7))
+        return false;
+    if (plus8 && plus8 != self_plus_0x30)
+        return false;
+
+    std::string kind5;
+    std::string kind6;
+    classify_consumer_value(plus5, &kind5);
+    classify_consumer_value(plus6, &kind6);
+    if (kind5.rfind("ptr_", 0) == 0 || kind6.rfind("ptr_", 0) == 0)
+        return false;
+
+    if (plus1_out)
+        *plus1_out = plus1;
+    if (plus2_out)
+        *plus2_out = plus2;
+    if (plus3_out)
+        *plus3_out = plus3;
+    if (plus4_out)
+        *plus4_out = plus4;
+    if (plus5_out)
+        *plus5_out = plus5;
+    if (plus6_out)
+        *plus6_out = plus6;
+    if (plus7_out)
+        *plus7_out = plus7;
+    if (plus8_out)
+        *plus8_out = plus8;
+    return true;
+}
+
+void record_temporal_selector_root_candidate_locked(uintptr_t addr, const char* reason)
+{
+    uint32_t plus1 = 0;
+    uint32_t plus2 = 0;
+    uint32_t plus3 = 0;
+    uint32_t plus4 = 0;
+    uint32_t plus5 = 0;
+    uint32_t plus6 = 0;
+    uint32_t plus7 = 0;
+    uint32_t plus8 = 0;
+    if (!looks_like_temporal_selector_root_candidate(addr, &plus1, &plus2, &plus3, &plus4, &plus5, &plus6, &plus7, &plus8))
+        return;
+
+    const DWORD now = GetTickCount();
+    auto& obs = g_temporal_selector_roots[addr];
+    const bool first_seen = obs.addr == 0;
+    if (first_seen)
+    {
+        obs.addr = addr;
+        obs.page_base = addr & ~(static_cast<uintptr_t>(g_system_info.dwPageSize) - 1u);
+        obs.first_tick = now;
+    }
+    obs.last_tick = now;
+    obs.sightings += 1;
+    obs.plus1 = plus1;
+    obs.plus2 = plus2;
+    obs.plus3 = plus3;
+    obs.plus4 = plus4;
+    obs.plus5 = plus5;
+    obs.plus6 = plus6;
+    obs.plus7 = plus7;
+    obs.plus8 = plus8;
+
+    if (first_seen)
+    {
+        log_line("selector_root_temporal_first_seen reason=%s addr=0x%08lX page=0x%08lX tick=%lu plus3=0x%08lX plus4=0x%08lX plus5=0x%08lX plus6=0x%08lX plus8=0x%08lX",
+            reason ? reason : "scan",
+            static_cast<unsigned long>(addr),
+            static_cast<unsigned long>(obs.page_base),
+            static_cast<unsigned long>(now),
+            static_cast<unsigned long>(plus3),
+            static_cast<unsigned long>(plus4),
+            static_cast<unsigned long>(plus5),
+            static_cast<unsigned long>(plus6),
+            static_cast<unsigned long>(plus8));
+        log_line("selector_root_temporal_shape reason=%s addr=0x%08lX plus1=0x%08lX plus2=0x%08lX plus3=0x%08lX plus4=0x%08lX plus5=0x%08lX plus6=0x%08lX plus7=0x%08lX plus8=0x%08lX",
+            reason ? reason : "scan",
+            static_cast<unsigned long>(addr),
+            static_cast<unsigned long>(plus1),
+            static_cast<unsigned long>(plus2),
+            static_cast<unsigned long>(plus3),
+            static_cast<unsigned long>(plus4),
+            static_cast<unsigned long>(plus5),
+            static_cast<unsigned long>(plus6),
+            static_cast<unsigned long>(plus7),
+            static_cast<unsigned long>(plus8));
+        log_selector_root_compact_snapshot("temporal_first_seen", reason ? reason : "scan", addr);
+    }
+
+    if (!obs.watch_armed && !g_consumer_first_hit_logged.load())
+    {
+        arm_selector_root_policy_watches_locked("temporal_pre_hit", addr);
+        obs.watch_armed = true;
+        log_line("selector_root_temporal_watch_armed reason=%s addr=0x%08lX tick=%lu",
+            reason ? reason : "scan",
+            static_cast<unsigned long>(addr),
+            static_cast<unsigned long>(now));
+    }
 }
 
 bool maybe_arm_selector_root_from_candidate(const char* phase, const char* label, uintptr_t candidate)
@@ -1764,6 +2153,74 @@ bool maybe_arm_selector_root_from_candidate(const char* phase, const char* label
         phase ? phase : "candidate",
         static_cast<unsigned long>(candidate));
     return true;
+}
+
+bool maybe_arm_selector_root_from_pointer_family_locked(const char* phase, const char* label, uintptr_t base, int max_slots)
+{
+    if (!base || max_slots < 0)
+        return false;
+
+    bool armed = false;
+    const size_t bytes = static_cast<size_t>(max_slots + 1) * sizeof(uint32_t);
+    if (!pointer_readable(base, bytes))
+        return false;
+
+    for (int slot = 0; slot <= max_slots; ++slot)
+    {
+        uint32_t value = 0;
+        if (!safe_copy_memory(base + (slot * sizeof(uint32_t)), &value, sizeof(value)))
+            continue;
+
+        char reason[96] {};
+        if (label && *label)
+            std::snprintf(reason, sizeof(reason), "%s_slot%d", label, slot);
+        else
+            std::snprintf(reason, sizeof(reason), "slot%d", slot);
+
+        record_temporal_selector_root_candidate_locked(value, reason);
+        armed = maybe_arm_selector_root_from_candidate(phase, reason, value) || armed;
+    }
+    return armed;
+}
+
+void probe_entry_selector_root_candidates_locked(const char* phase, const CONTEXT& ctx)
+{
+    const char* resolved_phase = phase ? phase : "asset_lookup_entry";
+    bool armed = false;
+
+    const struct RegisterCandidate
+    {
+        const char* label;
+        uintptr_t value;
+    } candidates[] = {
+        {"edi", ctx.Edi},
+        {"esi", ctx.Esi},
+        {"eax", ctx.Eax},
+        {"ecx", ctx.Ecx},
+        {"edx", ctx.Edx},
+    };
+
+    for (const auto& candidate : candidates)
+    {
+        if (!candidate.value)
+            continue;
+        record_temporal_selector_root_candidate_locked(candidate.value, candidate.label);
+        armed = maybe_arm_selector_root_from_candidate(resolved_phase, candidate.label, candidate.value) || armed;
+    }
+
+    for (const auto& candidate : candidates)
+    {
+        if (!candidate.value)
+            continue;
+        armed = maybe_arm_selector_root_from_pointer_family_locked(resolved_phase, candidate.label, candidate.value, 4) || armed;
+    }
+
+    if (!armed && g_latest_materialization_producer.class_head)
+    {
+        record_temporal_selector_root_candidate_locked(g_latest_materialization_producer.class_head, "class_head");
+        maybe_arm_selector_root_from_candidate(resolved_phase, "class_head", g_latest_materialization_producer.class_head);
+        maybe_arm_selector_root_from_pointer_family_locked(resolved_phase, "class_head", g_latest_materialization_producer.class_head, 4);
+    }
 }
 
 void arm_asset_lookup_callsite_traces_locked()
@@ -2139,7 +2596,7 @@ void try_log_consumer_render_edi_family(const char* phase, uintptr_t edi, bool i
 
 std::string observed_asset_key(const char* kind, const char* asset_name, uintptr_t addr, const char* source, uintptr_t related_addr)
 {
-    char buffer[512] {};
+    char buffer[4096] {};
     std::snprintf(
         buffer,
         sizeof(buffer),
@@ -3903,6 +4360,8 @@ void arm_consumer_upstream_return_traces_from_stack_locked(const CONTEXT& ctx, u
         const char* module_name = module_name_for_addr(static_cast<uintptr_t>(value), &rva);
         if (std::strcmp(module_name, "<unknown>") == 0)
             continue;
+        if (!is_executable_address(static_cast<uintptr_t>(value)))
+            continue;
         const bool in_main = is_in_main_module(static_cast<uintptr_t>(value));
         if (!in_main && g_probe_mode != ProbeMode::ClassFamilyMaterializationWritepath)
             continue;
@@ -3975,6 +4434,8 @@ void log_consumer_upstream_hit_context(const std::string& label, unsigned hit, c
         ctx.Edi,
         ctx.Esp);
 
+    maybe_apply_entry_wrapper_override(0, ctx.Eip, ctx.Edi, label, hit);
+
     log_stack_return_candidates(label.c_str(), ctx, 12);
 
     std::vector<ConsumerAnchorSnapshot> anchors;
@@ -4010,7 +4471,12 @@ void log_consumer_upstream_hit_context(const std::string& label, unsigned hit, c
     for (const auto& anchor : anchors)
         log_consumer_anchor_snapshot(anchor.context.c_str(), hit == 1 ? "first_hit" : "later_hit", anchor.base_addr, anchor.before_slots, anchor.after_slots);
 
-    if (hit == 1 && !anchors.empty())
+    const bool minimal_bridge_provenance_trace =
+        g_probe_mode == ProbeMode::ProducerCompactOverrideFocus &&
+        g_producer_compact_override.enabled &&
+        g_producer_compact_override.trace_bridge_to_first_producer;
+
+    if (hit == 1 && !anchors.empty() && !minimal_bridge_provenance_trace)
     {
         char key[160] {};
         std::snprintf(
@@ -4025,7 +4491,81 @@ void log_consumer_upstream_hit_context(const std::string& label, unsigned hit, c
     }
 }
 
-void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx)
+void log_consumer_asset_lookup_entry_hit_context(unsigned hit, const CONTEXT& ctx, unsigned long long trace_id, const std::string& path)
+{
+    DWORD return_slot0 = 0;
+    read_stack_dword(ctx, 0, &return_slot0);
+
+    log_line(
+        "consumer_asset_lookup_entry_hit_summary hit=%u tick=%lu edi=0x%08lX ecx=0x%08lX eax=0x%08lX edx=0x%08lX esi=0x%08lX ret0=0x%08lX",
+        hit,
+        static_cast<unsigned long>(GetTickCount()),
+        static_cast<unsigned long>(ctx.Edi),
+        static_cast<unsigned long>(ctx.Ecx),
+        static_cast<unsigned long>(ctx.Eax),
+        static_cast<unsigned long>(ctx.Edx),
+        static_cast<unsigned long>(ctx.Esi),
+        static_cast<unsigned long>(return_slot0));
+
+    log_stack_return_candidates("consumer_asset_lookup_entry", ctx, 20);
+    arm_consumer_upstream_return_traces_from_stack_locked(ctx, trace_id, path);
+
+    uint32_t wrapper_minus3 = 0;
+    uint32_t wrapper_minus1 = 0;
+    uint32_t wrapper_plus3 = 0;
+    if (capture_entry_wrapper_values(ctx.Edi, &wrapper_minus3, &wrapper_minus1, &wrapper_plus3))
+    {
+        log_entry_wrapper_snapshot("entry_hit", trace_id, ctx.Eip, ctx.Edi, wrapper_minus3, wrapper_minus1, wrapper_plus3, -1);
+        if (wrapper_minus3 != 0 || wrapper_minus1 != 0 || wrapper_plus3 != 0)
+        {
+            log_line(
+                "entry_wrapper_prepopulated trace=%llu base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX",
+                trace_id,
+                static_cast<unsigned long>(ctx.Edi),
+                static_cast<unsigned long>(wrapper_minus3),
+                static_cast<unsigned long>(wrapper_minus1),
+                static_cast<unsigned long>(wrapper_plus3));
+            const CallerSelection sel = capture_relevant_caller();
+            log_backtrace_selection(0, sel, "entry_wrapper_prepopulated", "asset_lookup_entry");
+        }
+    }
+    maybe_apply_entry_wrapper_override(trace_id, ctx.Eip, ctx.Edi, "consumer_asset_lookup_entry", hit);
+
+    std::vector<ConsumerAnchorSnapshot> anchors;
+    std::unordered_set<std::string> seen_contexts;
+    append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_edi", ctx.Edi);
+    append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_ecx", ctx.Ecx);
+    append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_eax", ctx.Eax);
+    append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_edx", ctx.Edx);
+    append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_esp", ctx.Esp);
+
+    uint32_t owner_slot0 = 0;
+    if (ctx.Edi && safe_copy_memory(ctx.Edi, &owner_slot0, sizeof(owner_slot0)))
+        append_pointer_anchor_if_valid(anchors, seen_contexts, "asset_lookup_entry_owner_slot0", owner_slot0);
+
+    for (const auto& anchor : anchors)
+        log_consumer_anchor_snapshot(anchor.context.c_str(), hit == 1 ? "first_hit" : "later_hit", anchor.base_addr, anchor.before_slots, anchor.after_slots);
+
+    const bool minimal_bridge_provenance_trace =
+        g_probe_mode == ProbeMode::ProducerCompactOverrideFocus &&
+        g_producer_compact_override.enabled &&
+        g_producer_compact_override.trace_bridge_to_first_producer;
+
+    if (hit == 1 && !anchors.empty() && !minimal_bridge_provenance_trace)
+    {
+        char key[160] {};
+        std::snprintf(
+            key,
+            sizeof(key),
+            "asset_lookup_entry|0x%08lX|0x%08lX|0x%08lX",
+            static_cast<unsigned long>(ctx.Edi),
+            static_cast<unsigned long>(ctx.Ecx),
+            static_cast<unsigned long>(ctx.Eax));
+        start_consumer_deferred_snapshots_once_locked(key, "consumer_asset_lookup_entry", ctx.Eip, anchors);
+    }
+}
+
+void log_consumer_asset_lookup_hit_context(unsigned hit, unsigned long long trace_id, const std::string& path, CONTEXT& ctx)
 {
     uint32_t class_head = 0;
     uint16_t class_word = 0;
@@ -4045,6 +4585,8 @@ void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx)
         safe_copy_memory(ctx.Ecx + (6 * sizeof(uint32_t)), &class_slot6, sizeof(class_slot6));
     }
 
+    maybe_apply_producer_compact_override(hit, trace_id, path, ctx, ctx.Ecx, class_head, &class_slot2, &class_slot3, &class_slot4, &class_slot5, &class_slot6);
+
     log_line(
         "consumer_asset_lookup_hit_summary hit=%u tick=%lu edi=0x%08lX eax=0x%08lX ecx=0x%08lX esi=0x%08lX",
         hit,
@@ -4054,7 +4596,9 @@ void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx)
         static_cast<unsigned long>(ctx.Ecx),
         static_cast<unsigned long>(ctx.Esi));
 
-    if (hit <= 2)
+    const bool capture_materialization_producer =
+        (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus ? hit <= 4 : hit <= 2);
+    if (capture_materialization_producer)
     {
         const CallerSelection sel = capture_relevant_caller();
         log_backtrace_selection(0, sel, "consumer_asset_class_lookup", "consumer_probe");
@@ -4095,6 +4639,17 @@ void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx)
         }
         log_materialization_producer_snapshot("asset_lookup_hit");
     }
+    if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus)
+    {
+        maybe_arm_follow_on_render_trace_after_asset_lookup();
+        const char* phase = "producer_compact_override";
+        bool armed = false;
+        armed = maybe_arm_selector_root_from_candidate(phase, "asset_lookup_edi", ctx.Edi) || armed;
+        armed = maybe_arm_selector_root_from_candidate(phase, "asset_lookup_eax", ctx.Eax) || armed;
+        armed = maybe_arm_selector_root_from_candidate(phase, "asset_lookup_ecx", ctx.Ecx) || armed;
+        if (!armed && g_latest_materialization_producer.class_head)
+            maybe_arm_selector_root_from_candidate(phase, "asset_lookup_class_head", g_latest_materialization_producer.class_head);
+    }
     if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath && g_policy_field_watches.empty())
     {
         const char* phase = "asset_lookup_hit";
@@ -4105,6 +4660,23 @@ void log_consumer_asset_lookup_hit_context(unsigned hit, const CONTEXT& ctx)
         armed = maybe_arm_selector_root_from_candidate(phase, "asset_lookup_ecx", ctx.Ecx) || armed;
         if (!armed && g_latest_materialization_producer.class_head)
             maybe_arm_selector_root_from_candidate(phase, "asset_lookup_class_head", g_latest_materialization_producer.class_head);
+    }
+    if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath)
+    {
+        auto it = g_temporal_selector_roots.find(ctx.Ecx);
+        if (it != g_temporal_selector_roots.end())
+        {
+            const auto& obs = it->second;
+            const DWORD age_ms = GetTickCount() - obs.first_tick;
+            log_line("selector_root_temporal_match reason=asset_lookup_hit addr=0x%08lX age_ms=%lu sightings=%u first_plus3=0x%08lX first_plus4=0x%08lX first_plus5=0x%08lX first_plus6=0x%08lX",
+                static_cast<unsigned long>(ctx.Ecx),
+                static_cast<unsigned long>(age_ms),
+                obs.sightings,
+                static_cast<unsigned long>(obs.plus3),
+                static_cast<unsigned long>(obs.plus4),
+                static_cast<unsigned long>(obs.plus5),
+                static_cast<unsigned long>(obs.plus6));
+        }
     }
     log_stack_return_candidates("consumer_asset_class_lookup", ctx, 16);
 
@@ -4930,6 +5502,37 @@ bool region_is_readable(const MEMORY_BASIC_INFORMATION& mbi)
     }
 }
 
+bool region_is_executable(const MEMORY_BASIC_INFORMATION& mbi)
+{
+    if (mbi.State != MEM_COMMIT)
+        return false;
+    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+        return false;
+
+    const DWORD protect = mbi.Protect & 0xFFu;
+    switch (protect)
+    {
+    case PAGE_EXECUTE:
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_READWRITE:
+    case PAGE_EXECUTE_WRITECOPY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool is_executable_address(uintptr_t addr)
+{
+    if (!addr)
+        return false;
+
+    MEMORY_BASIC_INFORMATION mbi {};
+    if (!VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)))
+        return false;
+    return region_is_executable(mbi);
+}
+
 void enumerate_modules(bool verbose = true)
 {
     g_modules.clear();
@@ -4995,18 +5598,414 @@ void load_probe_mode()
         g_probe_mode = ProbeMode::BootstrapGuardOnly;
     else if (value == "render_opacity_focus")
         g_probe_mode = ProbeMode::RenderOpacityFocus;
+    else if (value == "viewmodel_render_focus")
+        g_probe_mode = ProbeMode::ViewmodelRenderFocus;
     else if (value == "xanim_focus")
         g_probe_mode = ProbeMode::XanimFocus;
     else if (value == "xanim_consumer_focus")
         g_probe_mode = ProbeMode::XanimConsumerFocus;
     else if (value == "xanim_asset_lookup_focus")
         g_probe_mode = ProbeMode::XanimAssetLookupFocus;
+    else if (value == "producer_compact_override_focus")
+        g_probe_mode = ProbeMode::ProducerCompactOverrideFocus;
     else if (value == "class_family_materialization_writepath")
         g_probe_mode = ProbeMode::ClassFamilyMaterializationWritepath;
     else
         g_probe_mode = ProbeMode::Safe;
 
     log_line("probe_mode path=%s value=%s source=file", mode_path.c_str(), probe_mode_name());
+}
+
+void load_entry_wrapper_override()
+{
+    g_entry_wrapper_override = EntryWrapperOverrideConfig {};
+    g_entry_wrapper_override_applied = false;
+
+    const std::string config_path = module_relative_path(L"..\\..\\..\\active_entry_wrapper_override.txt");
+    FILE* file = std::fopen(config_path.c_str(), "rb");
+    if (!file)
+    {
+        log_line("entry_wrapper_override path=%s enabled=0 source=default", config_path.c_str());
+        return;
+    }
+
+    char buffer[4096] {};
+    const size_t count = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+    std::fclose(file);
+    std::string text(buffer, count);
+
+    auto trim_copy = [](std::string value) {
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t' || value.front() == '\r' || value.front() == '\n'))
+            value.erase(value.begin());
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r' || value.back() == '\n'))
+            value.pop_back();
+        return value;
+    };
+
+    auto parse_u32 = [&](const std::string& raw, uint32_t* out_value) -> bool {
+        if (!out_value)
+            return false;
+        std::string value = trim_copy(raw);
+        if (value.empty())
+            return false;
+        int base = 10;
+        if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X'))
+        {
+            value = value.substr(2);
+            base = 16;
+        }
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(value.c_str(), &end, base);
+        if (!end || *end != '\0')
+            return false;
+        *out_value = static_cast<uint32_t>(parsed);
+        return true;
+    };
+
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t end = text.find_first_of("\r\n", start);
+        if (end == std::string::npos)
+            end = text.size();
+        std::string line = trim_copy(text.substr(start, end - start));
+        start = end + 1;
+        if (line.empty() || line[0] == '#')
+            continue;
+
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+
+        const std::string key = to_lower_copy(trim_copy(line.substr(0, eq)));
+        const std::string value = trim_copy(line.substr(eq + 1));
+        if (key == "enabled")
+        {
+            g_entry_wrapper_override.enabled = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_minus1")
+        {
+            g_entry_wrapper_override.patch_minus1 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_plus3")
+        {
+            g_entry_wrapper_override.patch_plus3 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "minus1")
+        {
+            parse_u32(value, &g_entry_wrapper_override.minus1_value);
+        }
+        else if (key == "minus1_rva")
+        {
+            g_entry_wrapper_override.use_minus1_rva = parse_u32(value, &g_entry_wrapper_override.minus1_rva);
+        }
+        else if (key == "plus3")
+        {
+            parse_u32(value, &g_entry_wrapper_override.plus3_value);
+        }
+        else if (key == "plus3_rva")
+        {
+            g_entry_wrapper_override.use_plus3_rva = parse_u32(value, &g_entry_wrapper_override.plus3_rva);
+        }
+        else if (key == "label")
+        {
+            g_entry_wrapper_override.label = value;
+        }
+        else if (key == "apply_label")
+        {
+            g_entry_wrapper_override.apply_label = value;
+        }
+        else if (key == "target_hit")
+        {
+            uint32_t target_hit = 0;
+            if (parse_u32(value, &target_hit) && target_hit > 0)
+                g_entry_wrapper_override.target_hit = target_hit;
+        }
+    }
+
+    if (!(g_entry_wrapper_override.patch_minus1 || g_entry_wrapper_override.patch_plus3))
+        g_entry_wrapper_override.enabled = false;
+
+    log_line(
+        "entry_wrapper_override path=%s enabled=%d patch_minus1=%d minus1=0x%08lX use_minus1_rva=%d minus1_rva=0x%08lX patch_plus3=%d plus3=0x%08lX use_plus3_rva=%d plus3_rva=0x%08lX target_hit=%u apply_label=%s label=%s source=file",
+        config_path,
+        g_entry_wrapper_override.enabled ? 1 : 0,
+        g_entry_wrapper_override.patch_minus1 ? 1 : 0,
+        static_cast<unsigned long>(g_entry_wrapper_override.minus1_value),
+        g_entry_wrapper_override.use_minus1_rva ? 1 : 0,
+        static_cast<unsigned long>(g_entry_wrapper_override.minus1_rva),
+        g_entry_wrapper_override.patch_plus3 ? 1 : 0,
+        static_cast<unsigned long>(g_entry_wrapper_override.plus3_value),
+        g_entry_wrapper_override.use_plus3_rva ? 1 : 0,
+        static_cast<unsigned long>(g_entry_wrapper_override.plus3_rva),
+        g_entry_wrapper_override.target_hit,
+        g_entry_wrapper_override.apply_label.empty() ? "<any>" : g_entry_wrapper_override.apply_label.c_str(),
+        g_entry_wrapper_override.label.empty() ? "<none>" : g_entry_wrapper_override.label.c_str());
+}
+
+void load_producer_compact_override()
+{
+    g_producer_compact_override = ProducerCompactOverrideConfig {};
+    g_producer_compact_override_applied = false;
+    g_producer_follow_on_render_armed = false;
+    g_producer_class_trace_started = false;
+    g_seed_normalization = SeedNormalizationState {};
+
+    const std::string stability_config_path = module_relative_path(L"..\\..\\..\\active_producer_class_override_stability.txt");
+    const std::string default_config_path = module_relative_path(L"..\\..\\..\\active_producer_class_override.txt");
+    FILE* file = std::fopen(stability_config_path.c_str(), "rb");
+    const char* config_path = stability_config_path.c_str();
+    if (!file)
+    {
+        file = std::fopen(default_config_path.c_str(), "rb");
+        config_path = default_config_path.c_str();
+    }
+    if (!file)
+    {
+        log_line("producer_compact_override path=%s enabled=0 source=default", default_config_path.c_str());
+        return;
+    }
+
+    char buffer[4096] {};
+    const size_t count = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+    std::fclose(file);
+    std::string text(buffer, count);
+
+    auto trim_copy = [](std::string value) {
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t' || value.front() == '\r' || value.front() == '\n'))
+            value.erase(value.begin());
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r' || value.back() == '\n'))
+            value.pop_back();
+        return value;
+    };
+
+    auto parse_u32 = [&](const std::string& raw, uint32_t* out_value) -> bool {
+        if (!out_value)
+            return false;
+        std::string value = trim_copy(raw);
+        if (value.empty())
+            return false;
+        int base = 10;
+        if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X'))
+        {
+            value = value.substr(2);
+            base = 16;
+        }
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(value.c_str(), &end, base);
+        if (!end || *end != '\0')
+            return false;
+        *out_value = static_cast<uint32_t>(parsed);
+        return true;
+    };
+
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t end = text.find_first_of("\r\n", start);
+        if (end == std::string::npos)
+            end = text.size();
+        std::string line = trim_copy(text.substr(start, end - start));
+        start = end + 1;
+        if (line.empty() || line[0] == '#')
+            continue;
+
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+
+        const std::string key = to_lower_copy(trim_copy(line.substr(0, eq)));
+        const std::string value = trim_copy(line.substr(eq + 1));
+        if (key == "enabled")
+        {
+            g_producer_compact_override.enabled = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus5")
+        {
+            g_producer_compact_override.patch_class_plus5 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus6")
+        {
+            g_producer_compact_override.patch_class_plus6 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "trace_target_family_steps")
+        {
+            g_producer_compact_override.trace_target_family_steps = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "trace_bridge_to_first_producer")
+        {
+            g_producer_compact_override.trace_bridge_to_first_producer = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "stop_after_bridge_candidate_birth")
+        {
+            g_producer_compact_override.stop_after_bridge_candidate_birth = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "arm_render_from_startup")
+        {
+            g_producer_compact_override.arm_render_from_startup = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_pointer_swap_34")
+        {
+            g_producer_compact_override.patch_pointer_swap_34 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_pointer_family_from_initial")
+        {
+            g_producer_compact_override.patch_pointer_family_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_head_from_initial")
+        {
+            g_producer_compact_override.patch_class_head_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_head")
+        {
+            g_producer_compact_override.patch_class_head = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus2_from_initial")
+        {
+            g_producer_compact_override.patch_class_plus2_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus2")
+        {
+            g_producer_compact_override.patch_class_plus2 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus3_from_initial")
+        {
+            g_producer_compact_override.patch_class_plus3_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus3")
+        {
+            g_producer_compact_override.patch_class_plus3 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus4_from_initial")
+        {
+            g_producer_compact_override.patch_class_plus4_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus4")
+        {
+            g_producer_compact_override.patch_class_plus4 = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "patch_class_plus5_from_initial")
+        {
+            g_producer_compact_override.patch_class_plus5_from_initial = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "class_head")
+        {
+            parse_u32(value, &g_producer_compact_override.class_head_value);
+        }
+        else if (key == "class_plus2")
+        {
+            parse_u32(value, &g_producer_compact_override.class_plus2_value);
+        }
+        else if (key == "class_plus3")
+        {
+            parse_u32(value, &g_producer_compact_override.class_plus3_value);
+        }
+        else if (key == "class_plus4")
+        {
+            parse_u32(value, &g_producer_compact_override.class_plus4_value);
+        }
+        else if (key == "class_plus5")
+        {
+            parse_u32(value, &g_producer_compact_override.class_plus5_value);
+        }
+        else if (key == "class_plus6")
+        {
+            parse_u32(value, &g_producer_compact_override.class_plus6_value);
+        }
+        else if (key == "follow_on_render")
+        {
+            g_producer_compact_override.follow_on_render = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "target_hit")
+        {
+            uint32_t parsed = 0;
+            if (parse_u32(value, &parsed) && parsed > 0)
+                g_producer_compact_override.target_hit = static_cast<unsigned>(parsed);
+        }
+        else if (key == "target_mode")
+        {
+            const std::string mode = to_lower_copy(value);
+            if (mode == "first_distinct_after_initial" || mode == "distinct_after_initial")
+                g_producer_compact_override.target_first_distinct_after_initial = true;
+            else
+                g_producer_compact_override.target_first_distinct_after_initial = false;
+        }
+        else if (key == "bridge_trace_steps")
+        {
+            uint32_t parsed = 0;
+            if (parse_u32(value, &parsed) && parsed > 0)
+                g_producer_compact_override.bridge_trace_steps = static_cast<unsigned>(parsed);
+        }
+        else if (key == "require_bridge_bucket")
+        {
+            g_producer_compact_override.require_bridge_bucket = (value == "1" || to_lower_copy(value) == "true" || to_lower_copy(value) == "yes");
+        }
+        else if (key == "bridge_required_minus1")
+        {
+            parse_u32(value, &g_producer_compact_override.bridge_required_minus1);
+        }
+        else if (key == "bridge_required_plus3")
+        {
+            parse_u32(value, &g_producer_compact_override.bridge_required_plus3);
+        }
+        else if (key == "label")
+        {
+            g_producer_compact_override.label = value;
+        }
+    }
+
+    if (!(g_producer_compact_override.patch_pointer_swap_34 ||
+          g_producer_compact_override.patch_pointer_family_from_initial ||
+          g_producer_compact_override.patch_class_head_from_initial ||
+          g_producer_compact_override.patch_class_head ||
+          g_producer_compact_override.patch_class_plus2_from_initial ||
+          g_producer_compact_override.patch_class_plus2 ||
+          g_producer_compact_override.patch_class_plus3_from_initial ||
+          g_producer_compact_override.patch_class_plus3 ||
+          g_producer_compact_override.patch_class_plus4_from_initial ||
+          g_producer_compact_override.patch_class_plus4 ||
+          g_producer_compact_override.patch_class_plus5_from_initial ||
+          g_producer_compact_override.patch_class_plus5 ||
+          g_producer_compact_override.patch_class_plus6 ||
+          g_producer_compact_override.trace_target_family_steps ||
+          g_producer_compact_override.trace_bridge_to_first_producer))
+        g_producer_compact_override.enabled = false;
+
+    log_line(
+        "producer_compact_override path=%s enabled=%d target_mode=%s target_hit=%u patch_pointer_swap_34=%d patch_pointer_family_from_initial=%d patch_class_head_from_initial=%d patch_class_head=%d class_head=0x%08lX patch_class_plus2_from_initial=%d patch_class_plus2=%d class_plus2=0x%08lX patch_class_plus3_from_initial=%d patch_class_plus3=%d class_plus3=0x%08lX patch_class_plus4_from_initial=%d patch_class_plus4=%d class_plus4=0x%08lX patch_class_plus5_from_initial=%d patch_class_plus5=%d class_plus5=0x%08lX patch_class_plus6=%d class_plus6=0x%08lX trace_target_family_steps=%d trace_bridge_to_first_producer=%d stop_after_bridge_candidate_birth=%d bridge_trace_steps=%u require_bridge_bucket=%d bridge_required_minus1=0x%08lX bridge_required_plus3=0x%08lX arm_render_from_startup=%d follow_on_render=%d label=%s source=file",
+        config_path,
+        g_producer_compact_override.enabled ? 1 : 0,
+        producer_compact_target_mode_name(),
+        g_producer_compact_override.target_hit,
+        g_producer_compact_override.patch_pointer_swap_34 ? 1 : 0,
+        g_producer_compact_override.patch_pointer_family_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_head_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_head ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_head_value),
+        g_producer_compact_override.patch_class_plus2_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_plus2 ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_plus2_value),
+        g_producer_compact_override.patch_class_plus3_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_plus3 ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_plus3_value),
+        g_producer_compact_override.patch_class_plus4_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_plus4 ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_plus4_value),
+        g_producer_compact_override.patch_class_plus5_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_plus5 ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_plus5_value),
+        g_producer_compact_override.patch_class_plus6 ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.class_plus6_value),
+        g_producer_compact_override.trace_target_family_steps ? 1 : 0,
+        g_producer_compact_override.trace_bridge_to_first_producer ? 1 : 0,
+        g_producer_compact_override.stop_after_bridge_candidate_birth ? 1 : 0,
+        g_producer_compact_override.bridge_trace_steps,
+        g_producer_compact_override.require_bridge_bucket ? 1 : 0,
+        static_cast<unsigned long>(g_producer_compact_override.bridge_required_minus1),
+        static_cast<unsigned long>(g_producer_compact_override.bridge_required_plus3),
+        g_producer_compact_override.arm_render_from_startup ? 1 : 0,
+        g_producer_compact_override.follow_on_render ? 1 : 0,
+        g_producer_compact_override.label.empty() ? "<none>" : g_producer_compact_override.label.c_str());
 }
 
 void seed_guard_message_watch()
@@ -5448,6 +6447,777 @@ const char* guard_access_kind(unsigned long access_type)
     }
 }
 
+const int kEntryWrapperTrackedSlots[3] = {-3, -1, 3};
+
+int entry_wrapper_slot_index(int slot)
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        if (kEntryWrapperTrackedSlots[i] == slot)
+            return i;
+    }
+    return -1;
+}
+
+const char* entry_wrapper_slot_label(int slot)
+{
+    switch (slot)
+    {
+    case -3:
+        return "wrapper_minus3";
+    case -1:
+        return "wrapper_minus1";
+    case 3:
+        return "wrapper_plus3";
+    default:
+        return "wrapper_slot";
+    }
+}
+
+bool capture_entry_wrapper_values(uintptr_t wrapper_base, uint32_t* minus3, uint32_t* minus1, uint32_t* plus3)
+{
+    if (!wrapper_base || !minus3 || !minus1 || !plus3)
+        return false;
+
+    return safe_copy_memory(wrapper_base + static_cast<intptr_t>(-3 * static_cast<int>(sizeof(uint32_t))), minus3, sizeof(*minus3)) &&
+        safe_copy_memory(wrapper_base + static_cast<intptr_t>(-1 * static_cast<int>(sizeof(uint32_t))), minus1, sizeof(*minus1)) &&
+        safe_copy_memory(wrapper_base + static_cast<intptr_t>(3 * static_cast<int>(sizeof(uint32_t))), plus3, sizeof(*plus3));
+}
+
+void log_entry_wrapper_snapshot(
+    const char* reason,
+    unsigned long long trace_id,
+    uintptr_t eip,
+    uintptr_t wrapper_base,
+    uint32_t minus3,
+    uint32_t minus1,
+    uint32_t plus3,
+    int step = -1)
+{
+    log_line(
+        "entry_wrapper_snapshot reason=%s trace=%llu step=%d eip=0x%08lX base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX",
+        reason ? reason : "unknown",
+        trace_id,
+        step,
+        static_cast<unsigned long>(eip),
+        static_cast<unsigned long>(wrapper_base),
+        static_cast<unsigned long>(minus3),
+        static_cast<unsigned long>(minus1),
+        static_cast<unsigned long>(plus3));
+}
+
+const char* producer_class_field_label(size_t index)
+{
+    switch (index)
+    {
+    case 0:
+        return "class_head";
+    case 1:
+        return "class_plus_2";
+    case 2:
+        return "class_plus_3";
+    case 3:
+        return "class_plus_4";
+    case 4:
+        return "class_plus_5";
+    case 5:
+        return "class_plus_6";
+    default:
+        return "class_field";
+    }
+}
+
+bool capture_u32_slots(uintptr_t base, size_t count, uint32_t* values)
+{
+    if (!base || !values || count == 0)
+        return false;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (!safe_copy_memory(base + (i * sizeof(uint32_t)), &values[i], sizeof(uint32_t)))
+            return false;
+    }
+    return true;
+}
+
+bool capture_producer_class_values(uintptr_t class_ptr, uint32_t* class_head, uint32_t* class_slot2, uint32_t* class_slot3, uint32_t* class_slot4, uint32_t* class_slot5, uint32_t* class_slot6)
+{
+    if (!class_ptr || !class_head || !class_slot2 || !class_slot3 || !class_slot4 || !class_slot5 || !class_slot6)
+        return false;
+
+    return safe_copy_memory(class_ptr, class_head, sizeof(*class_head)) &&
+        safe_copy_memory(class_ptr + (2 * sizeof(uint32_t)), class_slot2, sizeof(*class_slot2)) &&
+        safe_copy_memory(class_ptr + (3 * sizeof(uint32_t)), class_slot3, sizeof(*class_slot3)) &&
+        safe_copy_memory(class_ptr + (4 * sizeof(uint32_t)), class_slot4, sizeof(*class_slot4)) &&
+        safe_copy_memory(class_ptr + (5 * sizeof(uint32_t)), class_slot5, sizeof(*class_slot5)) &&
+        safe_copy_memory(class_ptr + (6 * sizeof(uint32_t)), class_slot6, sizeof(*class_slot6));
+}
+
+void log_producer_class_snapshot(
+    const char* reason,
+    unsigned long long trace_id,
+    uintptr_t eip,
+    uintptr_t class_ptr,
+    uint32_t class_head,
+    uint32_t class_slot2,
+    uint32_t class_slot3,
+    uint32_t class_slot4,
+    uint32_t class_slot5,
+    uint32_t class_slot6,
+    int step)
+{
+    log_line(
+        "producer_class_snapshot reason=%s trace=%llu step=%d eip=0x%08lX class=0x%08lX class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX class_plus6=0x%08lX",
+        reason ? reason : "unknown",
+        trace_id,
+        step,
+        static_cast<unsigned long>(eip),
+        static_cast<unsigned long>(class_ptr),
+        static_cast<unsigned long>(class_head),
+        static_cast<unsigned long>(class_slot2),
+        static_cast<unsigned long>(class_slot3),
+        static_cast<unsigned long>(class_slot4),
+        static_cast<unsigned long>(class_slot5),
+        static_cast<unsigned long>(class_slot6));
+}
+
+void log_seed_normalization_core(
+    const char* reason,
+    unsigned long long trace_id,
+    uintptr_t eip,
+    uintptr_t base,
+    const uint32_t* slots)
+{
+    if (!slots)
+        return;
+    log_line(
+        "seed_to_first_producer_core reason=%s trace=%llu eip=0x%08lX base=0x%08lX slot0=0x%08lX slot1=0x%08lX slot2=0x%08lX slot3=0x%08lX slot4=0x%08lX slot5=0x%08lX slot6=0x%08lX",
+        reason ? reason : "unknown",
+        trace_id,
+        static_cast<unsigned long>(eip),
+        static_cast<unsigned long>(base),
+        static_cast<unsigned long>(slots[0]),
+        static_cast<unsigned long>(slots[1]),
+        static_cast<unsigned long>(slots[2]),
+        static_cast<unsigned long>(slots[3]),
+        static_cast<unsigned long>(slots[4]),
+        static_cast<unsigned long>(slots[5]),
+        static_cast<unsigned long>(slots[6]));
+}
+
+void prime_producer_class_trace_state_locked(StepTraceState& state, unsigned long long trace_id, const CONTEXT& ctx, uintptr_t class_ptr)
+{
+    state.producer_class_ptr = class_ptr;
+    state.producer_arm_tick = GetTickCount();
+    state.producer_initialized = false;
+    state.producer_any_change = false;
+    std::fill(std::begin(state.producer_initial_values), std::end(state.producer_initial_values), 0);
+    std::fill(std::begin(state.producer_last_values), std::end(state.producer_last_values), 0);
+    std::fill(std::begin(state.producer_field_changed), std::end(state.producer_field_changed), false);
+
+    if (!class_ptr)
+        return;
+
+    uint32_t class_head = 0;
+    uint32_t class_slot2 = 0;
+    uint32_t class_slot3 = 0;
+    uint32_t class_slot4 = 0;
+    uint32_t class_slot5 = 0;
+    uint32_t class_slot6 = 0;
+    if (!capture_producer_class_values(class_ptr, &class_head, &class_slot2, &class_slot3, &class_slot4, &class_slot5, &class_slot6))
+        return;
+
+    state.producer_initialized = true;
+    state.producer_initial_values[0] = class_head;
+    state.producer_initial_values[1] = class_slot2;
+    state.producer_initial_values[2] = class_slot3;
+    state.producer_initial_values[3] = class_slot4;
+    state.producer_initial_values[4] = class_slot5;
+    state.producer_initial_values[5] = class_slot6;
+    std::copy(std::begin(state.producer_initial_values), std::end(state.producer_initial_values), std::begin(state.producer_last_values));
+
+    log_producer_class_snapshot("trace_arm", trace_id, ctx.Eip, class_ptr, class_head, class_slot2, class_slot3, class_slot4, class_slot5, class_slot6);
+    log_line(
+        "producer_class_trace_armed trace=%llu base=0x%08lX class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX class_plus6=0x%08lX",
+        trace_id,
+        static_cast<unsigned long>(class_ptr),
+        static_cast<unsigned long>(class_head),
+        static_cast<unsigned long>(class_slot2),
+        static_cast<unsigned long>(class_slot3),
+        static_cast<unsigned long>(class_slot4),
+        static_cast<unsigned long>(class_slot5),
+        static_cast<unsigned long>(class_slot6));
+}
+
+void trace_producer_class_step_locked(StepTraceState& state, const CONTEXT& ctx, int step_number)
+{
+    if (!state.producer_initialized || !state.producer_class_ptr)
+        return;
+
+    uint32_t values[6] {};
+    if (!capture_producer_class_values(state.producer_class_ptr, &values[0], &values[1], &values[2], &values[3], &values[4], &values[5]))
+        return;
+
+    log_producer_class_snapshot("step", state.trace_id, ctx.Eip, state.producer_class_ptr, values[0], values[1], values[2], values[3], values[4], values[5], step_number);
+
+    bool logged_change = false;
+    for (size_t i = 0; i < 6; ++i)
+    {
+        if (values[i] == state.producer_last_values[i])
+            continue;
+
+        const uintptr_t slot_addr = state.producer_class_ptr + ((i == 0 ? 0 : (static_cast<uintptr_t>(i + 1) * sizeof(uint32_t))));
+        log_line(
+            "producer_class_field_change trace=%llu step=%d eip=0x%08lX class=0x%08lX field=%s addr=0x%08lX old=0x%08lX new=0x%08lX delta_from_arm_ms=%lu first_change=%d",
+            state.trace_id,
+            step_number,
+            static_cast<unsigned long>(ctx.Eip),
+            static_cast<unsigned long>(state.producer_class_ptr),
+            producer_class_field_label(i),
+            static_cast<unsigned long>(slot_addr),
+            static_cast<unsigned long>(state.producer_last_values[i]),
+            static_cast<unsigned long>(values[i]),
+            static_cast<unsigned long>(GetTickCount() - state.producer_arm_tick),
+            state.producer_field_changed[i] ? 0 : 1);
+        state.producer_last_values[i] = values[i];
+        if (!state.producer_field_changed[i])
+        {
+            state.producer_field_changed[i] = true;
+            state.producer_any_change = true;
+        }
+        logged_change = true;
+    }
+
+    if (logged_change)
+    {
+        const CallerSelection sel = capture_relevant_caller();
+        log_backtrace_selection(0, sel, "producer_class_change", "producer_class_trace");
+    }
+}
+
+bool maybe_prime_bridge_producer_candidate_locked(StepTraceState& state, const CONTEXT& ctx, int step_number)
+{
+    if (state.producer_initialized)
+        return false;
+
+    struct CandidateReg
+    {
+        const char* name;
+        uintptr_t value;
+    };
+
+    const CandidateReg candidates[] = {
+        {"ecx", ctx.Ecx},
+        {"eax", ctx.Eax},
+        {"esi", ctx.Esi},
+        {"edi", ctx.Edi},
+    };
+
+    for (const auto& candidate : candidates)
+    {
+        if (!candidate.value)
+            continue;
+
+        uint32_t class_head = 0;
+        uint32_t class_slot2 = 0;
+        uint32_t class_slot3 = 0;
+        uint32_t class_slot4 = 0;
+        uint32_t class_slot5 = 0;
+        uint32_t class_slot6 = 0;
+        if (!capture_producer_class_values(candidate.value, &class_head, &class_slot2, &class_slot3, &class_slot4, &class_slot5, &class_slot6))
+            continue;
+        if (class_slot5 == 0 && class_slot6 == 0)
+            continue;
+
+        prime_producer_class_trace_state_locked(state, state.trace_id, ctx, candidate.value);
+        log_line(
+            "bridge_first_producer_candidate_birth trace=%llu step=%d eip=0x%08lX reg=%s class=0x%08lX class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX class_plus6=0x%08lX",
+            state.trace_id,
+            step_number,
+            static_cast<unsigned long>(ctx.Eip),
+            candidate.name,
+            static_cast<unsigned long>(candidate.value),
+            static_cast<unsigned long>(class_head),
+            static_cast<unsigned long>(class_slot2),
+            static_cast<unsigned long>(class_slot3),
+            static_cast<unsigned long>(class_slot4),
+            static_cast<unsigned long>(class_slot5),
+            static_cast<unsigned long>(class_slot6));
+        const CallerSelection sel = capture_relevant_caller();
+        log_backtrace_selection(0, sel, "bridge_first_producer_candidate", "bridge_to_first_producer_flow");
+
+        g_seed_normalization = SeedNormalizationState {};
+        g_seed_normalization.active = true;
+        g_seed_normalization.trace_id = state.trace_id;
+        g_seed_normalization.birth_tick = GetTickCount();
+        g_seed_normalization.seed_ptr = candidate.value;
+        g_seed_normalization.birth_eip = ctx.Eip;
+        g_seed_normalization.birth_reg = candidate.name;
+        capture_u32_slots(candidate.value, 7, g_seed_normalization.seed_slots);
+        log_seed_normalization_core("seed_birth", state.trace_id, ctx.Eip, candidate.value, g_seed_normalization.seed_slots);
+        log_consumer_anchor_snapshot("seed_to_first_producer_seed_birth", "seed_birth", candidate.value, 0, 8);
+
+        if (g_producer_compact_override.stop_after_bridge_candidate_birth)
+            state.force_complete = true;
+        return true;
+    }
+
+    return false;
+}
+
+void prime_entry_wrapper_trace_state_locked(StepTraceState& state, const CONTEXT& ctx)
+{
+    state.wrapper_base = ctx.Edi;
+    state.wrapper_arm_tick = GetTickCount();
+    state.wrapper_initialized = false;
+    state.wrapper_prepopulated = false;
+    state.wrapper_any_change = false;
+    std::fill(std::begin(state.wrapper_initial_values), std::end(state.wrapper_initial_values), 0);
+    std::fill(std::begin(state.wrapper_last_values), std::end(state.wrapper_last_values), 0);
+    std::fill(std::begin(state.wrapper_slot_changed), std::end(state.wrapper_slot_changed), false);
+
+    if (!state.wrapper_base)
+        return;
+
+    uint32_t minus3 = 0;
+    uint32_t minus1 = 0;
+    uint32_t plus3 = 0;
+    if (!capture_entry_wrapper_values(state.wrapper_base, &minus3, &minus1, &plus3))
+        return;
+
+    state.wrapper_initialized = true;
+    state.wrapper_initial_values[0] = minus3;
+    state.wrapper_initial_values[1] = minus1;
+    state.wrapper_initial_values[2] = plus3;
+    state.wrapper_last_values[0] = minus3;
+    state.wrapper_last_values[1] = minus1;
+    state.wrapper_last_values[2] = plus3;
+    state.wrapper_prepopulated = (minus3 != 0 || minus1 != 0 || plus3 != 0);
+
+    log_entry_wrapper_snapshot("entry_arm", state.trace_id, ctx.Eip, state.wrapper_base, minus3, minus1, plus3);
+    log_line(
+        "entry_wrapper_trace_armed trace=%llu base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX prepopulated=%d",
+        state.trace_id,
+        static_cast<unsigned long>(state.wrapper_base),
+        static_cast<unsigned long>(minus3),
+        static_cast<unsigned long>(minus1),
+        static_cast<unsigned long>(plus3),
+        state.wrapper_prepopulated ? 1 : 0);
+
+    if (state.wrapper_prepopulated)
+    {
+        log_line(
+            "entry_wrapper_prepopulated trace=%llu base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX",
+            state.trace_id,
+            static_cast<unsigned long>(state.wrapper_base),
+            static_cast<unsigned long>(minus3),
+            static_cast<unsigned long>(minus1),
+            static_cast<unsigned long>(plus3));
+        const CallerSelection sel = capture_relevant_caller();
+        log_backtrace_selection(0, sel, "entry_wrapper_prepopulated", "asset_lookup_entry");
+    }
+}
+
+void maybe_apply_entry_wrapper_override(unsigned long long trace_id, uintptr_t eip, uintptr_t wrapper_base, const std::string& point_label, unsigned hit)
+{
+    if (!g_entry_wrapper_override.enabled || !wrapper_base)
+        return;
+    if (!g_entry_wrapper_override.apply_label.empty() && point_label != g_entry_wrapper_override.apply_label)
+        return;
+    if (hit != g_entry_wrapper_override.target_hit)
+        return;
+    if (g_entry_wrapper_override_applied.exchange(true))
+        return;
+
+    const uintptr_t minus1_addr = wrapper_base + static_cast<intptr_t>(-1 * static_cast<int>(sizeof(uint32_t)));
+    const uintptr_t plus3_addr = wrapper_base + static_cast<intptr_t>(3 * static_cast<int>(sizeof(uint32_t)));
+    uint32_t old_minus1 = 0;
+    uint32_t old_plus3 = 0;
+    safe_copy_memory(minus1_addr, &old_minus1, sizeof(old_minus1));
+    safe_copy_memory(plus3_addr, &old_plus3, sizeof(old_plus3));
+
+    const uint32_t target_minus1 = g_entry_wrapper_override.use_minus1_rva
+        ? static_cast<uint32_t>(rva_to_va(g_entry_wrapper_override.minus1_rva))
+        : g_entry_wrapper_override.minus1_value;
+    const uint32_t target_plus3 = g_entry_wrapper_override.use_plus3_rva
+        ? static_cast<uint32_t>(rva_to_va(g_entry_wrapper_override.plus3_rva))
+        : g_entry_wrapper_override.plus3_value;
+
+    bool wrote_any = false;
+    if (g_entry_wrapper_override.patch_minus1)
+    {
+        DWORD old = 0;
+        VirtualProtect(reinterpret_cast<void*>(minus1_addr), sizeof(uint32_t), PAGE_READWRITE, &old);
+        std::memcpy(reinterpret_cast<void*>(minus1_addr), &target_minus1, sizeof(uint32_t));
+        DWORD restore = 0;
+        VirtualProtect(reinterpret_cast<void*>(minus1_addr), sizeof(uint32_t), old, &restore);
+        wrote_any = true;
+    }
+    if (g_entry_wrapper_override.patch_plus3)
+    {
+        DWORD old = 0;
+        VirtualProtect(reinterpret_cast<void*>(plus3_addr), sizeof(uint32_t), PAGE_READWRITE, &old);
+        std::memcpy(reinterpret_cast<void*>(plus3_addr), &target_plus3, sizeof(uint32_t));
+        DWORD restore = 0;
+        VirtualProtect(reinterpret_cast<void*>(plus3_addr), sizeof(uint32_t), old, &restore);
+        wrote_any = true;
+    }
+
+    uint32_t new_minus1 = 0;
+    uint32_t new_plus3 = 0;
+    safe_copy_memory(minus1_addr, &new_minus1, sizeof(new_minus1));
+    safe_copy_memory(plus3_addr, &new_plus3, sizeof(new_plus3));
+
+    log_line(
+        "entry_wrapper_override_apply trace=%llu eip=0x%08lX point=%s hit=%u base=0x%08lX label=%s patch_minus1=%d old_minus1=0x%08lX new_minus1=0x%08lX patch_plus3=%d old_plus3=0x%08lX new_plus3=0x%08lX wrote_any=%d",
+        trace_id,
+        static_cast<unsigned long>(eip),
+        point_label.c_str(),
+        hit,
+        static_cast<unsigned long>(wrapper_base),
+        g_entry_wrapper_override.label.empty() ? "<none>" : g_entry_wrapper_override.label.c_str(),
+        g_entry_wrapper_override.patch_minus1 ? 1 : 0,
+        static_cast<unsigned long>(old_minus1),
+        static_cast<unsigned long>(new_minus1),
+        g_entry_wrapper_override.patch_plus3 ? 1 : 0,
+        static_cast<unsigned long>(old_plus3),
+        static_cast<unsigned long>(new_plus3),
+        wrote_any ? 1 : 0);
+
+    uint32_t minus3 = 0;
+    uint32_t minus1 = 0;
+    uint32_t plus3 = 0;
+    if (capture_entry_wrapper_values(wrapper_base, &minus3, &minus1, &plus3))
+        log_entry_wrapper_snapshot("override_post_patch", trace_id, eip, wrapper_base, minus3, minus1, plus3, -1);
+}
+
+void maybe_apply_producer_compact_override(unsigned hit, unsigned long long trace_id, const std::string& path, CONTEXT& ctx, uintptr_t class_ptr, uint32_t class_head, uint32_t* class_slot2, uint32_t* class_slot3, uint32_t* class_slot4, uint32_t* class_slot5, uint32_t* class_slot6)
+{
+    if (!g_producer_compact_override.enabled || !class_ptr)
+        return;
+
+    uint32_t observed_slot2 = 0;
+    uint32_t observed_slot3 = 0;
+    uint32_t observed_slot4 = 0;
+    uint32_t observed_slot5 = 0;
+    uint32_t observed_slot6 = 0;
+    safe_copy_memory(class_ptr + (2 * sizeof(uint32_t)), &observed_slot2, sizeof(observed_slot2));
+    safe_copy_memory(class_ptr + (3 * sizeof(uint32_t)), &observed_slot3, sizeof(observed_slot3));
+    safe_copy_memory(class_ptr + (4 * sizeof(uint32_t)), &observed_slot4, sizeof(observed_slot4));
+    safe_copy_memory(class_ptr + (5 * sizeof(uint32_t)), &observed_slot5, sizeof(observed_slot5));
+    safe_copy_memory(class_ptr + (6 * sizeof(uint32_t)), &observed_slot6, sizeof(observed_slot6));
+
+    const bool has_patch =
+        g_producer_compact_override.patch_pointer_swap_34 ||
+        g_producer_compact_override.patch_pointer_family_from_initial ||
+        g_producer_compact_override.patch_class_head_from_initial ||
+        g_producer_compact_override.patch_class_head ||
+        g_producer_compact_override.patch_class_plus2_from_initial ||
+        g_producer_compact_override.patch_class_plus2 ||
+        g_producer_compact_override.patch_class_plus3_from_initial ||
+        g_producer_compact_override.patch_class_plus3 ||
+        g_producer_compact_override.patch_class_plus4_from_initial ||
+        g_producer_compact_override.patch_class_plus4 ||
+        g_producer_compact_override.patch_class_plus5_from_initial ||
+        g_producer_compact_override.patch_class_plus5 ||
+        g_producer_compact_override.patch_class_plus6;
+
+    unsigned distinct_index = 0;
+    if (g_producer_compact_override.target_first_distinct_after_initial)
+    {
+        if (!g_producer_compact_override.initial_family_seen)
+        {
+            g_producer_compact_override.initial_family_seen = true;
+            g_producer_compact_override.initial_class_ptr = class_ptr;
+            g_producer_compact_override.initial_class_head = class_head;
+            g_producer_compact_override.initial_class_slot2 = observed_slot2;
+            g_producer_compact_override.initial_class_slot3 = observed_slot3;
+            g_producer_compact_override.initial_class_slot4 = observed_slot4;
+            g_producer_compact_override.initial_class_slot5 = observed_slot5;
+            log_line(
+                "producer_compact_override_baseline mode=%s hit=%u class=0x%08lX class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX label=%s",
+                producer_compact_target_mode_name(),
+                hit,
+                static_cast<unsigned long>(class_ptr),
+                static_cast<unsigned long>(class_head),
+                static_cast<unsigned long>(observed_slot2),
+                static_cast<unsigned long>(observed_slot3),
+                static_cast<unsigned long>(observed_slot4),
+                static_cast<unsigned long>(observed_slot5),
+                g_producer_compact_override.label.empty() ? "<none>" : g_producer_compact_override.label.c_str());
+            return;
+        }
+
+        if (class_ptr == g_producer_compact_override.initial_class_ptr &&
+            class_head == g_producer_compact_override.initial_class_head)
+        {
+            return;
+        }
+
+        distinct_index = 1;
+    }
+    else
+    {
+        if (hit != g_producer_compact_override.target_hit)
+            return;
+    }
+
+    if (g_producer_compact_override.trace_target_family_steps &&
+        !g_producer_class_trace_started.exchange(true) &&
+        g_step_traces.find(GetCurrentThreadId()) == g_step_traces.end())
+    {
+        log_line(
+            "producer_class_trace_target hit=%u target_mode=%s distinct_index=%u eip=0x%08lX class=0x%08lX class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX class_plus6=0x%08lX label=%s",
+            hit,
+            producer_compact_target_mode_name(),
+            distinct_index,
+            static_cast<unsigned long>(ctx.Eip),
+            static_cast<unsigned long>(class_ptr),
+            static_cast<unsigned long>(class_head),
+            static_cast<unsigned long>(observed_slot2),
+            static_cast<unsigned long>(observed_slot3),
+            static_cast<unsigned long>(observed_slot4),
+            static_cast<unsigned long>(observed_slot5),
+            static_cast<unsigned long>(observed_slot6),
+            g_producer_compact_override.label.empty() ? "<none>" : g_producer_compact_override.label.c_str());
+        begin_step_trace_locked(GetCurrentThreadId(), "producer_target_family_flow", trace_id, path, ctx.Eip, kProducerClassStepTraceInstructions);
+        auto step_state_it = g_step_traces.find(GetCurrentThreadId());
+        if (step_state_it != g_step_traces.end())
+            prime_producer_class_trace_state_locked(step_state_it->second, trace_id, ctx, class_ptr);
+        ctx.EFlags |= 0x100u;
+        log_line(
+            "branch_trace_request kind=producer_target_family_flow start=0x%08lX steps=%d trace=%llu path=%s",
+            static_cast<unsigned long>(ctx.Eip),
+            kProducerClassStepTraceInstructions,
+            trace_id,
+            path.c_str());
+    }
+
+    if (!has_patch)
+        return;
+
+    if (g_producer_compact_override_applied.exchange(true))
+        return;
+
+    const uintptr_t class_plus5_addr = class_ptr + (5 * sizeof(uint32_t));
+    const uintptr_t class_plus6_addr = class_ptr + (6 * sizeof(uint32_t));
+    const uintptr_t class_head_addr = class_ptr;
+    const uintptr_t class_plus2_addr = class_ptr + (2 * sizeof(uint32_t));
+    const uintptr_t class_plus3_addr = class_ptr + (3 * sizeof(uint32_t));
+    const uintptr_t class_plus4_addr = class_ptr + (4 * sizeof(uint32_t));
+    uint32_t old_head = class_head;
+    uint32_t old_plus2 = observed_slot2;
+    uint32_t old_plus3 = observed_slot3;
+    uint32_t old_plus4 = observed_slot4;
+    uint32_t old_plus5 = 0;
+    uint32_t old_plus6 = 0;
+    safe_copy_memory(class_plus5_addr, &old_plus5, sizeof(old_plus5));
+    safe_copy_memory(class_plus6_addr, &old_plus6, sizeof(old_plus6));
+
+    auto write_u32 = [](uintptr_t addr, uint32_t value) {
+        DWORD old = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(addr), sizeof(uint32_t), PAGE_READWRITE, &old))
+            return false;
+        std::memcpy(reinterpret_cast<void*>(addr), &value, sizeof(uint32_t));
+        DWORD restore = 0;
+        VirtualProtect(reinterpret_cast<void*>(addr), sizeof(uint32_t), old, &restore);
+        return true;
+    };
+
+    bool wrote_any = false;
+    const bool patch_head_from_initial = g_producer_compact_override.patch_pointer_family_from_initial || g_producer_compact_override.patch_class_head_from_initial;
+    const bool patch_plus2_from_initial = g_producer_compact_override.patch_pointer_family_from_initial || g_producer_compact_override.patch_class_plus2_from_initial;
+    const bool patch_plus3_from_initial = g_producer_compact_override.patch_pointer_family_from_initial || g_producer_compact_override.patch_class_plus3_from_initial;
+    const bool patch_plus4_from_initial = g_producer_compact_override.patch_pointer_family_from_initial || g_producer_compact_override.patch_class_plus4_from_initial;
+    const bool patch_plus5_from_initial = g_producer_compact_override.patch_class_plus5_from_initial;
+
+    if (patch_head_from_initial)
+        wrote_any = write_u32(class_head_addr, g_producer_compact_override.initial_class_head) || wrote_any;
+    if (patch_plus2_from_initial)
+        wrote_any = write_u32(class_plus2_addr, g_producer_compact_override.initial_class_slot2) || wrote_any;
+    if (patch_plus3_from_initial)
+        wrote_any = write_u32(class_plus3_addr, g_producer_compact_override.initial_class_slot3) || wrote_any;
+    if (patch_plus4_from_initial)
+        wrote_any = write_u32(class_plus4_addr, g_producer_compact_override.initial_class_slot4) || wrote_any;
+    if (patch_plus5_from_initial)
+        wrote_any = write_u32(class_plus5_addr, g_producer_compact_override.initial_class_slot5) || wrote_any;
+
+    if (g_producer_compact_override.patch_class_head)
+        wrote_any = write_u32(class_head_addr, g_producer_compact_override.class_head_value) || wrote_any;
+    if (g_producer_compact_override.patch_class_plus2)
+        wrote_any = write_u32(class_plus2_addr, g_producer_compact_override.class_plus2_value) || wrote_any;
+    if (g_producer_compact_override.patch_class_plus3)
+        wrote_any = write_u32(class_plus3_addr, g_producer_compact_override.class_plus3_value) || wrote_any;
+    if (g_producer_compact_override.patch_class_plus4)
+        wrote_any = write_u32(class_plus4_addr, g_producer_compact_override.class_plus4_value) || wrote_any;
+
+    if (g_producer_compact_override.patch_pointer_family_from_initial)
+    {
+        // already applied above through the granular role flags
+    }
+    if (g_producer_compact_override.patch_pointer_swap_34)
+    {
+        wrote_any = write_u32(class_plus3_addr, old_plus4) || wrote_any;
+        wrote_any = write_u32(class_plus4_addr, old_plus3) || wrote_any;
+    }
+    if (g_producer_compact_override.patch_class_plus5)
+    {
+        wrote_any = write_u32(class_plus5_addr, g_producer_compact_override.class_plus5_value) || wrote_any;
+    }
+    if (g_producer_compact_override.patch_class_plus6)
+    {
+        wrote_any = write_u32(class_plus6_addr, g_producer_compact_override.class_plus6_value) || wrote_any;
+    }
+
+    uint32_t new_head = 0;
+    uint32_t new_plus2 = 0;
+    uint32_t new_plus3 = 0;
+    uint32_t new_plus4 = 0;
+    safe_copy_memory(class_head_addr, &new_head, sizeof(new_head));
+    safe_copy_memory(class_plus2_addr, &new_plus2, sizeof(new_plus2));
+    safe_copy_memory(class_plus3_addr, &new_plus3, sizeof(new_plus3));
+    safe_copy_memory(class_plus4_addr, &new_plus4, sizeof(new_plus4));
+    uint32_t new_plus5 = 0;
+    uint32_t new_plus6 = 0;
+    safe_copy_memory(class_plus5_addr, &new_plus5, sizeof(new_plus5));
+    safe_copy_memory(class_plus6_addr, &new_plus6, sizeof(new_plus6));
+    if (class_slot2)
+        *class_slot2 = new_plus2;
+    if (class_slot3)
+        *class_slot3 = new_plus3;
+    if (class_slot4)
+        *class_slot4 = new_plus4;
+    if (class_slot5)
+        *class_slot5 = new_plus5;
+    if (class_slot6)
+        *class_slot6 = new_plus6;
+    class_head = new_head;
+
+    log_line(
+        "producer_compact_override_apply hit=%u target_mode=%s target_hit=%u distinct_index=%u initial_class=0x%08lX initial_class_head=0x%08lX initial_class_plus2=0x%08lX initial_class_plus3=0x%08lX initial_class_plus4=0x%08lX initial_class_plus5=0x%08lX class=0x%08lX class_head=0x%08lX label=%s patch_pointer_swap_34=%d patch_pointer_family_from_initial=%d old_class_head=0x%08lX new_class_head=0x%08lX old_class_plus2=0x%08lX new_class_plus2=0x%08lX old_class_plus3=0x%08lX new_class_plus3=0x%08lX old_class_plus4=0x%08lX new_class_plus4=0x%08lX patch_class_plus5_from_initial=%d patch_class_plus5=%d old_class_plus5=0x%08lX new_class_plus5=0x%08lX patch_class_plus6=%d old_class_plus6=0x%08lX new_class_plus6=0x%08lX wrote_any=%d",
+        hit,
+        producer_compact_target_mode_name(),
+        g_producer_compact_override.target_hit,
+        distinct_index,
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_ptr),
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_head),
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_slot2),
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_slot3),
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_slot4),
+        static_cast<unsigned long>(g_producer_compact_override.initial_class_slot5),
+        static_cast<unsigned long>(class_ptr),
+        static_cast<unsigned long>(new_head),
+        g_producer_compact_override.label.empty() ? "<none>" : g_producer_compact_override.label.c_str(),
+        g_producer_compact_override.patch_pointer_swap_34 ? 1 : 0,
+        g_producer_compact_override.patch_pointer_family_from_initial ? 1 : 0,
+        static_cast<unsigned long>(old_head),
+        static_cast<unsigned long>(new_head),
+        static_cast<unsigned long>(old_plus2),
+        static_cast<unsigned long>(new_plus2),
+        static_cast<unsigned long>(old_plus3),
+        static_cast<unsigned long>(new_plus3),
+        static_cast<unsigned long>(old_plus4),
+        static_cast<unsigned long>(new_plus4),
+        g_producer_compact_override.patch_class_plus5_from_initial ? 1 : 0,
+        g_producer_compact_override.patch_class_plus5 ? 1 : 0,
+        static_cast<unsigned long>(old_plus5),
+        static_cast<unsigned long>(new_plus5),
+        g_producer_compact_override.patch_class_plus6 ? 1 : 0,
+        static_cast<unsigned long>(old_plus6),
+        static_cast<unsigned long>(new_plus6),
+        wrote_any ? 1 : 0);
+}
+
+void maybe_arm_follow_on_render_trace_after_asset_lookup()
+{
+    if (g_probe_mode != ProbeMode::ProducerCompactOverrideFocus)
+        return;
+    if (!g_producer_compact_override.follow_on_render)
+        return;
+    if (g_producer_follow_on_render_armed.exchange(true))
+        return;
+    // Called from the breakpoint handler while g_state_mutex is already held.
+    // Taking it again here deadlocks before any downstream render traces arm.
+
+    struct FollowOnSpec
+    {
+        const char* label;
+        DWORD rva;
+        BYTE bytes[10];
+        size_t size;
+        int max_hits;
+    };
+
+    static const FollowOnSpec specs[] = {
+        {"consumer_render_table", kConsumerRenderTableRva, {0x66, 0x83, 0x3E, 0x00, 0x75, 0x7C, 0xEB, 0x04}, 8, 4},
+        {"consumer_submit_flags", kConsumerSubmitFlagsRva, {0xF7, 0x86, 0x20, 0xFF, 0xFF, 0xFF, 0x00, 0x20, 0x00, 0x00}, 10, 1},
+    };
+
+    for (const auto& spec : specs)
+    {
+        const uintptr_t addr = rva_to_va(spec.rva);
+        if (!bytes_match(addr, spec.bytes, spec.size))
+        {
+            log_line("producer_follow_on_trace_skip label=%s addr=0x%08lX reason=signature_mismatch",
+                spec.label,
+                static_cast<unsigned long>(addr));
+            continue;
+        }
+        arm_exec_trace_locked(spec.label, addr, 0, "producer_override_follow_on", spec.max_hits);
+        log_line("producer_follow_on_trace_arm label=%s addr=0x%08lX max_hits=%d",
+            spec.label,
+            static_cast<unsigned long>(addr),
+            spec.max_hits);
+    }
+}
+
+void trace_entry_wrapper_step_locked(StepTraceState& state, const CONTEXT& ctx, int step_number)
+{
+    if (!state.wrapper_initialized || !state.wrapper_base)
+        return;
+
+    uint32_t values[3] {};
+    if (!capture_entry_wrapper_values(state.wrapper_base, &values[0], &values[1], &values[2]))
+        return;
+
+    log_entry_wrapper_snapshot("step", state.trace_id, ctx.Eip, state.wrapper_base, values[0], values[1], values[2], step_number);
+
+    bool logged_change = false;
+    for (int i = 0; i < 3; ++i)
+    {
+        if (values[i] == state.wrapper_last_values[i])
+            continue;
+
+        const int slot = kEntryWrapperTrackedSlots[i];
+        const uintptr_t slot_addr = state.wrapper_base + static_cast<intptr_t>(slot * static_cast<int>(sizeof(uint32_t)));
+        log_line(
+            "entry_wrapper_field_change trace=%llu step=%d eip=0x%08lX base=0x%08lX slot=%+d label=%s addr=0x%08lX old=0x%08lX new=0x%08lX delta_from_entry_ms=%lu first_change=%d",
+            state.trace_id,
+            step_number,
+            static_cast<unsigned long>(ctx.Eip),
+            static_cast<unsigned long>(state.wrapper_base),
+            slot,
+            entry_wrapper_slot_label(slot),
+            static_cast<unsigned long>(slot_addr),
+            static_cast<unsigned long>(state.wrapper_last_values[i]),
+            static_cast<unsigned long>(values[i]),
+            static_cast<unsigned long>(GetTickCount() - state.wrapper_arm_tick),
+            state.wrapper_slot_changed[i] ? 0 : 1);
+        state.wrapper_last_values[i] = values[i];
+        if (!state.wrapper_slot_changed[i])
+        {
+            state.wrapper_slot_changed[i] = true;
+            state.wrapper_any_change = true;
+        }
+        logged_change = true;
+    }
+
+    if (logged_change)
+    {
+        const CallerSelection sel = capture_relevant_caller();
+        log_backtrace_selection(0, sel, "entry_wrapper_change", "asset_lookup_entry");
+    }
+}
+
 void add_policy_field_watch_locked(const char* phase, uintptr_t selector_root, int slot)
 {
     if (!selector_root)
@@ -5765,10 +7535,12 @@ DWORD WINAPI consumer_arm_thread(void*)
     const DWORD initial_delay_ms = consumer_arm_initial_delay_ms();
     const DWORD retry_delay_ms =
         g_probe_mode == ProbeMode::XanimAssetLookupFocus ? 500 :
+        (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus ? 500 :
         (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath ? 50 :
-        (is_minimal_consumer_focus_mode() ? 2000 : kConsumerArmRetryDelayMs));
+        (is_minimal_consumer_focus_mode() ? 2000 : kConsumerArmRetryDelayMs)));
     const int max_attempts =
-        g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath ? 40 : kConsumerArmMaxAttempts;
+        g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath ? 40 :
+        (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus ? 6 : kConsumerArmMaxAttempts);
     log_line("consumer_arm_thread delay_ms=%lu retry_ms=%lu max_attempts=%d",
         static_cast<unsigned long>(initial_delay_ms),
         static_cast<unsigned long>(retry_delay_ms),
@@ -5802,6 +7574,95 @@ DWORD WINAPI consumer_arm_thread(void*)
         if (attempt < max_attempts)
             Sleep(retry_delay_ms);
     }
+    return 0;
+}
+
+DWORD WINAPI selector_root_temporal_thread(void*)
+{
+    const DWORD start_tick = GetTickCount();
+    const DWORD scan_window_ms = 45000;
+    const DWORD scan_sleep_ms = 100;
+    const size_t chunk_size = 0x10000;
+    log_line("selector_root_temporal_thread_started window_ms=%lu sleep_ms=%lu",
+        static_cast<unsigned long>(scan_window_ms),
+        static_cast<unsigned long>(scan_sleep_ms));
+
+    while ((GetTickCount() - start_tick) < scan_window_ms)
+    {
+        if (g_consumer_first_hit_logged.load())
+            break;
+
+        uintptr_t cursor = 0;
+        while (true)
+        {
+            MEMORY_BASIC_INFORMATION mbi {};
+            if (!VirtualQuery(reinterpret_cast<void*>(cursor), &mbi, sizeof(mbi)))
+                break;
+
+            const uintptr_t region_base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            const uintptr_t region_end = region_base + mbi.RegionSize;
+            const bool good_region =
+                region_is_readable(mbi) &&
+                mbi.Type == MEM_PRIVATE &&
+                mbi.RegionSize >= 28 &&
+                mbi.RegionSize <= 0x02000000;
+            if (good_region)
+            {
+                static constexpr int candidate_offsets[] = {-8, -4, 0, 4, 8};
+                uintptr_t scan_cursor = region_base;
+                while (scan_cursor + 28 <= region_end)
+                {
+                    const size_t to_copy = static_cast<size_t>(std::min<uintptr_t>(region_end - scan_cursor, chunk_size));
+                    if (to_copy < (9 * sizeof(uint32_t)) || !pointer_readable(scan_cursor, std::min<size_t>(to_copy, 64)))
+                    {
+                        scan_cursor += chunk_size;
+                        continue;
+                    }
+                    std::vector<uint8_t> buffer(to_copy, 0);
+                    if (!safe_copy_memory(scan_cursor, buffer.data(), to_copy))
+                    {
+                        scan_cursor += chunk_size;
+                        continue;
+                    }
+
+                    for (size_t offset = 24; offset + 4 <= to_copy; offset += sizeof(uint32_t))
+                    {
+                        const uint32_t marker = *reinterpret_cast<const uint32_t*>(buffer.data() + offset);
+                        if (!is_known_materialization_plus6_value(marker))
+                            continue;
+
+                        const uintptr_t base_candidate = scan_cursor + offset - (6 * sizeof(uint32_t));
+                        for (int delta : candidate_offsets)
+                        {
+                            const uintptr_t candidate = base_candidate + delta;
+                            if (candidate < region_base || candidate + (9 * sizeof(uint32_t)) > region_end)
+                                continue;
+
+                            char reason[32] {};
+                            std::snprintf(reason, sizeof(reason), "temporal_scan_%+d", delta);
+                            std::lock_guard<std::mutex> lock(g_state_mutex);
+                            if (g_temporal_selector_roots.size() < 128 || g_temporal_selector_roots.find(candidate) != g_temporal_selector_roots.end())
+                                record_temporal_selector_root_candidate_locked(candidate, reason);
+                        }
+                    }
+
+                    scan_cursor += to_copy;
+                }
+            }
+
+            if (region_end <= cursor)
+                break;
+            cursor = region_end;
+        }
+
+        Sleep(scan_sleep_ms);
+    }
+
+    log_line("selector_root_temporal_thread_complete first_hit=%d tracked=%u elapsed_ms=%lu",
+        g_consumer_first_hit_logged.load() ? 1 : 0,
+        static_cast<unsigned>(g_temporal_selector_roots.size()),
+        static_cast<unsigned long>(GetTickCount() - start_tick));
+    g_selector_root_temporal_started = false;
     return 0;
 }
 
@@ -5911,12 +7772,16 @@ const char* consumer_label_for_addr(uintptr_t addr)
 
 void arm_opacity_focus_consumers_locked(unsigned long long trace_id, const std::string& path)
 {
-    arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), trace_id, path, 12);
+    const int render_hits = g_probe_mode == ProbeMode::ViewmodelRenderFocus ? 1 : 12;
+    const int submit_hits = g_probe_mode == ProbeMode::ViewmodelRenderFocus ? 1 : 4;
+    arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), trace_id, path, render_hits);
+    arm_exec_trace_locked("consumer_submit_flags", rva_to_va(kConsumerSubmitFlagsRva), trace_id, path, submit_hits);
     g_opacity_focus_consumers_armed = true;
-    log_line("opacity_focus_arm trace=%llu path=%s render_table=0x%08lX submit_flags=disabled",
+    log_line("opacity_focus_arm trace=%llu path=%s render_table=0x%08lX submit_flags=0x%08lX",
         trace_id,
         path.c_str(),
-        static_cast<unsigned long>(rva_to_va(kConsumerRenderTableRva)));
+        static_cast<unsigned long>(rva_to_va(kConsumerRenderTableRva)),
+        static_cast<unsigned long>(rva_to_va(kConsumerSubmitFlagsRva)));
 }
 
 void arm_opacity_focus_consumers(unsigned long long trace_id, const std::string& path)
@@ -6137,7 +8002,7 @@ int arm_consumer_exec_traces()
     bool asset_lookup_armed = false;
     for (const auto& spec : specs)
     {
-        if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+        if (is_render_only_focus_mode())
         {
             const std::string label = spec.label;
             if (label != "consumer_render_table" && label != "consumer_submit_flags")
@@ -6147,6 +8012,17 @@ int arm_consumer_exec_traces()
         {
             const std::string label = spec.label;
             if (label != "consumer_asset_class_lookup")
+                continue;
+        }
+        if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus)
+        {
+            const std::string label = spec.label;
+            if (label != "consumer_asset_class_lookup" &&
+                label != "consumer_render_table" &&
+                label != "consumer_submit_flags")
+                continue;
+            if (!g_producer_compact_override.arm_render_from_startup &&
+                (label == "consumer_render_table" || label == "consumer_submit_flags"))
                 continue;
         }
         if (is_materialization_writepath_mode())
@@ -6167,6 +8043,8 @@ int arm_consumer_exec_traces()
         int max_hits = 1;
         if (g_probe_mode == ProbeMode::XanimConsumerFocus && std::strcmp(spec.label, "consumer_render_table") == 0)
             max_hits = 4;
+        if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus && std::strcmp(spec.label, "consumer_render_table") == 0)
+            max_hits = 8;
         if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath && std::strcmp(spec.label, "consumer_render_table") == 0)
             max_hits = 4;
         if (is_minimal_consumer_focus_mode() && std::strcmp(spec.label, "consumer_asset_class_lookup") == 0)
@@ -6176,10 +8054,29 @@ int arm_consumer_exec_traces()
             asset_lookup_armed = g_exec_traces[addr].armed;
         armed_count += 1;
     }
-    if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath && !asset_lookup_armed)
+    if ((g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath ||
+         g_probe_mode == ProbeMode::ProducerCompactOverrideFocus) && !asset_lookup_armed)
         return 0;
-    if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath)
-        arm_asset_lookup_callsite_traces_locked();
+    if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath ||
+        g_probe_mode == ProbeMode::ProducerCompactOverrideFocus)
+    {
+        const uintptr_t asset_lookup_addr = rva_to_va(kConsumerAssetClassLookupRva);
+        const uintptr_t entry = find_function_prologue_near(asset_lookup_addr, 0x200);
+        if (entry)
+        {
+            const int entry_hits = g_probe_mode == ProbeMode::ProducerCompactOverrideFocus ? 4 : 2;
+            arm_exec_trace_locked("consumer_asset_lookup_entry", entry, 0, "consumer_probe", entry_hits);
+            log_line("asset_lookup_entry_arm addr=0x%08lX target=0x%08lX",
+                static_cast<unsigned long>(entry),
+                static_cast<unsigned long>(asset_lookup_addr));
+        }
+        else
+        {
+            log_line("asset_lookup_entry_not_found target=0x%08lX", static_cast<unsigned long>(asset_lookup_addr));
+        }
+        if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath)
+            arm_asset_lookup_callsite_traces_locked();
+    }
     return armed_count;
 }
 
@@ -6195,12 +8092,17 @@ void log_consumer_render_state(const char* label, const CONTEXT& ctx)
         uint32_t owner_plus_4 = 0;
         uint16_t class_word = 0;
         uint32_t class_head = 0;
+        uint32_t class_slot2 = 0;
+        uint32_t class_slot3 = 0;
+        uint32_t class_slot4 = 0;
+        uint32_t class_slot5 = 0;
+        uint32_t class_slot6 = 0;
         if (ctx.Edi)
             safe_copy_memory(ctx.Edi + 4, &owner_plus_4, sizeof(owner_plus_4));
         if (ctx.Ecx)
         {
             safe_copy_memory(ctx.Ecx + 6, &class_word, sizeof(class_word));
-            safe_copy_memory(ctx.Ecx, &class_head, sizeof(class_head));
+            capture_producer_class_values(ctx.Ecx, &class_head, &class_slot2, &class_slot3, &class_slot4, &class_slot5, &class_slot6);
         }
 
         log_line(
@@ -6214,7 +8116,70 @@ void log_consumer_render_state(const char* label, const CONTEXT& ctx)
             static_cast<unsigned>(class_word),
             static_cast<unsigned>(ctx.Esi & 0xF));
 
-        if (minimal_consumer_focus)
+        if (g_seed_normalization.active && !g_seed_normalization.first_family_logged)
+        {
+            g_seed_normalization.first_family_logged = true;
+            uint32_t source_slots[7] {};
+            capture_u32_slots(ctx.Eax, 7, source_slots);
+            log_line(
+                "seed_to_first_producer_first_family trace=%llu delta_from_birth_ms=%lu seed=0x%08lX source=0x%08lX owner=0x%08lX owner_plus_4=0x%08lX class=0x%08lX source_matches_seed=%d owner_plus4_matches_seed=%d class_head=0x%08lX class_plus2=0x%08lX class_plus3=0x%08lX class_plus4=0x%08lX class_plus5=0x%08lX class_plus6=0x%08lX",
+                g_seed_normalization.trace_id,
+                static_cast<unsigned long>(GetTickCount() - g_seed_normalization.birth_tick),
+                static_cast<unsigned long>(g_seed_normalization.seed_ptr),
+                static_cast<unsigned long>(ctx.Eax),
+                static_cast<unsigned long>(ctx.Edi),
+                static_cast<unsigned long>(owner_plus_4),
+                static_cast<unsigned long>(ctx.Ecx),
+                ctx.Eax == g_seed_normalization.seed_ptr ? 1 : 0,
+                owner_plus_4 == g_seed_normalization.seed_ptr ? 1 : 0,
+                static_cast<unsigned long>(class_head),
+                class_slot2,
+                class_slot3,
+                class_slot4,
+                class_slot5,
+                class_slot6);
+            log_seed_normalization_core("first_family_source", g_seed_normalization.trace_id, ctx.Eip, ctx.Eax, source_slots);
+
+            log_line(
+                "seed_to_first_producer_seed_compare trace=%llu seed=0x%08lX source=0x%08lX slot0_changed=%d slot1_changed=%d slot2_changed=%d slot3_changed=%d slot4_changed=%d slot5_changed=%d slot6_changed=%d",
+                g_seed_normalization.trace_id,
+                static_cast<unsigned long>(g_seed_normalization.seed_ptr),
+                static_cast<unsigned long>(ctx.Eax),
+                source_slots[0] != g_seed_normalization.seed_slots[0] ? 1 : 0,
+                source_slots[1] != g_seed_normalization.seed_slots[1] ? 1 : 0,
+                source_slots[2] != g_seed_normalization.seed_slots[2] ? 1 : 0,
+                source_slots[3] != g_seed_normalization.seed_slots[3] ? 1 : 0,
+                source_slots[4] != g_seed_normalization.seed_slots[4] ? 1 : 0,
+                source_slots[5] != g_seed_normalization.seed_slots[5] ? 1 : 0,
+                source_slots[6] != g_seed_normalization.seed_slots[6] ? 1 : 0);
+            uint32_t source_minus4 = 0;
+            uint32_t source_minus3 = 0;
+            uint32_t source_minus2 = 0;
+            uint32_t source_minus1 = 0;
+            safe_copy_memory(ctx.Eax + static_cast<intptr_t>(-4 * static_cast<int>(sizeof(uint32_t))), &source_minus4, sizeof(source_minus4));
+            safe_copy_memory(ctx.Eax + static_cast<intptr_t>(-3 * static_cast<int>(sizeof(uint32_t))), &source_minus3, sizeof(source_minus3));
+            safe_copy_memory(ctx.Eax + static_cast<intptr_t>(-2 * static_cast<int>(sizeof(uint32_t))), &source_minus2, sizeof(source_minus2));
+            safe_copy_memory(ctx.Eax + static_cast<intptr_t>(-1 * static_cast<int>(sizeof(uint32_t))), &source_minus1, sizeof(source_minus1));
+            log_line(
+                "source_to_class_emission_neighborhood trace=%llu source=0x%08lX owner=0x%08lX class=0x%08lX minus4=0x%08lX minus3=0x%08lX minus2=0x%08lX minus1=0x%08lX owner_match_minus4=%d class_match_minus4=%d class_match_minus1=%d",
+                g_seed_normalization.trace_id,
+                static_cast<unsigned long>(ctx.Eax),
+                static_cast<unsigned long>(ctx.Edi),
+                static_cast<unsigned long>(ctx.Ecx),
+                static_cast<unsigned long>(source_minus4),
+                static_cast<unsigned long>(source_minus3),
+                static_cast<unsigned long>(source_minus2),
+                static_cast<unsigned long>(source_minus1),
+                source_minus4 == ctx.Edi ? 1 : 0,
+                source_minus4 == ctx.Ecx ? 1 : 0,
+                source_minus1 == ctx.Ecx ? 1 : 0);
+            if (ctx.Eax)
+                log_consumer_anchor_snapshot("seed_to_first_producer_source", "first_family", ctx.Eax, 4, 8);
+            if (ctx.Ecx)
+                log_consumer_anchor_snapshot("seed_to_first_producer_class", "first_family", ctx.Ecx, 0, 8);
+        }
+
+        if (minimal_consumer_focus && g_probe_mode != ProbeMode::ProducerCompactOverrideFocus)
         {
             if (ctx.Edi)
                 log_consumer_anchor_snapshot("asset_lookup_edi", "first_hit", ctx.Edi);
@@ -6289,7 +8254,8 @@ void log_consumer_render_state(const char* label, const CONTEXT& ctx)
             ctx.Esi + 8,
             ctx.Eax,
             ctx.Eax + 4);
-        if (minimal_consumer_focus)
+        const bool compact_render_focus = minimal_consumer_focus || g_probe_mode == ProbeMode::ViewmodelRenderFocus;
+        if (compact_render_focus)
         {
             log_line(
                 "consumer_focus_render_state_compact label=%s owning=0x%08lX render=0x%08lX render_plus_8=0x%08lX lookup=0x%08lX",
@@ -6363,14 +8329,17 @@ void log_consumer_render_state(const char* label, const CONTEXT& ctx)
             static_cast<unsigned long>(flag_addr),
             static_cast<unsigned long>(flags),
             static_cast<unsigned long>(flags & 0x00002000u));
-        if (flag_addr)
+        if (g_probe_mode != ProbeMode::ViewmodelRenderFocus && flag_addr)
         {
             log_pointer_info("render_submit_flag_addr", flag_addr);
             track_consumer_object_window("render_submit_flag_addr", flag_addr);
             log_consumer_dword_window_correlations("render_submit_flag_addr", flag_addr, 4, capture_dword_window_values(flag_addr));
         }
-        log_pointer_info("render_submit_esi", ctx.Esi);
-        log_pointer_info("render_submit_eax", ctx.Eax);
+        if (g_probe_mode != ProbeMode::ViewmodelRenderFocus)
+        {
+            log_pointer_info("render_submit_esi", ctx.Esi);
+            log_pointer_info("render_submit_eax", ctx.Eax);
+        }
     }
 }
 
@@ -6388,6 +8357,9 @@ void log_consumer_render_hit_context(unsigned hit, const CONTEXT& ctx)
         static_cast<unsigned long>(ctx.Esi),
         static_cast<unsigned long>(ctx.Esi + 8),
         static_cast<unsigned long>(ctx.Eax));
+
+    if (g_probe_mode == ProbeMode::ViewmodelRenderFocus)
+        return;
 
     if (hit <= 2)
     {
@@ -6981,7 +8953,9 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
 
         log_line("exec_trace_hit label=%s hit=%d late=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
             point.label.c_str(), point.hits, late_concurrent_hit ? 1 : 0, static_cast<unsigned long>(point.addr), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str());
-        if (is_minimal_consumer_focus_mode() &&
+        const bool compact_viewmodel_focus = g_probe_mode == ProbeMode::ViewmodelRenderFocus &&
+            (point.label == "consumer_render_table" || point.label == "consumer_submit_flags");
+        if ((is_minimal_consumer_focus_mode() || compact_viewmodel_focus) &&
             is_consumer_trace_label(point.label) &&
             !g_consumer_first_hit_logged.exchange(true))
         {
@@ -6992,25 +8966,128 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
                 point.trace_id,
                 point.path.c_str());
         }
-        log_register_block(ctx);
-        log_bytes_around("eip bytes", point.addr);
-        log_pointer_info("eax", ctx.Eax);
-        log_pointer_info("ebx", ctx.Ebx);
-        log_pointer_info("ecx", ctx.Ecx);
-        log_pointer_info("edx", ctx.Edx);
-        log_pointer_info("esi", ctx.Esi);
-        log_pointer_info("edi", ctx.Edi);
-        log_pointer_info("ebp", ctx.Ebp);
-        log_pointer_info("esp", ctx.Esp);
+        if (!compact_viewmodel_focus)
+        {
+            log_register_block(ctx);
+            log_bytes_around("eip bytes", point.addr);
+            log_pointer_info("eax", ctx.Eax);
+            log_pointer_info("ebx", ctx.Ebx);
+            log_pointer_info("ecx", ctx.Ecx);
+            log_pointer_info("edx", ctx.Edx);
+            log_pointer_info("esi", ctx.Esi);
+            log_pointer_info("edi", ctx.Edi);
+            log_pointer_info("ebp", ctx.Ebp);
+            log_pointer_info("esp", ctx.Esp);
+        }
         log_consumer_render_state(point.label.c_str(), ctx);
-        if (is_minimal_consumer_focus_mode() && point.label == "consumer_render_table")
+        if ((is_minimal_consumer_focus_mode() || compact_viewmodel_focus) && point.label == "consumer_render_table")
             log_consumer_render_hit_context(point.hits, ctx);
+        if (is_minimal_consumer_focus_mode() && point.label == "consumer_asset_lookup_entry")
+            log_consumer_asset_lookup_entry_hit_context(point.hits, ctx, point.trace_id, point.path);
+        if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus &&
+            g_producer_compact_override.enabled &&
+            g_producer_compact_override.trace_bridge_to_first_producer &&
+            point.label == "consumer_asset_lookup_entry" &&
+            point.hits == 1 &&
+            g_step_traces.find(GetCurrentThreadId()) == g_step_traces.end())
+        {
+            uint32_t bridge_minus3 = 0;
+            uint32_t bridge_minus1 = 0;
+            uint32_t bridge_plus3 = 0;
+            const bool have_wrapper = capture_entry_wrapper_values(ctx.Edi, &bridge_minus3, &bridge_minus1, &bridge_plus3);
+            const bool bucket_ok =
+                !g_producer_compact_override.require_bridge_bucket ||
+                (have_wrapper &&
+                 bridge_minus1 == g_producer_compact_override.bridge_required_minus1 &&
+                 bridge_plus3 == g_producer_compact_override.bridge_required_plus3);
+            if (bucket_ok)
+            {
+                const int trace_steps = g_producer_compact_override.bridge_trace_steps > 0
+                    ? static_cast<int>(g_producer_compact_override.bridge_trace_steps)
+                    : kBridgeToFirstProducerStepTraceInstructions;
+                begin_step_trace_locked(
+                    GetCurrentThreadId(),
+                    "bridge_to_first_producer_flow",
+                    point.trace_id,
+                    point.path,
+                    point.addr,
+                    trace_steps);
+                auto step_state_it = g_step_traces.find(GetCurrentThreadId());
+                if (step_state_it != g_step_traces.end())
+                    prime_entry_wrapper_trace_state_locked(step_state_it->second, ctx);
+                ctx.EFlags |= 0x100u;
+                log_line(
+                    "bridge_to_first_producer_trace_armed trace=%llu base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX steps=%d path=%s source=entry",
+                    point.trace_id,
+                    static_cast<unsigned long>(ctx.Edi),
+                    static_cast<unsigned long>(bridge_minus3),
+                    static_cast<unsigned long>(bridge_minus1),
+                    static_cast<unsigned long>(bridge_plus3),
+                    trace_steps,
+                    point.path.c_str());
+            }
+        }
         if (is_minimal_consumer_focus_mode() && point.label == "consumer_asset_class_lookup")
-            log_consumer_asset_lookup_hit_context(point.hits, ctx);
+            log_consumer_asset_lookup_hit_context(point.hits, point.trace_id, point.path, ctx);
         if (is_minimal_consumer_focus_mode() && point.label == "consumer_image_class_map")
             log_consumer_image_class_map_hit_context(point.hits, ctx);
         if (is_minimal_consumer_focus_mode() && point.label.rfind("consumer_upstream_ret_", 0) == 0)
             log_consumer_upstream_hit_context(point.label, point.hits, ctx);
+        if (g_probe_mode == ProbeMode::ProducerCompactOverrideFocus &&
+            g_producer_compact_override.enabled &&
+            g_producer_compact_override.trace_bridge_to_first_producer &&
+            point.label == "consumer_upstream_ret_00341F6C" &&
+            point.hits == 1 &&
+            g_step_traces.find(GetCurrentThreadId()) == g_step_traces.end())
+        {
+            uint32_t bridge_minus3 = 0;
+            uint32_t bridge_minus1 = 0;
+            uint32_t bridge_plus3 = 0;
+            const bool have_wrapper = capture_entry_wrapper_values(ctx.Edi, &bridge_minus3, &bridge_minus1, &bridge_plus3);
+            const bool bucket_ok =
+                !g_producer_compact_override.require_bridge_bucket ||
+                (have_wrapper &&
+                 bridge_minus1 == g_producer_compact_override.bridge_required_minus1 &&
+                 bridge_plus3 == g_producer_compact_override.bridge_required_plus3);
+            if (bucket_ok)
+            {
+                const int trace_steps = g_producer_compact_override.bridge_trace_steps > 0
+                    ? static_cast<int>(g_producer_compact_override.bridge_trace_steps)
+                    : kBridgeToFirstProducerStepTraceInstructions;
+                begin_step_trace_locked(
+                    GetCurrentThreadId(),
+                    "bridge_to_first_producer_flow",
+                    point.trace_id,
+                    point.path,
+                    point.addr,
+                    trace_steps);
+                auto step_state_it = g_step_traces.find(GetCurrentThreadId());
+                if (step_state_it != g_step_traces.end())
+                    prime_entry_wrapper_trace_state_locked(step_state_it->second, ctx);
+                ctx.EFlags |= 0x100u;
+                log_line(
+                    "bridge_to_first_producer_trace_armed trace=%llu base=0x%08lX minus3=0x%08lX minus1=0x%08lX plus3=0x%08lX steps=%d path=%s",
+                    point.trace_id,
+                    static_cast<unsigned long>(ctx.Edi),
+                    static_cast<unsigned long>(bridge_minus3),
+                    static_cast<unsigned long>(bridge_minus1),
+                    static_cast<unsigned long>(bridge_plus3),
+                    trace_steps,
+                    point.path.c_str());
+            }
+            else
+            {
+                log_line(
+                    "bridge_to_first_producer_trace_skip trace=%llu base=0x%08lX have_wrapper=%d minus1=0x%08lX plus3=0x%08lX required_minus1=0x%08lX required_plus3=0x%08lX",
+                    point.trace_id,
+                    static_cast<unsigned long>(ctx.Edi),
+                    have_wrapper ? 1 : 0,
+                    static_cast<unsigned long>(bridge_minus1),
+                    static_cast<unsigned long>(bridge_plus3),
+                    static_cast<unsigned long>(g_producer_compact_override.bridge_required_minus1),
+                    static_cast<unsigned long>(g_producer_compact_override.bridge_required_plus3));
+            }
+        }
         if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath &&
             point.label == "consumer_asset_class_lookup" &&
             point.hits == 1)
@@ -7030,6 +9107,32 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             armed = maybe_arm_selector_root_from_candidate(phase, "callsite_ecx", ctx.Ecx) || armed;
             if (!armed && g_latest_materialization_producer.class_head)
                 maybe_arm_selector_root_from_candidate(phase, "callsite_class_head", g_latest_materialization_producer.class_head);
+        }
+        if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath &&
+            point.label == "consumer_asset_lookup_entry" &&
+            g_policy_field_watches.empty())
+        {
+            probe_entry_selector_root_candidates_locked("asset_lookup_entry", ctx);
+            if (point.hits <= 1 && g_step_traces.find(GetCurrentThreadId()) == g_step_traces.end())
+            {
+                begin_step_trace_locked(
+                    GetCurrentThreadId(),
+                    "asset_lookup_entry_flow",
+                    point.trace_id,
+                    point.path,
+                    point.addr,
+                    kConsumerEntryStepTraceInstructions);
+                auto step_state_it = g_step_traces.find(GetCurrentThreadId());
+                if (step_state_it != g_step_traces.end())
+                    prime_entry_wrapper_trace_state_locked(step_state_it->second, ctx);
+                ctx.EFlags |= 0x100u;
+                log_line(
+                    "branch_trace_request kind=asset_lookup_entry_flow start=0x%08lX steps=%d trace=%llu path=%s",
+                    static_cast<unsigned long>(point.addr),
+                    kConsumerEntryStepTraceInstructions,
+                    point.trace_id,
+                    point.path.c_str());
+            }
         }
         if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath &&
             point.label.rfind("consumer_upstream_ret_", 0) == 0 &&
@@ -7114,7 +9217,7 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
 
         if (point.label == "consumer_render_table")
         {
-            if (g_probe_mode != ProbeMode::RenderOpacityFocus)
+            if (!is_render_only_focus_mode())
             {
                 arm_exec_trace_locked("consumer_render_table_zero_path", rva_to_va(kConsumerRenderTableZeroPathRva), point.trace_id, point.path);
                 arm_exec_trace_locked("consumer_render_table_compare", rva_to_va(kConsumerRenderTableCompareRva), point.trace_id, point.path);
@@ -7233,12 +9336,91 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
             log_pointer_info("edx", ctx.Edx);
             log_pointer_info("esi", ctx.Esi);
             log_pointer_info("edi", ctx.Edi);
+            if (state.label == "asset_lookup_entry_flow")
+            {
+                probe_entry_selector_root_candidates_locked("asset_lookup_entry_step", ctx);
+                if (ctx.Edi)
+                    log_consumer_anchor_snapshot("asset_lookup_entry_step_edi", "step", ctx.Edi, 4, 8);
+                if (ctx.Ecx)
+                    log_consumer_anchor_snapshot("asset_lookup_entry_step_ecx", "step", ctx.Ecx, 4, 8);
+                if (ctx.Eax)
+                    log_consumer_anchor_snapshot("asset_lookup_entry_step_eax", "step", ctx.Eax, 4, 8);
+                trace_entry_wrapper_step_locked(state, ctx, state.total_steps - state.steps_remaining + 1);
+            }
+            if (state.label == "bridge_to_first_producer_flow")
+            {
+                if (!state.wrapper_initialized && ctx.Edi)
+                    prime_entry_wrapper_trace_state_locked(state, ctx);
+                trace_entry_wrapper_step_locked(state, ctx, state.total_steps - state.steps_remaining + 1);
+                maybe_prime_bridge_producer_candidate_locked(state, ctx, state.total_steps - state.steps_remaining + 1);
+                trace_producer_class_step_locked(state, ctx, state.total_steps - state.steps_remaining + 1);
+                if (state.force_complete)
+                    state.steps_remaining = 1;
+            }
+            if (state.label == "producer_target_family_flow")
+            {
+                trace_producer_class_step_locked(state, ctx, state.total_steps - state.steps_remaining + 1);
+            }
             state.last_eip = ctx.Eip;
             state.steps_remaining -= 1;
             if (state.steps_remaining > 0)
                 keep_tracing = true;
             else
             {
+                if (state.label == "asset_lookup_entry_flow" && state.wrapper_initialized)
+                {
+                    log_line(
+                        "entry_wrapper_trace_complete trace=%llu base=0x%08lX any_change=%d minus3_changed=%d minus1_changed=%d plus3_changed=%d final_minus3=0x%08lX final_minus1=0x%08lX final_plus3=0x%08lX",
+                        state.trace_id,
+                        static_cast<unsigned long>(state.wrapper_base),
+                        state.wrapper_any_change ? 1 : 0,
+                        state.wrapper_slot_changed[0] ? 1 : 0,
+                        state.wrapper_slot_changed[1] ? 1 : 0,
+                        state.wrapper_slot_changed[2] ? 1 : 0,
+                        static_cast<unsigned long>(state.wrapper_last_values[0]),
+                        static_cast<unsigned long>(state.wrapper_last_values[1]),
+                        static_cast<unsigned long>(state.wrapper_last_values[2]));
+                }
+                if (state.label == "producer_target_family_flow" && state.producer_initialized)
+                {
+                    log_line(
+                        "producer_class_trace_complete trace=%llu base=0x%08lX any_change=%d class_head_changed=%d class_plus2_changed=%d class_plus3_changed=%d class_plus4_changed=%d class_plus5_changed=%d class_plus6_changed=%d final_class_head=0x%08lX final_class_plus2=0x%08lX final_class_plus3=0x%08lX final_class_plus4=0x%08lX final_class_plus5=0x%08lX final_class_plus6=0x%08lX",
+                        state.trace_id,
+                        static_cast<unsigned long>(state.producer_class_ptr),
+                        state.producer_any_change ? 1 : 0,
+                        state.producer_field_changed[0] ? 1 : 0,
+                        state.producer_field_changed[1] ? 1 : 0,
+                        state.producer_field_changed[2] ? 1 : 0,
+                        state.producer_field_changed[3] ? 1 : 0,
+                        state.producer_field_changed[4] ? 1 : 0,
+                        state.producer_field_changed[5] ? 1 : 0,
+                        static_cast<unsigned long>(state.producer_last_values[0]),
+                        static_cast<unsigned long>(state.producer_last_values[1]),
+                        static_cast<unsigned long>(state.producer_last_values[2]),
+                        static_cast<unsigned long>(state.producer_last_values[3]),
+                        static_cast<unsigned long>(state.producer_last_values[4]),
+                        static_cast<unsigned long>(state.producer_last_values[5]));
+                }
+                if (state.label == "bridge_to_first_producer_flow")
+                {
+                    log_line(
+                        "bridge_to_first_producer_trace_complete trace=%llu wrapper_base=0x%08lX wrapper_any_change=%d final_minus3=0x%08lX final_minus1=0x%08lX final_plus3=0x%08lX producer_seen=%d producer_class=0x%08lX producer_any_change=%d final_class_head=0x%08lX final_class_plus2=0x%08lX final_class_plus3=0x%08lX final_class_plus4=0x%08lX final_class_plus5=0x%08lX final_class_plus6=0x%08lX",
+                        state.trace_id,
+                        static_cast<unsigned long>(state.wrapper_base),
+                        state.wrapper_any_change ? 1 : 0,
+                        static_cast<unsigned long>(state.wrapper_last_values[0]),
+                        static_cast<unsigned long>(state.wrapper_last_values[1]),
+                        static_cast<unsigned long>(state.wrapper_last_values[2]),
+                        state.producer_initialized ? 1 : 0,
+                        static_cast<unsigned long>(state.producer_class_ptr),
+                        state.producer_any_change ? 1 : 0,
+                        static_cast<unsigned long>(state.producer_last_values[0]),
+                        static_cast<unsigned long>(state.producer_last_values[1]),
+                        static_cast<unsigned long>(state.producer_last_values[2]),
+                        static_cast<unsigned long>(state.producer_last_values[3]),
+                        static_cast<unsigned long>(state.producer_last_values[4]),
+                        static_cast<unsigned long>(state.producer_last_values[5]));
+                }
                 log_line("step_trace_end label=%s trace=%llu eip=0x%08lX",
                     state.label.c_str(),
                     state.trace_id,
@@ -7412,9 +9594,13 @@ DWORD WINAPI init_thread(void*)
 
     enumerate_modules();
     load_probe_mode();
+    load_entry_wrapper_override();
+    load_producer_compact_override();
     const bool bootstrap_guard_only = g_probe_mode == ProbeMode::BootstrapGuardOnly;
     const bool minimal_consumer_focus = is_minimal_consumer_focus_mode();
-    if (!bootstrap_guard_only && !minimal_consumer_focus)
+    const bool render_only_focus = is_render_only_focus_mode();
+    const bool enable_touch_watchers = !bootstrap_guard_only && !minimal_consumer_focus && !render_only_focus;
+    if (enable_touch_watchers)
     {
         seed_guard_message_watch();
         load_watchlist();
@@ -7425,6 +9611,12 @@ DWORD WINAPI init_thread(void*)
         arm_touch_trace_pages();
         load_xanim_expectations();
         load_xanim_runtime_patches();
+    }
+    else if (render_only_focus)
+    {
+        log_line("render_only_focus_init enabled");
+        load_watchlist();
+        load_xanim_expectations();
     }
     else if (minimal_consumer_focus)
     {
@@ -7452,7 +9644,7 @@ DWORD WINAPI init_thread(void*)
             CloseHandle(retry_thread);
         }
     }
-    if (!bootstrap_guard_only && !minimal_consumer_focus)
+    if (enable_touch_watchers)
     {
         install_file_hooks();
         log_line("guard_watches=disabled");
@@ -7487,6 +9679,10 @@ DWORD WINAPI init_thread(void*)
             log_line("guard_copy_scan_thread_failed gle=%lu", GetLastError());
         }
     }
+    else if (render_only_focus)
+    {
+        log_line("file_hooks_skipped mode=%s reason=render_only_focus", probe_mode_name());
+    }
     else if (minimal_consumer_focus)
     {
         log_line("file_hooks_skipped mode=%s reason=minimal_consumer_focus", probe_mode_name());
@@ -7499,7 +9695,7 @@ DWORD WINAPI init_thread(void*)
     {
         log_line("consumer_arm_thread_skipped mode=%s reason=minimal_guard_only", probe_mode_name());
     }
-    else if (g_probe_mode == ProbeMode::RenderOpacityFocus)
+    else if (is_render_only_focus_mode())
     {
         log_line("consumer_arm_thread_skipped mode=%s reason=asset_gated", probe_mode_name());
         HANDLE opacity_thread = CreateThread(nullptr, 0, opacity_focus_fallback_thread, nullptr, 0, nullptr);
@@ -7552,6 +9748,21 @@ DWORD WINAPI init_thread(void*)
     }
     else if (is_minimal_consumer_focus_mode())
     {
+        if (g_probe_mode == ProbeMode::ClassFamilyMaterializationWritepath &&
+            !g_selector_root_temporal_started.exchange(true))
+        {
+            HANDLE temporal_thread = CreateThread(nullptr, 0, selector_root_temporal_thread, nullptr, 0, nullptr);
+            if (temporal_thread)
+            {
+                log_line("selector_root_temporal_thread_created");
+                CloseHandle(temporal_thread);
+            }
+            else
+            {
+                g_selector_root_temporal_started = false;
+                log_line("selector_root_temporal_thread_failed gle=%lu", GetLastError());
+            }
+        }
         HANDLE consumer_thread = CreateThread(nullptr, 0, consumer_arm_thread, nullptr, 0, nullptr);
         if (consumer_thread)
         {

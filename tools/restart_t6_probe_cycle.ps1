@@ -10,8 +10,10 @@ param(
     [string]$GGametype = "",
     [string]$ExecCfg = "",
     [string[]]$ExtraCommands = @(),
-    [ValidateSet("safe", "render_opacity_focus", "xanim_focus", "xanim_consumer_focus")]
+    [ValidateSet("safe", "bootstrap_guard_only", "render_opacity_focus", "viewmodel_render_focus", "xanim_focus", "xanim_consumer_focus", "xanim_asset_lookup_focus", "producer_compact_override_focus", "class_family_materialization_writepath")]
     [string]$ProbeMode = "safe",
+    [ValidateSet("startup", "connect", "grant", "first_raise_begin", "idle_begin", "fire_begin")]
+    [string]$ProbeAttachGate = "startup",
     [int]$ProbeAttachDelayMs = 12000,
     [int]$ProbeAttachTimeoutSec = 25,
     [switch]$EnableProbeGuards,
@@ -32,12 +34,36 @@ function Copy-ItemSafe {
         [string]$Source,
         [string]$Destination
     )
+    try {
+        $resolvedSource = (Resolve-Path $Source -ErrorAction Stop).Path
+        $resolvedDestination = [System.IO.Path]::GetFullPath($Destination)
+        if ([string]::Equals($resolvedSource, $resolvedDestination, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+    }
+    catch {
+    }
     $dstDir = Split-Path -Parent $Destination
     if (-not (Test-Path $dstDir)) {
         New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
     }
     Copy-Item -Path $Source -Destination $Destination -Force
     Write-Host "Synced: $Destination"
+}
+
+function Copy-DirectoryFilesSafe {
+    param(
+        [string]$SourceDir,
+        [string]$DestinationDir,
+        [string]$Filter = "*"
+    )
+    if (-not (Test-Path $SourceDir)) {
+        return
+    }
+    New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+    Get-ChildItem -Path $SourceDir -File -Filter $Filter | ForEach-Object {
+        Copy-ItemSafe -Source $_.FullName -Destination (Join-Path $DestinationDir $_.Name)
+    }
 }
 
 function Get-SharedText {
@@ -61,45 +87,174 @@ function Get-SharedText {
     }
 }
 
+function Get-LogVariantPaths {
+    param([string]$Path)
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return @()
+    }
+
+    if (Test-Path $Path) {
+        $paths.Add((Get-Item $Path).FullName)
+    }
+
+    $parent = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and (Test-Path $parent)) {
+        $escapedLeaf = [regex]::Escape($leaf)
+        $variants = Get-ChildItem -Path $parent -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match ("^{0}\.\d+$" -f $escapedLeaf) } |
+            Sort-Object LastWriteTime, Name -Descending
+        foreach ($variant in @($variants)) {
+            if (-not $paths.Contains($variant.FullName)) {
+                $paths.Add($variant.FullName)
+            }
+        }
+    }
+
+    return @($paths)
+}
+
+function Get-LatestLogVariantPath {
+    param([string]$Path)
+
+    $variants = @(Get-LogVariantPaths -Path $Path)
+    if ($variants.Count -eq 0) {
+        return ""
+    }
+
+    $latest = $variants |
+        ForEach-Object { Get-Item $_ } |
+        Sort-Object LastWriteTime, Name -Descending |
+        Select-Object -First 1
+    if ($null -eq $latest) {
+        return ""
+    }
+
+    return $latest.FullName
+}
+
+function Get-LogSnapshot {
+    param([string]$Path)
+
+    $resolvedPath = Get-LatestLogVariantPath -Path $Path
+    $exists = -not [string]::IsNullOrWhiteSpace($resolvedPath)
+    $length = 0
+    if ($exists) {
+        $length = (Get-Item $resolvedPath).Length
+    }
+
+    return @{
+        Path = $Path
+        ResolvedPath = $resolvedPath
+        Exists = $exists
+        Length = $length
+    }
+}
+
+function Get-LogDeltaText {
+    param([hashtable]$Snapshot)
+
+    $resolvedPath = Get-LatestLogVariantPath -Path $Snapshot.Path
+    if ([string]::IsNullOrWhiteSpace($resolvedPath) -or -not (Test-Path $resolvedPath)) {
+        return ""
+    }
+
+    $stream = $null
+    try {
+        $stream = New-Object System.IO.FileStream($resolvedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $startOffset = 0
+        if ($Snapshot.Exists -and `
+            -not [string]::IsNullOrWhiteSpace($Snapshot.ResolvedPath) -and `
+            [string]::Equals($Snapshot.ResolvedPath, $resolvedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $startOffset = [Math]::Min([int64]$Snapshot.Length, $stream.Length)
+        }
+
+        $remaining = $stream.Length - $startOffset
+        if ($remaining -le 0) {
+            return ""
+        }
+
+        [void]$stream.Seek($startOffset, [System.IO.SeekOrigin]::Begin)
+        $bytes = New-Object byte[] $remaining
+        [void]$stream.Read($bytes, 0, $bytes.Length)
+        return [System.Text.Encoding]::UTF8.GetString($bytes)
+    }
+    finally {
+        if ($stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Wait-ForProbeAttachReady {
     param(
-        [string[]]$ConsoleLogPaths,
+        [hashtable[]]$ConsoleLogSnapshots,
+        [string]$AttachGate,
         [int]$TimeoutSec,
         [int]$FallbackDelayMs
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $fallbackAt = (Get-Date).AddMilliseconds($FallbackDelayMs)
-    $markers = @(
-        "Loading fastfile mod_patch",
-        "execing ffprobe_autorun.cfg",
-        "Loading fastfile ui_zm",
-        "Loading fastfile common_zm"
-    )
+    $markers = switch ($AttachGate) {
+        "first_raise_begin" {
+            @("anim_probe:first_raise_begin")
+        }
+        "idle_begin" {
+            @("anim_probe:idle_begin")
+        }
+        "fire_begin" {
+            @("anim_probe:fire_begin")
+        }
+        "connect" {
+            @("[bo3_rev][connect]")
+        }
+        "grant" {
+            @("[bo3_rev][grant]")
+        }
+        default {
+            @(
+                "Loading fastfile mod_patch",
+                "execing ffprobe_autorun.cfg",
+                "Loading fastfile ui_zm",
+                "Loading fastfile common_zm"
+            )
+        }
+    }
+    $gateLabel = switch ($AttachGate) {
+        "first_raise_begin" { "first_raise_begin markers" }
+        "idle_begin" { "idle_begin markers" }
+        "fire_begin" { "fire_begin markers" }
+        "connect" { "connect markers" }
+        "grant" { "grant markers" }
+        default { "startup markers" }
+    }
 
     while ((Get-Date) -lt $deadline) {
-        foreach ($consoleLogPath in @($ConsoleLogPaths)) {
-            if ([string]::IsNullOrWhiteSpace($consoleLogPath)) {
+        foreach ($snapshot in @($ConsoleLogSnapshots)) {
+            if ($null -eq $snapshot -or [string]::IsNullOrWhiteSpace([string]$snapshot.Path)) {
                 continue
             }
-            $text = Get-SharedText -Path $consoleLogPath
+            $text = Get-LogDeltaText -Snapshot $snapshot
             foreach ($marker in $markers) {
                 if ($text -like "*$marker*") {
-                    Write-Host "Probe attach gate reached: $marker source=$consoleLogPath"
+                    Write-Host "Probe attach gate reached: $marker source=$($snapshot.Path)"
                     return
                 }
             }
         }
 
         if ((Get-Date) -ge $fallbackAt) {
-            Write-Warning "Probe attach gate timed out on startup markers; falling back to delayed attach after ${FallbackDelayMs}ms."
+            Write-Warning "Probe attach gate timed out on $gateLabel; falling back to delayed attach after ${FallbackDelayMs}ms."
             return
         }
 
         Start-Sleep -Milliseconds 500
     }
 
-    Write-Warning "Probe attach gate did not see startup markers within ${TimeoutSec}s; continuing with delayed attach."
+    Write-Warning "Probe attach gate did not see $gateLabel within ${TimeoutSec}s; continuing with delayed attach."
 }
 
 $bootstrapperName = "plutonium-bootstrapper-win32"
@@ -112,6 +267,7 @@ $root = $GameDir
 $buildRoot = Join-Path $root "_build\bo3_rev_idg_probe"
 $outputRoot = Join-Path $buildRoot "output"
 $modRoot = Join-Path $root "mods\bo3_rev"
+$runtimeQuarantineRoot = Join-Path $root "_build\runtime_quarantine\game_mods"
 $appDataModRoot = Join-Path $PlutoniumDir "storage\t6\mods\bo3_rev"
 $generatedClientRoot = Join-Path $buildRoot "clientscripts\mp"
 $probeRoot = Join-Path $root "native\fx_runtime_probe"
@@ -121,10 +277,141 @@ $probeLatestBuildJson = Join-Path $probeBinRoot "fx_runtime_probe_latest_build.j
 $probeGuardConfigPath = Join-Path $probeRoot "active_guard_config.txt"
 $probeModeConfigPath = Join-Path $probeRoot "active_probe_mode.txt"
 $modConsoleLogPath = Join-Path $appDataModRoot "console_zm.log"
+$modGamesLogPath = Join-Path $appDataModRoot "games_mp.log"
 $skipModLoadSync = ($env:ROGUE_SKIP_MOD_LOAD_SYNC -eq "1")
 $skipSurvivalSync = ($env:ROGUE_SKIP_SURVIVAL_SYNC -eq "1")
 $skipModPatchSync = ($env:ROGUE_SKIP_MOD_PATCH_SYNC -eq "1")
 $skipClientScriptSync = ($env:ROGUE_SKIP_CLIENTSCRIPT_SYNC -eq "1")
+
+$fallbackModRoot = $null
+if (Test-Path $runtimeQuarantineRoot) {
+    $latestQuarantine = Get-ChildItem $runtimeQuarantineRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+    if ($latestQuarantine) {
+        $candidate = Join-Path $latestQuarantine.FullName "bo3_rev"
+        if (Test-Path $candidate) {
+            $fallbackModRoot = $candidate
+            Write-Host "Fallback mod root available: $fallbackModRoot"
+        }
+    }
+}
+
+function Resolve-SourcePath {
+    param(
+        [string[]]$Candidates
+    )
+
+    foreach ($candidate in $Candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $Candidates[0]
+}
+
+function Get-SourceOriginLabel {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return "missing"
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $fullPathLower = $fullPath.ToLowerInvariant()
+
+    $classify = @(
+        @{ Root = $modRoot; Label = "repo_mod" },
+        @{ Root = $buildRoot; Label = "build_output" },
+        @{ Root = $generatedClientRoot; Label = "generated_clientscripts" },
+        @{ Root = $fallbackModRoot; Label = "fallback_quarantine" },
+        @{ Root = $appDataModRoot; Label = "appdata_runtime" }
+    )
+
+    foreach ($entry in $classify) {
+        $rootPath = [string]$entry.Root
+        if ([string]::IsNullOrWhiteSpace($rootPath)) {
+            continue
+        }
+
+        $rootFull = [System.IO.Path]::GetFullPath($rootPath).ToLowerInvariant()
+        if ($fullPathLower.StartsWith($rootFull)) {
+            return [string]$entry.Label
+        }
+    }
+
+    return "external"
+}
+
+function Write-ResolvedSourceSummary {
+    param(
+        [string]$Label,
+        [string]$Path
+    )
+
+    $origin = Get-SourceOriginLabel -Path $Path
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        Write-Warning ("Runtime source missing label={0} path={1}" -f $Label, $Path)
+        return
+    }
+
+    $message = "Runtime source label={0} origin={1} path={2}" -f $Label, $origin, $Path
+    if ($origin -eq "fallback_quarantine") {
+        Write-Warning $message
+    } else {
+        Write-Host $message
+    }
+}
+
+$modScriptSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "scripts\mod_i_am_mod.gsc"),
+    (Join-Path $buildRoot "scripts\mod_i_am_mod.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "scripts\mod_i_am_mod.gsc" })
+)
+$zmClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\zombies\_zm.csc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "clientscripts\mp\zombies\_zm.csc" })
+)
+$farmgirlSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "character\c_transit_player_farmgirl.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "character\c_transit_player_farmgirl.gsc" })
+)
+$oldmanSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "character\c_transit_player_oldman.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "character\c_transit_player_oldman.gsc" })
+)
+$engineerSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "character\c_transit_player_engineer.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "character\c_transit_player_engineer.gsc" })
+)
+$reporterSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "character\c_transit_player_reporter.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "character\c_transit_player_reporter.gsc" })
+)
+$spawnerSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "scripts\mp\zombies\_zm_spawner.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "scripts\mp\zombies\_zm_spawner.gsc" })
+)
+$mainLobbySource = Resolve-SourcePath @(
+    (Join-Path $modRoot "ui\t6\mainlobby.lua"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "ui\t6\mainlobby.lua" })
+)
+$mainMenuSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "ui_mp\t6\mainmenu.lua"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "ui_mp\t6\mainmenu.lua" })
+)
+$gametypeRawSourceDir = Resolve-SourcePath @(
+    (Join-Path $modRoot "maps\mp\gametypes_zm"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "maps\mp\gametypes_zm" }),
+    (Join-Path $PlutoniumDir "storage\t6\maps\mp\gametypes_zm")
+)
+
+Write-ResolvedSourceSummary -Label "mod_i_am_mod" -Path $modScriptSource
+Write-ResolvedSourceSummary -Label "_zm.csc" -Path $zmClientSource
+Write-ResolvedSourceSummary -Label "farmgirl" -Path $farmgirlSource
+Write-ResolvedSourceSummary -Label "oldman" -Path $oldmanSource
+Write-ResolvedSourceSummary -Label "engineer" -Path $engineerSource
+Write-ResolvedSourceSummary -Label "reporter" -Path $reporterSource
+Write-ResolvedSourceSummary -Label "_zm_spawner.gsc" -Path $spawnerSource
 
 $baseZoneTargets = @()
 if (-not $ModOnly) {
@@ -200,42 +487,42 @@ if (-not $ModOnly) {
 
 $scriptFiles = @(
     @{
-        Source = Join-Path $modRoot "scripts\mod_i_am_mod.gsc"
+        Source = $modScriptSource
         RemoveIfMissing = $false
         Destinations = @(
             Join-Path $appDataModRoot "scripts\mod_i_am_mod.gsc"
         )
     },
     @{
-        Source = Join-Path $modRoot "character\c_transit_player_farmgirl.gsc"
+        Source = $farmgirlSource
         RemoveIfMissing = $true
         Destinations = @(
             Join-Path $appDataModRoot "character\c_transit_player_farmgirl.gsc"
         )
     },
     @{
-        Source = Join-Path $modRoot "character\c_transit_player_oldman.gsc"
+        Source = $oldmanSource
         RemoveIfMissing = $true
         Destinations = @(
             Join-Path $appDataModRoot "character\c_transit_player_oldman.gsc"
         )
     },
     @{
-        Source = Join-Path $modRoot "character\c_transit_player_engineer.gsc"
+        Source = $engineerSource
         RemoveIfMissing = $true
         Destinations = @(
             Join-Path $appDataModRoot "character\c_transit_player_engineer.gsc"
         )
     },
     @{
-        Source = Join-Path $modRoot "character\c_transit_player_reporter.gsc"
+        Source = $reporterSource
         RemoveIfMissing = $true
         Destinations = @(
             Join-Path $appDataModRoot "character\c_transit_player_reporter.gsc"
         )
     },
     @{
-        Source = Join-Path $modRoot "scripts\mp\zombies\_zm_spawner.gsc"
+        Source = $spawnerSource
         RemoveIfMissing = $true
         Destinations = @(
             Join-Path $appDataModRoot "scripts\mp\zombies\_zm_spawner.gsc"
@@ -266,11 +553,25 @@ $scriptFiles = @(
         )
     },
     @{
-        Source = Join-Path $modRoot "clientscripts\mp\zombies\_zm.csc"
+        Source = $zmClientSource
         RemoveIfMissing = $true
         Skip = $skipClientScriptSync
         Destinations = @(
             Join-Path $appDataModRoot "clientscripts\mp\zombies\_zm.csc"
+        )
+    },
+    @{
+        Source = $mainLobbySource
+        RemoveIfMissing = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "ui\t6\mainlobby.lua"
+        )
+    },
+    @{
+        Source = $mainMenuSource
+        RemoveIfMissing = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "ui_mp\t6\mainmenu.lua"
         )
     }
 )
@@ -397,6 +698,16 @@ foreach ($entry in $scriptFiles) {
     }
 }
 
+if (Test-Path $gametypeRawSourceDir) {
+    Write-Host "Syncing gametype rawfiles..."
+    foreach ($dstDir in @(
+        (Join-Path $modRoot "maps\mp\gametypes_zm"),
+        (Join-Path $appDataModRoot "maps\mp\gametypes_zm")
+    )) {
+        Copy-DirectoryFilesSafe -SourceDir $gametypeRawSourceDir -DestinationDir $dstDir -Filter "*.txt"
+    }
+}
+
 if (-not $Launch) {
     Write-Host "Sync complete. Use -Launch to relaunch automatically."
     exit 0
@@ -463,6 +774,11 @@ if ($InjectProbe) {
 }
 
 Write-Host "Launching game..."
+$attachGateSnapshots = @(
+    (Get-LogSnapshot -Path $modConsoleLogPath),
+    (Get-LogSnapshot -Path $modGamesLogPath),
+    (Get-LogSnapshot -Path "C:\Users\Ahmed\AppData\Local\Plutonium\storage\t6\main\console_zm.log")
+)
 $launchArgs = @(
     "-ExecutionPolicy", "Bypass",
     "-File", $launchScript,
@@ -515,7 +831,7 @@ foreach ($cmd in $ExtraCommands) {
 powershell @launchArgs
 
 if ($InjectProbe) {
-    Wait-ForProbeAttachReady -ConsoleLogPaths @($modConsoleLogPath, "C:\Users\Ahmed\AppData\Local\Plutonium\storage\t6\main\console_zm.log") -TimeoutSec $ProbeAttachTimeoutSec -FallbackDelayMs $ProbeAttachDelayMs
+    Wait-ForProbeAttachReady -ConsoleLogSnapshots $attachGateSnapshots -AttachGate $ProbeAttachGate -TimeoutSec $ProbeAttachTimeoutSec -FallbackDelayMs $ProbeAttachDelayMs
     Write-Host "Injecting probe after startup gate..."
     Start-Process powershell -ArgumentList $injectArgs | Out-Null
 }

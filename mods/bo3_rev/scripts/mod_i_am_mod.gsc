@@ -20,17 +20,17 @@ bo3_rev_starter_weapon()
 
 bo3_rev_probe_mode()
 {
-    return "custom";
+    return "base";
 }
 
 bo3_rev_native_probe_mode()
 {
-    return "xanim_consumer_focus";
+    return "safe";
 }
 
 bo3_rev_probe_model_asset()
 {
-    return "bo3_rev_v2_idg_view_0403191141_75d444";
+    return "t6_wpn_zmb_mg08_view";
 }
 
 bo3_rev_probe_world_model_asset()
@@ -45,7 +45,7 @@ bo3_rev_bridge_world_model_asset()
 
 bo3_rev_build_tag()
 {
-    return "0403191141_75d444";
+    return "0406051222_7eef05";
 }
 
 bo3_rev_probe_is_tactical_grenade()
@@ -150,12 +150,12 @@ bo3_rev_anim_grant_delay_seconds()
 
 bo3_rev_anim_phase()
 {
-    return "equip_hold";
+    return "combined";
 }
 
 bo3_rev_run_label()
 {
-    return "consumer_semantic_transition_compare";
+    return "";
 }
 
 bo3_rev_force_stock_shell_enabled()

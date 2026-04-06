@@ -1,5 +1,26 @@
 # Engine Map
 
+## 21) Practical Control Follow-up: bounded downstream same-process takeover did not produce a fresh accepted case (2026-04-05)
+
+Authoritative summary:
+
+- `_build/bo3_rev_idg_probe/same_process_trio_transplant_matrix/20260405_152402/same_process_trio_transplant_matrix_summary.json`
+
+Engine-map consequence:
+
+- no new engine layer was discovered in this batch
+- the downstream practical-control surfaces remain the same as before:
+  - later-family `class +2/+3/+4`
+  - possibly `+5` as a secondary compact field
+- but the bounded retry did not recover a fresh accepted same-bucket takeover case
+
+Current map consequence:
+
+- the unresolved blocker is operational stability across:
+  - source-side class emission capture
+  - later-family practical takeover
+- not uncertainty about where the major control surfaces live
+
 This document is the consolidated engine map for the BO3/T7 -> BO2/T6 porting work in this repo.
 
 It is meant to answer a different question from `docs/fullsummary.md`.
@@ -656,3 +677,768 @@ The engine map today is:
 - the unresolved step is the indirect mapping from `child_2` into the upstream/render lookup family
 
 That is the current frontier of the repo.
+
+## 18. Producer-Family Control Map Update
+
+The current animation frontier is no longer the old `render_state_edi` / `child_2` object-model lane by itself.
+
+The newer live producer-family work established a practical control map that matters more for visible first-person animation takeover.
+
+### 18.1 Same-process starter->probe trio transplant
+
+`Proven`
+
+Authoritative control:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_013747/same_process`
+
+Authoritative same-process trio transplant:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_013814/same_process`
+
+What is now proven:
+
+- starter-side `class_plus_2/+3/+4` can be captured
+- the process can remain alive through `post_switch`
+- the first later distinct probe-side producer family can be patched in the same process
+
+Meaning:
+
+- the stale cross-run pointer-family confounder is no longer the main excuse for trio-causality uncertainty
+
+### 18.2 Current producer-side role split
+
+`Proven`
+
+The current best live role split on the later producer family is:
+
+- `class_plus_3 + class_plus_4`
+  - strongest direct drivers of later render-family divergence
+- `class_plus_2`
+  - likely binding/topology preservation field needed to keep joined selector-state alive
+- `class_plus_5`
+  - secondary compact family-code candidate
+
+### 18.3 Why `class_plus_2` is now special
+
+`Proven`
+
+Accepted same-bucket `same_process_plus234` run:
+
+- changed later render family
+- preserved `joined_surface_seen = true`
+
+Accepted same-bucket `same_process_plus34_only` run:
+
+- still changed later render family
+- but dropped `joined_surface_seen = false`
+
+Meaning:
+
+- `class_plus_2` is not required to perturb later render
+- but it currently looks required to preserve the downstream joined selector surface on the same normalized bucket
+
+### 18.4 Current earliest practical control surface
+
+`Proven`
+
+The earliest practical live patch surface that measurably changes later render outcome is now:
+
+- later producer family:
+  - `class_plus_2`
+  - `class_plus_3`
+  - `class_plus_4`
+
+This is a stronger statement than the older passive tracing conclusions:
+
+- it is no longer just an inferred control surface
+- it is a live patch surface that changes downstream render materialization
+
+### 18.5 What is still not proven
+
+`Unknown`
+
+Still not proven:
+
+- that same-process `class_plus_2/+3/+4/+5` can recover a clean accepted same-bucket run
+- that the later producer trio is sufficient for a visible custom animation takeover
+- whether the real ultimate control point is:
+  - exactly the later producer trio,
+  - or the earlier writer/provenance path that populates that trio
+
+### 18.6 Practical current engine map
+
+Current best practical interpretation:
+
+1. producer-side family appears
+2. later producer-family `class_plus_3/+4` steer later render-family divergence
+3. `class_plus_2` helps preserve joined selector-state while that happens
+4. downstream selector-root / joined surface / child chain still sit below that producer layer
+5. visible custom animation is still blocked either by:
+   - incomplete later-family takeover,
+   - or an earlier writer path that must be controlled instead of the already-materialized trio
+
+### 18.7 Producer writepath boundary update
+
+`Proven`
+
+Authoritative writepath run:
+
+- `_build/bo3_rev_idg_probe/producer_target_family_writepath/20260404_022949/producer_target_family_writepath_summary.json`
+
+Same-process accepted control:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_022949/same_process`
+
+What is now proven:
+
+- the first later distinct producer family on the accepted `0x000F0105 -> 0x01120105` bucket can be targeted directly
+- a short single-step provenance trace can be armed on that later family at the first recovered `consumer_asset_class_lookup` hit
+- on that accepted bucket, the later family arrives fully formed there:
+  - `class_head`
+  - `class_plus_2`
+  - `class_plus_3`
+  - `class_plus_4`
+  - `class_plus_5`
+  - `class_plus_6`
+  all stay unchanged through the traced first-hit window
+
+Meaning:
+
+- later producer-family `class_plus_2/+3/+4/+5` is still the earliest practical recovered control surface for render divergence
+- but it is not the earliest observed writer site
+- the actual writer/provenance boundary is now earlier than the first recovered `consumer_asset_class_lookup` hit on the accepted bucket
+
+Practical engine-map consequence:
+
+1. same-process later-family transplant work remains valid causal evidence
+2. but provenance now has to move earlier than the first recovered asset-lookup family
+3. the next likely live producer frontier is:
+   - the caller / wrapper / pre-entry path that emits the later producer family before first recovered hit
+
+### 18.8 Entry-first same-process boundary update
+
+`Proven`
+
+Producer-mode same-process partial archive:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_023600/same_process`
+
+What is now proven:
+
+- on the same-process lane, `consumer_asset_lookup_entry` can be the first recovered consumer hit before any later `consumer_asset_class_lookup` family is recovered
+- the recovered entry wrapper is already prepopulated there:
+  - `minus3 = 0x033F4D50`
+  - `minus1 = 0x033F0380`
+  - `plus3 = 0x033F4D50`
+- the recovered stack-return family for that entry-first lane is:
+  - `0x00341F6C`
+  - `0x02FF4D50`
+  - `0x02FF0380`
+  - `0x0036EE73`
+
+Meaning:
+
+- provenance is earlier than the first recovered later producer family
+- and it is earlier than the recovered `consumer_asset_lookup_entry` wrapper too
+- so the next practical engine-map frontier is the caller / stack-return producer family feeding the prepopulated entry wrapper
+
+### 18.9 Entry-return bridge family update
+
+`Proven`
+
+Authoritative bridge summary:
+
+- `_build/bo3_rev_idg_probe/entry_return_bridge_override_matrix/20260404_032806/entry_return_bridge_override_matrix_summary.json`
+
+What is now proven on the corrected same-process entry-first lane:
+
+1. `consumer_upstream_ret_00341F6C` is a real bridge between:
+   - first recovered `consumer_asset_lookup_entry`
+   - first recovered `consumer_asset_class_lookup`
+   - the next entry cycle
+2. the bridge bucket already splits into stable module-pointer families before any later distinct producer family is recovered
+3. those bridge families correlate with different first recovered producer compact families
+
+Recovered bridge families:
+
+- family A:
+  - `minus1 = 0x033F0380`
+  - `plus3 = 0x033F4D50`
+  - first recovered producer compact:
+    - `class_plus_5 = 0x000F0105`
+    - `class_plus_6 = 0x00000201`
+- family B:
+  - `minus1 = 0x033ED240`
+  - `plus3 = 0x033F3790`
+  - first recovered producer compact:
+    - `class_plus_5 = 0x00020105` or `0x000E0105`
+    - `class_plus_6 = 0x00000201`
+
+Practical engine consequence:
+
+- the live frontier is now earlier than:
+  - selector-root
+  - later producer-family `class_plus_2/+3/+4/+5`
+  - the first recovered `consumer_asset_lookup_entry` wrapper considered as a single undifferentiated object
+- the active earlier branch split is now best described as:
+  - normalized entry-return bridge family at `consumer_upstream_ret_00341F6C`
+
+Current best causal interpretation:
+
+1. first entry wrapper appears already prepopulated
+2. first asset-lookup producer family appears
+3. `consumer_upstream_ret_00341F6C` bridges into the next entry cycle
+4. the bridge family (`0x02FF0380/0x02FF4D50` vs `0x02FED240/0x02FF3790`) already shapes which compact producer family is recovered next
+5. later producer-family takeover and downstream render materialization are therefore downstream of that bridge bucket, not the first place where branch identity begins
+
+### 18.10 Bridge-local causal role update
+
+`Proven`
+
+Authoritative bridge-bucket causal summary:
+
+- `_build/bo3_rev_idg_probe/entry_return_bridge_override_matrix/20260404_085014/entry_return_bridge_override_matrix_summary.json`
+
+Mirror bridge-bucket summary:
+
+- `_build/bo3_rev_idg_probe/entry_return_bridge_override_matrix/20260404_091236/entry_return_bridge_override_matrix_summary.json`
+
+What is now proven:
+
+1. normalized `consumer_upstream_ret_00341F6C` bridge families are not just correlated with later producer families
+2. patching bridge-local `plus3` inside a pinned bridge bucket changes the first recovered producer family
+3. the same bridge-local `plus3` effect is recoverable on both family-A and family-B buckets
+4. bridge-local `minus1` is still live and patchable, but not yet isolated as an equally strong independent driver
+
+Family A bucket:
+
+- required bridge:
+  - `minus1 = 0x033F0380`
+  - `plus3 = 0x033F4D50`
+- control first producer compact:
+  - `0x000F0105`
+- `plus3` patched to family-B value:
+  - first producer compact -> `0x000A0105`
+  - later distinct compact -> `0x010D0105`
+- `minus1 + plus3` patched together:
+  - first producer compact -> `0x00020105`
+
+Family B bucket:
+
+- required bridge:
+  - `minus1 = 0x033ED240`
+  - `plus3 = 0x033F3790`
+- accepted `plus3` patch to family-A value:
+  - first producer compact -> `0x00120105`
+  - later distinct compact -> `0x01150105`
+
+Practical engine consequence:
+
+- the bridge-local branch decision is now live-causal, not just inferred
+- `plus3` is the strongest currently recovered upstream causal field before first producer-family selection
+- the remaining hard problem is not bridge discovery anymore
+- it is the unstable carry-forward from bridge-local `plus3` change into later render-family takeover and then visible first-person custom animation
+
+### 18.11 Track split resolution: upstream bridge control and downstream practical render control
+
+The work was split into two explicit tracks:
+
+- Track A: bridge provenance / earlier-than-producer control
+- Track B: practical later-family control inside one normalized same-process bucket
+
+Both tracks now produced real results.
+
+`Track A proven`
+
+- `consumer_upstream_ret_00341F6C` is a real upstream control surface
+- normalized bridge-local `plus3` is the strongest recovered causal field there
+- patching bridge `plus3` changes the first recovered producer family
+
+`Track B proven`
+
+Normalized same-process control bucket:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_013747/same_process`
+
+Accepted same-bucket practical-control run:
+
+- `_build/bo3_rev_idg_probe/consumer_semantic_transitions/20260404_013814/same_process`
+
+What Track B proves:
+
+- later producer-family `class +2/+3/+4` is a real downstream practical control surface
+- same-process transplant of that trio preserves joined-surface recovery
+- later render family changes from the normal control page to a different render page in the same process
+
+That means the repo now has a two-layer causal model:
+
+1. earlier branch selection/control:
+   - bridge `plus3`
+2. later practical render-takeover control:
+   - producer-family `class +2/+3/+4`
+
+What is *not* proven:
+
+- visible custom first-person animation
+- independent sufficiency of later-family `class +5`
+- stable same-bucket carry-forward from bridge-local change all the way through later render and visible motion
+
+Practical engine consequence:
+
+- the problem is no longer broad engine archaeology
+- the hard remaining step is stable carry-forward between the proven upstream bridge control layer and the proven downstream later-family render-takeover layer
+## Update - 2026-04-04 bridge handoff split
+
+Latest carry-forward reruns:
+
+- `_build/bo3_rev_idg_probe/bridge_later_carry_forward_matrix/20260404_102117/bridge_later_carry_forward_matrix_summary.json`
+- `_build/bo3_rev_idg_probe/bridge_later_carry_forward_matrix/20260404_104025/bridge_later_carry_forward_matrix_summary.json`
+
+Net result:
+
+- no accepted composed bridge-plus-later-family carry-forward case
+- combined bridge `plus3` + later-family `class +2/+3/+4` still does not reliably preserve joined surface and later render in the same normalized run
+
+New analyzer:
+
+- `tools/analyze_bridge_handoff_chains.ps1`
+- `_build/bo3_rev_idg_probe/bridge_handoff_chain_analysis/20260404_105455/bridge_handoff_chain_summary.json`
+
+Recovered model update:
+
+- proven upstream control surface:
+  - bridge-family `plus3` at `consumer_upstream_ret_00341F6C`
+- proven downstream practical control surface:
+  - later-family `class +2/+3/+4`
+- unresolved layer:
+  - bridge output -> productive first producer family -> later-family render materialization
+
+Important chain examples:
+
+- productive:
+  - `0x033ED240/0x033F3790 -> 0x00120105/0x00000201 -> 0x01150105/0x00000201 -> 0x2F3Cxx`
+  - `0x033F0380/0x033F4D50 -> 0x00020105/0x00000201 -> 0x01050105/0x00000201 -> 0x30AAxx`
+- collapsed:
+  - `0x033F0304/0x033F4E40 -> 0x00010101/0x00000003 -> none -> none`
+  - `0x033ED204/0x033F3880 -> 0x00010101/0x00000003 -> none -> none`
+
+Meaning:
+
+- the unresolved problem is no longer "find the bridge" or "find the later-family driver"
+- it is the normalization/provenance step that decides whether a bridge bucket collapses at the first producer family or continues into later-family render materialization
+## 14) Handoff Update: bridge and first-producer field patching change early producer state but still do not force carry-forward (2026-04-04)
+
+Authoritative summaries:
+
+- `_build/bo3_rev_idg_probe/bridge_to_first_producer_carry_forward_matrix/20260404_114902/bridge_to_first_producer_carry_forward_matrix_summary.json`
+- `_build/bo3_rev_idg_probe/bridge_to_first_producer_carry_forward_matrix/20260404_120356/bridge_to_first_producer_carry_forward_matrix_summary.json`
+
+Recovered behavior:
+
+- Hit-1 first-producer compact state is patchable, but promoting it does not create a later producer family or later render family.
+- Example:
+  - `20260404_115104/same_process`
+  - initial compact changed `0x00020105 / 0x00000201 -> 0x00120105 / 0x00000201`
+  - later producer family: none
+  - later render family: none
+- Bridge-only control is also insufficient on this lane:
+  - `20260404_120838/same_process`
+  - bridge family recovered as `0x033ED240 / 0x033F3790`
+  - first producer compact recovered as `0x000A0105 / 0x00000201`
+  - later producer family: none
+  - later render family: none
+
+Current interpretation:
+
+- The unresolved handoff is not just the compact pair at hit 1.
+- It is the bridge→first-producer normalization/emission step that decides whether the first producer family is merely an early observed family or a productive family that will carry forward into later-family render materialization.
+
+Current frontier:
+
+- provenance / writer recovery for the bridge→first-producer emission path
+- not more selector-root work
+- not more hit-1 first-producer field matrices unless new provenance evidence appears
+## 16) Emitter Provenance Update: bridge/entry emitter trace is live, but not yet stable enough to recover the first-producer writer path (2026-04-04)
+
+Authoritative summaries:
+
+- `_build/bo3_rev_idg_probe/bridge_to_first_producer_emitter_provenance/20260404_132602/bridge_to_first_producer_emitter_provenance_summary.json`
+- `_build/bo3_rev_idg_probe/bridge_to_first_producer_emitter_provenance/20260404_133727/bridge_to_first_producer_emitter_provenance_summary.json`
+
+What exists now:
+
+- a dedicated bridge/entry provenance trace in the native hook
+- a dedicated provenance runner
+- trace events for:
+  - trace armed
+  - first producer candidate birth
+  - trace complete
+
+What the current runs say:
+
+- the provenance lane is still too unstable to recover an accepted traced emitter path on the same-process bucket
+- productive retries can still land on productive render pages
+- but they are not yet accompanied by a usable bridge→first-producer birth/mutation trace
+
+Meaning:
+
+- the unresolved engine map remains the same:
+  - bridge / entry family
+  - emission / normalization path
+  - first producer family
+  - later producer family
+  - later render family
+- but the direct provenance capture of the emission step is not stable enough yet to answer the writer question
+
+Current practical frontier:
+
+- stabilize the bridge-friendly emitter trace lane
+- or recover the same provenance on a more stable entry-first bucket
+- not more downstream field patching
+## 17) Provenance Stability Update: the bridge→first-producer trace lane is now correctly configured, but still drifts across entry buckets before a full emission sequence is recovered (2026-04-05)
+
+Current map refinement:
+
+- bridge discovery: solved
+- later-family practical control: solved
+- remaining unresolved layer: bridge→first-producer emitter / normalizer
+
+What this pass removed from the problem:
+
+- the old config-path confusion is dead
+- the dedicated provenance config file is now the file actually loaded by the live producer lane
+- the logged producer config now correctly reflects:
+  - `trace_bridge_to_first_producer=1`
+  - `stop_after_bridge_candidate_birth=1`
+  - required bridge bucket
+  - no startup render arming
+  - no follow-on render
+
+What the live lane is still doing:
+
+- the same-process entry-first provenance lane drifts across multiple wrapper families before the trace can normalize:
+  - `0x033F0304 / 0x033F4E40`
+  - `0x033F0380 / 0x033F4D50`
+  - `0x033ED204 / 0x033F3880`
+- because of that:
+  - some runs never arm the trace on the selected bucket
+  - some runs reach productive producer families without a traced birth/complete pair
+  - no accepted bridge→first-producer emission sequence is recovered yet
+
+Important implication:
+
+- the blocker is no longer instrumentation existence
+- it is the unstable provenance lane itself
+- the next correct engine step is still provenance stabilization on one productive bridge bucket, not more selector/later-family patch matrices
+## 18) Provenance Stability Success: the productive bridge bucket now has a clean accepted handoff trace (2026-04-05)
+
+The bounded provenance phase succeeded on one productive bridge bucket.
+
+Authoritative summary:
+
+- `_build/bo3_rev_idg_probe/bridge_to_first_producer_emitter_provenance/20260405_143131/bridge_to_first_producer_emitter_provenance_summary.json`
+
+Accepted productive bridge bucket:
+
+- `minus1 = 0x033F0380`
+- `plus3 = 0x033F4D50`
+
+Recovered accepted sequence:
+
+1. `bridge_to_first_producer_trace_armed`
+2. `bridge_first_producer_candidate_birth`
+3. `bridge_to_first_producer_trace_complete`
+
+Recovered one-step emitter:
+
+- `eip = 0x00741AE1`
+- `reg = ecx`
+- `class = 0x5F8C9070`
+
+Recovered seed/normalization object at that step:
+
+- `class_head = 0x01010101`
+- `class_plus_2 = 0x01010101`
+- `class_plus_3 = 0x01010101`
+- `class_plus_4 = 0x00000001`
+- `class_plus_5 = 0x00000001`
+- `class_plus_6 = 0x00000001`
+
+Then the later first recovered producer family appears downstream at `consumer_asset_class_lookup` as:
+
+- `class = 0x2D889A7C`
+- `class_head = 0x2D88D440`
+- `class_plus_2 = 0x2D88BB20`
+- `class_plus_3 = 0x2D889A9C`
+- `class_plus_4 = 0x2D88BB94`
+- `class_plus_5 = 0x00020105`
+- `class_plus_6 = 0x00000201`
+
+Engine-map consequence:
+
+- stable bridge bucket provenance is no longer the blocker
+- the earliest recovered post-bridge emitter is now the one-step `ecx` seed / normalization object
+- the remaining unresolved handoff is:
+  - how that seed object is turned into the later real first producer family
+
+Current frontier:
+
+- not more broad bridge stabilization
+- not later-family-only patching
+- now specifically the source-side normalization path immediately after `0x00741AE1`
+## 19) Source-Side Identity Update: the seed object is the later `source/owner_plus_4`, and class-family materialization happens off that stable object (2026-04-05)
+
+Authoritative summary:
+
+- `_build/bo3_rev_idg_probe/seed_to_first_producer_normalization/20260405_144553/seed_to_first_producer_normalization_summary.json`
+
+Recovered accepted relationship:
+
+- seed birth:
+  - `eip = 0x00741AE1`
+  - `reg = ecx`
+  - `seed = 0x5FA69070`
+- first producer-family appearance:
+  - `owner = 0x5FA69000`
+  - `owner_plus_4 = 0x5FA69070`
+  - `source = 0x5FA69070`
+  - `class = 0x2DC89A7C`
+
+Engine-map consequence:
+
+- the seed object is not a disposable pre-class transient
+- it survives as the later stable source-side identity object
+- the unresolved normalization/emission step is therefore:
+  - `seed/source/owner_plus_4`
+  - emits / resolves
+  - `class/class_head/+2/+3/+4/+5/+6`
+
+Important negative proof:
+
+- the tracked seed/source core slots did not mutate in place
+- so the later producer family is not created by simply mutating the tracked seed core
+
+Current frontier:
+
+- source-side class emission provenance off `seed == source == owner_plus_4`
+- not more bridge provenance stabilization
+- not more later-family-only patching first
+
+## 20) Source-Class Emission Follow-up: the lane is now instrumented for source-neighborhood capture, but the latest rerun drifted off the productive bridge bucket (2026-04-05)
+
+Authoritative summary:
+
+- `_build/bo3_rev_idg_probe/seed_to_first_producer_normalization/20260405_145953/seed_to_first_producer_normalization_summary.json`
+
+Engine-map consequence:
+
+- no new control surface was discovered in this rerun
+- the source-class emission lane is now instrumented to summarize source-neighborhood relations automatically
+- the actual frontier is unchanged:
+  - stable `source == owner_plus_4`
+  - unresolved emission/resolution into later `class-family`
+
+Observed drift buckets in the latest rerun:
+
+- `0x033ED204 / 0x033F3880`
+- `0x033ED240 / 0x033F3790`
+- `0x033F0304 / 0x033F4E40`
+
+Current frontier remains:
+
+- source-side class emission on the productive bucket
+- not bridge rediscovery
+- not later-family-only patching
+## 21) Determinism Checkpoint: productive source bucket is reacquirable, but the old accepted downstream takeover lane is still not (2026-04-05)
+
+Authoritative summary:
+
+- `_build/bo3_rev_idg_probe/animation_lane_determinism/20260405_155411/animation_lane_determinism_summary.json`
+
+Engine-map consequence:
+
+- the productive source-emission bucket is not lost
+- the repo can still recover:
+  - `bridge/wrapper = 0x033F0380 / 0x033F4D50`
+  - `seed == source == owner_plus_4`
+  - later first producer-family class materialization
+- but the old accepted downstream same-process takeover lane is still not reproducible in the bounded determinism batch
+
+Important new source-side negative proof from the accepted reacquired run:
+
+- source-neighborhood capture does not show a trivial direct owner/class pointer in:
+  - `source[-4]`
+  - `source[-1]`
+
+So the map is now:
+
+- source-side class emission remains a valid unresolved control step
+- but the practical animation blocker is downstream lane reproducibility:
+  - accepted `same_process_plus234` takeover still does not reacquire reliably
+
+Current frontier:
+
+- if continuing practical animation work:
+  - focus on downstream takeover / render-family reproducibility
+- if continuing reverse engineering:
+  - keep it narrowly on source-side class emission only
+- do not reopen older bridge discovery or selector archaeology
+
+## 22) Practical visible-motion forcing is now a prepared runner, but fresh execution is blocked by the local OAT linker architecture mismatch (2026-04-05)
+
+Engine-map consequence:
+
+- this is not a new engine-theory blocker
+- it is a packaging/runtime-toolchain blocker
+
+Prepared practical lane:
+
+- `tools/run_practical_visible_motion_forcing.ps1`
+- extends `tools/run_anim_debug_cycle.ps1` with:
+  - `-RuntimeBackend`
+  - `-ForceStockShell`
+  - `-ForcedStockShell`
+  - `-IdleDiagBone`
+  - `-IdleDiagTranslate`
+  - `-IdleDiagFrequency`
+  - `-IdleStaticBone`
+  - `-IdleStaticTranslate`
+
+Purpose of that lane:
+
+- bounded practical test on the live shell/tag surface
+- oldman and farmgirl
+- control vs forced visible-motion diagnostic build
+- judged only by live motion deltas / visible-motion summary
+
+Current blocker:
+
+- fresh animation builds currently fail before runtime because:
+  - `tools/oat/Linker.exe` is `x64`
+  - `tools/oat/Linker.exe.bak_031717` is also `x64`
+  - T6 runtime packaging still requires `x86` linker binaries
+
+Meaning:
+
+- the project is no longer primarily blocked on where the engine decides
+- it is currently blocked on:
+  - downstream takeover reproducibility for no-build practical control
+  - or missing x86 linker support for fresh practical animation builds
+
+## 23) Practical pivot update: fresh practical builds are running again, but live runtime still resolves to an older script/build lane (2026-04-05)
+
+- `tools/run_anim_debug_cycle.ps1` now supports `-SkipBuild`, live build-tag fallback, and timestamp-prefixed `games_mp.log` parsing.
+- `tools/run_practical_visible_motion_forcing.ps1` can now reuse existing runtime builds.
+- `_build/build_bo3_rev_idg_probe.py` now renders `mod_i_am_mod.gsc` to both repo and work outputs.
+- missing `mods/bo3_rev` template files were restored from the known-good quarantine mod copy.
+
+Recovered facts:
+
+- no-build practical observation now resolves the active runtime tag and reaches valid connect/grant markers.
+- fresh practical builds now complete again with intended diagnostic args.
+- but the launched runtime still reports old live tag `0402021252_67ac52`, not the fresh practical build tag `0405233950_75d444`.
+
+Meaning:
+
+- practical animation work is no longer blocked on linker architecture or stale verdict parsing.
+- the current blocker is a runtime-source split: fresh practical build artifacts are produced, but the game still executes an older live script/build lane.
+
+## 24) Practical late-attach lane is now reproducible at raw-runtime level; blocker moved to post-attach accepted-verdict carry-through (2026-04-05)
+
+What changed:
+
+- `tools/restart_t6_probe_cycle.ps1`
+  - now supports `-ProbeAttachGate` values:
+    - `startup`
+    - `connect`
+    - `grant`
+    - `first_raise_begin`
+    - `idle_begin`
+    - `fire_begin`
+- `tools/run_anim_debug_cycle.ps1`
+  - now supports late-attach gating through `-ProbeAttachGate`
+  - now sets longer default attach windows for non-startup gates
+  - now snapshots logs before launch/injection so late-attach runs retain pre-attach event history
+- `tools/run_practical_visible_motion_forcing.ps1`
+  - now drives the practical lane with `-ProbeAttachGate idle_begin`
+
+Authoritative practical archive:
+
+- `_build/bo3_rev_idg_probe/anim_debug_runs/20260405_194254_custom_idle_first_raise_observe_only`
+
+What this archive proves:
+
+- the practical mod lane reaches the real map/match again on the restored downstream path
+- the same run contains:
+  - `Loading fastfile so_zsurvival_zm_transit`
+  - `[bo3_rev][start]`
+  - `[bo3_rev][connect]`
+  - `[bo3_rev][grant]`
+  - `[bo3_rev][anim_probe] first_raise_begin/end`
+  - `[bo3_rev][anim_probe] idle_begin`
+- the forced visible shell is active in the same run:
+  - `c_zom_farmgirl_viewhands`
+- late probe attach is also real in the same run:
+  - `fx_runtime_probe loaded pid=68960 build=20260405_145516`
+
+Important interpretation:
+
+- the practical downstream lane is no longer blocked on launch reproducibility
+- the practical downstream lane is no longer blocked on probe attaching only at startup
+- the remaining blocker is narrower:
+  - post-attach carry-through into a fully accepted verdict / stable takeover lane
+
+Current honest state:
+
+- raw-runtime visible-capable lane: reproducible
+- fully accepted practical debug verdict: not yet reproducible
+- the next practical work should stay downstream:
+  - accepted-takeover carry-through
+  - visible-motion forcing on the restored late-attach lane
+
+## 25) Visibility isolation: invisible weapon is a first-person bind/composition failure before animation forcing (2026-04-05)
+
+Practical meaning:
+
+- if the weapon is fully invisible, the current lane is not yet a valid visible first-person lane
+- animation-selection debugging is secondary until the model bind is visible
+
+Build-side isolation added:
+
+- `tools/build_servant_minimal_anim_runtime.ps1`
+  - now supports:
+    - `-GunModelMode custom|base|literal`
+    - `-ForceLowHandmodel`
+    - `-DisableStockSurvivorCarrier`
+    - `-UseCustomIdgViewhands`
+
+Authoritative build-side visibility controls:
+
+- stock gun control:
+  - `_build/bo3_rev_idg_probe/build_report_visibility_stock_base.json`
+- safer custom-gun composition:
+  - `_build/bo3_rev_idg_probe/build_report_visibility_custom_lowhand.json`
+
+Recovered composition facts:
+
+- stock gun control:
+  - gun = `t6_wpn_zmb_mg08_view`
+  - hand = `c_zom_hazmat_viewhands`
+  - predicted totals:
+    - hazmat = `141 nodes / 130 joints`
+    - suit = `142 nodes / 130 joints`
+  - both under `160`
+- safer custom composition:
+  - gun = `bo3_rev_v2_idg_view_0406020649_150ab9`
+  - hand = `bo3_rev_bridge_viewhands`
+  - predicted totals:
+    - hazmat = `136 nodes / 129 joints`
+    - suit = `137 nodes / 129 joints`
+  - both under `160`
+
+Interpretation:
+
+- the earlier invisible lane should no longer be treated as an animation-only problem
+- the repo now has two visibility-safe composition controls on disk
+- the currently synced runtime was last rebuilt on the safer custom-gun + low-handmodel path

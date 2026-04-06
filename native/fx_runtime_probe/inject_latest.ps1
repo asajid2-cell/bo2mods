@@ -67,6 +67,7 @@ function Resolve-TargetProcess {
 
     $direct = Get-Process -Name $exeStemLocal -ErrorAction SilentlyContinue |
         Where-Object { $_.Id -ne $CurrentScriptPid } |
+        Sort-Object StartTime -Descending |
         Select-Object -First 1
     if ($direct) {
         return $direct
@@ -76,7 +77,7 @@ function Resolve-TargetProcess {
     # the inject window. Prefer plain Get-Process resolution only.
     $bootstrapper = Get-Process -Name "plutonium-bootstrapper-win32" -ErrorAction SilentlyContinue |
         Where-Object { $_.Id -ne $CurrentScriptPid } |
-        Sort-Object StartTime |
+        Sort-Object StartTime -Descending |
         Select-Object -First 1
     if ($bootstrapper) {
         return $bootstrapper
