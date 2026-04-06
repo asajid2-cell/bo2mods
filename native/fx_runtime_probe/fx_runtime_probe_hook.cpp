@@ -428,6 +428,18 @@ struct ConsumerDeferredSnapshotRequest
     std::vector<ConsumerAnchorSnapshot> anchors;
 };
 
+struct ViewmodelRenderSample
+{
+    std::atomic<unsigned> seq {0};
+    std::atomic<unsigned> hit {0};
+    std::atomic<DWORD> tick {0};
+    std::atomic<uintptr_t> owning_base {0};
+    std::atomic<uintptr_t> render {0};
+    std::atomic<uintptr_t> render_plus_8 {0};
+    std::atomic<uintptr_t> lookup {0};
+    std::atomic<uintptr_t> selector_root {0};
+};
+
 HMODULE g_self = nullptr;
 HMODULE g_main_module = nullptr;
 uintptr_t g_main_base = 0;
@@ -452,6 +464,7 @@ std::atomic<bool> g_consumer_first_hit_logged {false};
 std::atomic<bool> g_consumer_deferred_snapshots_started {false};
 std::atomic<int> g_unhandled_breakpoint_logs {0};
 std::atomic<bool> g_selector_root_temporal_started {false};
+std::atomic<bool> g_viewmodel_render_worker_started {false};
 
 std::vector<ModuleInfoLite> g_modules;
 std::unordered_set<std::string> g_watch_images;
@@ -472,6 +485,7 @@ std::vector<ObservedAssetAddress> g_observed_asset_addresses;
 std::unordered_set<std::string> g_observed_asset_address_keys;
 std::unordered_map<std::string, ConsumerObjectState> g_consumer_object_states;
 std::unordered_set<std::string> g_consumer_deferred_snapshot_keys;
+ViewmodelRenderSample g_viewmodel_render_sample;
 
 std::unordered_map<uintptr_t, AssetTrace> g_active_handles;
 std::unordered_map<DWORD, ReturnTraceState> g_return_states;
@@ -546,6 +560,7 @@ bool is_executable_address(uintptr_t addr);
 void record_observed_asset_address(const char* kind, const char* asset_name, uintptr_t addr, const char* source, uintptr_t related_addr = 0);
 std::vector<uint32_t> capture_dword_window_values(uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
 void log_consumer_dword_window_correlations(const char* context, uintptr_t base_addr, int before_slots, const std::vector<uint32_t>& values);
+void log_watched_asset_pointers_near(const char* context, uintptr_t base_addr, int before_slots, int after_slots);
 void track_consumer_object_window(const char* context, uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
 void log_consumer_typed_window(const char* context, const char* phase, uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
 void log_consumer_pointer_chases(const char* context, const char* phase, uintptr_t base_addr, int before_slots = 4, int after_slots = 8);
@@ -560,6 +575,7 @@ void try_log_consumer_render_edi_family(const char* phase, uintptr_t edi, bool i
 void log_materialization_producer_snapshot(const char* reason);
 void log_selector_root_compact_snapshot(const char* reason, const char* phase, uintptr_t selector_root);
 DWORD WINAPI selector_root_temporal_thread(void*);
+DWORD WINAPI viewmodel_render_snapshot_thread(void*);
 bool start_consumer_deferred_snapshots_once(const char* trigger_key, const char* trigger_label, uintptr_t trigger_addr, const std::vector<ConsumerAnchorSnapshot>& anchors);
 bool start_consumer_deferred_snapshots_once_locked(const char* trigger_key, const char* trigger_label, uintptr_t trigger_addr, const std::vector<ConsumerAnchorSnapshot>& anchors);
 CallerSelection capture_relevant_caller();
@@ -7707,6 +7723,110 @@ DWORD WINAPI consumer_deferred_snapshot_thread(void* param)
     return 0;
 }
 
+void queue_viewmodel_render_sample(unsigned hit, const CONTEXT& ctx)
+{
+    const uintptr_t owning_base = ctx.Esi >= 0xE0 ? ctx.Esi - 0xE0 : 0;
+    g_last_consumer_render_lookup_addr = ctx.Eax;
+    g_last_consumer_render_edi_addr = ctx.Edi;
+    g_viewmodel_render_sample.hit = hit;
+    g_viewmodel_render_sample.tick = GetTickCount();
+    g_viewmodel_render_sample.owning_base = owning_base;
+    g_viewmodel_render_sample.render = ctx.Esi;
+    g_viewmodel_render_sample.render_plus_8 = ctx.Esi + 8;
+    g_viewmodel_render_sample.lookup = ctx.Eax;
+    g_viewmodel_render_sample.selector_root = ctx.Edi;
+    g_viewmodel_render_sample.seq.fetch_add(1);
+}
+
+void log_viewmodel_render_snapshot_phase(const char* phase, unsigned seq, unsigned hit, DWORD tick, uintptr_t owning_base, uintptr_t render, uintptr_t render_plus_8, uintptr_t lookup, uintptr_t selector_root)
+{
+    WORD render_word = 0;
+    DWORD lookup_value = 0;
+    DWORD render_plus_8_value = 0;
+    DWORD flags = 0;
+    const bool have_render_word = render && safe_copy_memory(render, &render_word, sizeof(render_word));
+    const bool have_lookup_value = lookup && safe_copy_memory(lookup, &lookup_value, sizeof(lookup_value));
+    const bool have_render_plus_8_value = render_plus_8 && safe_copy_memory(render_plus_8, &render_plus_8_value, sizeof(render_plus_8_value));
+    const bool have_flags = owning_base && safe_copy_memory(owning_base, &flags, sizeof(flags));
+    const bool zero_lane = have_render_word && render_word == 0;
+    const bool compare_match = zero_lane && have_lookup_value && have_render_plus_8_value && lookup_value == render_plus_8_value;
+    const char* inferred =
+        !zero_lane ? "nonzero_branch" : (compare_match ? "zero_compare_match" : "zero_compare_miss");
+
+    log_line(
+        "viewmodel_render_deferred phase=%s seq=%u hit=%u tick=%lu owning=0x%08lX render=0x%08lX render_plus_8=0x%08lX lookup=0x%08lX selector_root=0x%08lX flags=0x%08lX masked=0x%08lX inferred=%s",
+        phase,
+        seq,
+        hit,
+        static_cast<unsigned long>(tick),
+        static_cast<unsigned long>(owning_base),
+        static_cast<unsigned long>(render),
+        static_cast<unsigned long>(render_plus_8),
+        static_cast<unsigned long>(lookup),
+        static_cast<unsigned long>(selector_root),
+        static_cast<unsigned long>(have_flags ? flags : 0),
+        static_cast<unsigned long>(have_flags ? (flags & 0x00002000u) : 0),
+        inferred);
+
+    if (owning_base)
+    {
+        log_consumer_anchor_snapshot("viewmodel_owning", phase, owning_base, 4, 8);
+        log_watched_asset_pointers_near("viewmodel_owning", owning_base);
+    }
+    if (render)
+    {
+        log_consumer_anchor_snapshot("viewmodel_render", phase, render, 4, 8);
+        log_watched_asset_pointers_near("viewmodel_render", render);
+    }
+    if (render_plus_8)
+    {
+        log_consumer_anchor_snapshot("viewmodel_render_plus_8", phase, render_plus_8, 4, 8);
+        log_watched_asset_pointers_near("viewmodel_render_plus_8", render_plus_8);
+    }
+    if (lookup)
+    {
+        log_consumer_anchor_snapshot("viewmodel_lookup", phase, lookup, 4, 8);
+        log_watched_asset_pointers_near("viewmodel_lookup", lookup);
+    }
+    if (selector_root)
+    {
+        log_consumer_anchor_snapshot("viewmodel_selector_root", phase, selector_root, 16, 8);
+        try_log_consumer_render_edi_family(phase, selector_root, true);
+    }
+}
+
+DWORD WINAPI viewmodel_render_snapshot_thread(void*)
+{
+    log_line("viewmodel_render_snapshot_thread_started");
+    unsigned last_seq = 0;
+    for (;;)
+    {
+        const unsigned seq = g_viewmodel_render_sample.seq.load();
+        if (!seq || seq == last_seq)
+        {
+            Sleep(25);
+            continue;
+        }
+
+        last_seq = seq;
+        const unsigned hit = g_viewmodel_render_sample.hit.load();
+        const DWORD tick = g_viewmodel_render_sample.tick.load();
+        const uintptr_t owning_base = g_viewmodel_render_sample.owning_base.load();
+        const uintptr_t render = g_viewmodel_render_sample.render.load();
+        const uintptr_t render_plus_8 = g_viewmodel_render_sample.render_plus_8.load();
+        const uintptr_t lookup = g_viewmodel_render_sample.lookup.load();
+        const uintptr_t selector_root = g_viewmodel_render_sample.selector_root.load();
+
+        Sleep(125);
+        log_viewmodel_render_snapshot_phase("deferred_125ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
+        Sleep(375);
+        log_viewmodel_render_snapshot_phase("deferred_500ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
+        Sleep(1000);
+        log_viewmodel_render_snapshot_phase("deferred_1500ms", seq, hit, tick, owning_base, render, render_plus_8, lookup, selector_root);
+    }
+    return 0;
+}
+
 bool start_consumer_deferred_snapshots_once_locked(const char* trigger_key, const char* trigger_label, uintptr_t trigger_addr, const std::vector<ConsumerAnchorSnapshot>& anchors)
 {
     if (!trigger_key || !*trigger_key || !trigger_label || !*trigger_label || !trigger_addr || anchors.empty())
@@ -7775,13 +7895,14 @@ void arm_opacity_focus_consumers_locked(unsigned long long trace_id, const std::
     const int render_hits = g_probe_mode == ProbeMode::ViewmodelRenderFocus ? 1 : 12;
     const int submit_hits = g_probe_mode == ProbeMode::ViewmodelRenderFocus ? 1 : 4;
     arm_exec_trace_locked("consumer_render_table", rva_to_va(kConsumerRenderTableRva), trace_id, path, render_hits);
-    arm_exec_trace_locked("consumer_submit_flags", rva_to_va(kConsumerSubmitFlagsRva), trace_id, path, submit_hits);
+    if (g_probe_mode != ProbeMode::ViewmodelRenderFocus)
+        arm_exec_trace_locked("consumer_submit_flags", rva_to_va(kConsumerSubmitFlagsRva), trace_id, path, submit_hits);
     g_opacity_focus_consumers_armed = true;
     log_line("opacity_focus_arm trace=%llu path=%s render_table=0x%08lX submit_flags=0x%08lX",
         trace_id,
         path.c_str(),
         static_cast<unsigned long>(rva_to_va(kConsumerRenderTableRva)),
-        static_cast<unsigned long>(rva_to_va(kConsumerSubmitFlagsRva)));
+        static_cast<unsigned long>(g_probe_mode == ProbeMode::ViewmodelRenderFocus ? 0 : rva_to_va(kConsumerSubmitFlagsRva)));
 }
 
 void arm_opacity_focus_consumers(unsigned long long trace_id, const std::string& path)
@@ -8951,20 +9072,33 @@ LONG CALLBACK probe_veh(EXCEPTION_POINTERS* info)
         }
         ctx.Eip = static_cast<DWORD>(point.addr);
 
-        log_line("exec_trace_hit label=%s hit=%d late=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
-            point.label.c_str(), point.hits, late_concurrent_hit ? 1 : 0, static_cast<unsigned long>(point.addr), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str());
         const bool compact_viewmodel_focus = g_probe_mode == ProbeMode::ViewmodelRenderFocus &&
             (point.label == "consumer_render_table" || point.label == "consumer_submit_flags");
+        if (!compact_viewmodel_focus)
+        {
+            log_line("exec_trace_hit label=%s hit=%d late=%d eip=0x%08lX addr=0x%08lX trace=%llu path=%s",
+                point.label.c_str(), point.hits, late_concurrent_hit ? 1 : 0, static_cast<unsigned long>(point.addr), static_cast<unsigned long>(point.addr), point.trace_id, point.path.c_str());
+        }
         if ((is_minimal_consumer_focus_mode() || compact_viewmodel_focus) &&
             is_consumer_trace_label(point.label) &&
             !g_consumer_first_hit_logged.exchange(true))
         {
-            log_line("consumer_first_hit label=%s hit=%d addr=0x%08lX trace=%llu path=%s",
-                point.label.c_str(),
-                point.hits,
-                static_cast<unsigned long>(point.addr),
-                point.trace_id,
-                point.path.c_str());
+            if (!compact_viewmodel_focus)
+            {
+                log_line("consumer_first_hit label=%s hit=%d addr=0x%08lX trace=%llu path=%s",
+                    point.label.c_str(),
+                    point.hits,
+                    static_cast<unsigned long>(point.addr),
+                    point.trace_id,
+                    point.path.c_str());
+            }
+        }
+        if (compact_viewmodel_focus)
+        {
+            if (point.label == "consumer_render_table")
+                queue_viewmodel_render_sample(point.hits, ctx);
+            g_tls_in_veh = false;
+            return EXCEPTION_CONTINUE_EXECUTION;
         }
         if (!compact_viewmodel_focus)
         {
@@ -9617,6 +9751,20 @@ DWORD WINAPI init_thread(void*)
         log_line("render_only_focus_init enabled");
         load_watchlist();
         load_xanim_expectations();
+        if (g_probe_mode == ProbeMode::ViewmodelRenderFocus && !g_viewmodel_render_worker_started.exchange(true))
+        {
+            HANDLE worker_thread = CreateThread(nullptr, 0, viewmodel_render_snapshot_thread, nullptr, 0, nullptr);
+            if (worker_thread)
+            {
+                log_line("viewmodel_render_snapshot_thread_created");
+                CloseHandle(worker_thread);
+            }
+            else
+            {
+                g_viewmodel_render_worker_started = false;
+                log_line("viewmodel_render_snapshot_thread_failed gle=%lu", GetLastError());
+            }
+        }
     }
     else if (minimal_consumer_focus)
     {

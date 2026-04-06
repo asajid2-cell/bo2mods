@@ -17,7 +17,7 @@ Debug-only x86 runtime probe for T6/Plutonium client startup.
   - `effect_26z423jf`
   - `fxt_light_glow_square`
 - Supports a narrower `render_opacity_focus` mode for render-table and submit-flags consumer traces, intended for investigating why a loaded effect renders with inconsistent opacity.
-- Supports a `viewmodel_render_focus` mode that keeps the same lightweight render-side consumer coverage without the heavier xanim-consumer branch fanout.
+- Supports a `viewmodel_render_focus` mode that captures the first live render-table hit and defers the heavier memory snapshots/model correlation to a background thread instead of doing them inline on the render callback.
 - Supports an `xanim_focus` mode that watches xanim and xmodel names in memory and logs the code paths, registers, strings, raw pointer refs, and backtraces involved when those names are touched at runtime.
 
 ## Build
