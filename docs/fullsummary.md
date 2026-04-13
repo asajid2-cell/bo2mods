@@ -1,5 +1,116 @@
 # Full Summary
 
+## 91) Clean runtime restored; generic `fs_game` mod lane is now the primary crash boundary (2026-04-12)
+
+Current intended runtime split:
+
+- repo / tooling / Plutonium-side workspace:
+  - `Z:\Games\pluto_t6_full_game`
+- clean stock game runtime:
+  - `Z:\Games\t6-clean\pluto_t6_full_game`
+
+What is now proven:
+
+- the clean runtime can launch and play a normal stock game again
+- the repo no longer needs to be treated as the live game install
+- the earlier `no free ipak slots` failure was partly self-inflicted by synthetic support alias `ipak`s
+
+Examples of the synthetic aliases that were created during troubleshooting:
+
+- `code_post_gfx_zm.ipak`
+- `common_zm.ipak`
+- `lowmip.ipak`
+- `ui_zm.ipak`
+- `zm_transit.ipak`
+- `zm_transit_patch.ipak`
+- `patch_all.ipak`
+- `dlc1_load_zm.ipak` to `dlc4_load_zm.ipak`
+
+Important correction:
+
+- those alias `ipak`s are not clean stock content
+- `t6-clean` already contains the real stock zone / fastfile / DLC set needed for ordinary stock play
+- do not treat the synthetic support names above as missing stock DLC
+
+Current launcher/runtime state:
+
+- `tools/launch_t6_offline.ps1`
+  - defaults to:
+    - `GameDir = Z:\Games\t6-clean\pluto_t6_full_game`
+    - `Name = offline_player`
+  - no longer frames the synthetic support `ipak`s as required stock assets
+- `tools/prepare_t6_clean_regular_runtime.ps1`
+  - verifies `t6-clean`
+  - copies only genuinely missing stock files from the older runtime if needed
+  - attempts to remove the old Plutonium firewall block
+
+Current crash/stability boundary:
+
+- stock no-mod gameplay on `t6-clean` is good
+- any `fs_game=mods/<name>` Zombies session is still unstable
+- this is not specific to:
+  - `blackops3servant`
+  - `new_mod`
+  - or any current repo payload
+
+Proof:
+
+- `new_mod` reproduces the crash
+- even a nonexistent mod name (`ghostmod`) reproduces the same generic mod-session bootstrap
+- modded sessions still load:
+  - `mod`
+  - `mod_load`
+  - `mod_patch`
+  before the stock Transit survival fastfiles
+
+Current interpretation:
+
+- the active blocker is no longer “our Servant assets are broken”
+- the active blocker is the generic `fs_game` mod support lane for Zombies on this runtime/state
+- do not use a modded Zombies crash as evidence about the Servant weapon yet
+- first re-establish a stable modded baseline on top of `t6-clean`
+- then rebuild:
+  - `new_mod`
+  - stock-visible control mod
+  - `blackops3servant`
+
+## 90) Stock engine-input dossier: coherent stock-control staging is now empirically archived (2026-04-06)
+
+Authoritative artifacts:
+
+- `tools/run_stock_visibility_control.ps1`
+- `_build/visibility_live/20260406_132914_stock_control/engine_input_dossier.json`
+- `_build/visibility_live/20260406_132949_stock_control/engine_input_dossier.json`
+
+What changed:
+
+- the stock-control wrapper now always archives a machine-readable engine-input dossier
+- the restart helper now emits `resolved_sources.json` instead of only printing runtime source origins to the terminal
+
+What the coherent dossier proves on the current stock pistol lane:
+
+- the emitted runtime script and the synced AppData script now match exactly for the same build tag
+- the current stock-control lane is truly:
+  - `weapon = m1911_zm`
+  - `starter = m1911_zm`
+  - `gun_model_mode = base`
+  - `model = t6_wpn_pistol_m1911_view`
+- the resolved loose runtime sources are now dominated by:
+  - `repo_mod` for scripts / clientscripts / character scripts
+  - `build_output` for `so_zsurvival_zm_transit.ff`
+- the old mixed-source ambiguity is narrower now because the exact synced source set is archived per run
+
+Important current blocker:
+
+- a coherent staged runtime no longer explains the missing first-person visuals away as simple drift
+- if stock pistol visibility is still absent on this lane, the remaining bug is deeper in the first-person render/bind path, not in basic build/source incoherence
+
+Important caveat:
+
+- `mod_load.ff` is still absent from the current build output on this lane, and the dossier records that explicitly
+- the launch-backed dossier did not produce new `connect/grant/idle_begin` markers for build `stockctl_20260406_132949` within the bounded capture window
+- so the sync-only dossier is currently the cleanest source of truth for exact engine inputs, while live acceptance still needs a longer or more targeted capture window
+
 ## 89) practical downstream pivot: bounded same-process later-family control did not recover a stable accepted takeover case (2026-04-05)
 
 Authoritative summary:
@@ -7057,3 +7168,340 @@ Recovered meaning:
 - the repo itself now contains the core shell/client runtime sources again, instead of depending on AppData/quarantine copies
 - mixed-source runtime drift is now observable at startup time
 - practical animation debugging is back on a deterministic stock-shell baseline, which is the right state before pushing further on first-person animation takeover
+
+## 27) Default visibility lane corrected: the repo was still staging an over-cap custom first-person build by default (2026-04-06)
+
+What was wrong:
+
+- the plain build path still defaulted to:
+  - `gun_model_mode = custom`
+  - BO3 custom gun model on the live `mg08_zm` shell
+- the build report for that lane showed:
+  - `c_zom_suit_viewhands = 206 nodes / 201 joints`
+  - `c_zom_hazmat_viewhands = 206 nodes / 201 joints`
+- that is over the repo's practical T6 first-person DObj safety cap of `160`
+
+What was fixed:
+
+- `_build/build_bo3_rev_idg_probe.py`
+  - default `ROGUE_GUN_MODEL_MODE` changed from `custom` to `base`
+  - default `ROGUE_USE_STOCK_SURVIVOR_CARRIER` changed from `0` to `1`
+  - `current_blocker` in `build_report.json` now explicitly calls out the over-cap custom composition when applicable
+- `tools/build_servant_minimal_anim_runtime.ps1`
+  - default `-GunModelMode` changed from `custom` to `base`
+- `tools/run_anim_debug_cycle.ps1`
+  - default `-GunModelMode` changed from `custom` to `base`
+
+Authoritative rebuilt safe baseline:
+
+- build tag:
+  - `0406073807_7eef05`
+- current staged lane:
+  - `mode = base`
+  - `model = t6_wpn_zmb_mg08_view`
+  - forced stock shell enabled
+  - forced shell = `c_zom_engineer_viewhands`
+- current predicted totals:
+  - `c_zom_suit_viewhands = 142 nodes / 130 joints`
+  - `c_zom_hazmat_viewhands = 141 nodes / 130 joints`
+  - both under `160`
+
+Meaning:
+
+- the old invisible lane was not a neutral baseline
+- the repo was still defaulting to a custom first-person composition that its own build report classified as over-cap
+- visibility work should now start from the rebuilt stock-visible control lane, not from the old default custom lane
+
+## 28) Minimal transit client carrier contract repaired enough to clear the clientfield mismatch gate (2026-04-06)
+
+What was wrong:
+
+- the minimal `mods/bo3_rev/clientscripts/mp/zm_transit.csc.in` carrier reached map startup, but it under-registered the stock town-survival clientfield contract
+- missing on client:
+  - `playerinfog`
+  - `screecher_light_*`
+  - perk clientfields
+- extra on client:
+  - `zombie_riser_fx_water`
+  - unsupported powerup clientfields such as:
+    - `powerup_bon_fire`
+    - `powerup_fire_sale`
+    - `powerup_mini_gun`
+    - `powerup_tesla`
+
+What was fixed:
+
+- `mods/bo3_rev/clientscripts/mp/zm_transit.csc.in`
+  - now includes:
+    - `clientscripts\mp\zombies\_zm_utility`
+    - `clientscripts\mp\zombies\_zm_equipment`
+  - `register_client_fields()` now registers:
+    - `allplayers/playerinfog`
+    - `world/screecher_light_*`
+  - `start_zombie_stuff()` now sets:
+    - `level._no_water_risers = 1`
+    - perk enable flags for:
+      - double tap
+      - juggernaut
+      - marathon
+      - revive
+      - sleight of hand
+      - tombstone
+  - town-safe `include_powerups()` now only includes the stock subset needed by the server
+  - added minimal `infog_clientfield_cb`, `lerp_infog_alpha`, `register_screecher_lights`, and `safety_light_callback`
+
+Recovered result:
+
+- the previous `ERROR: Client and server clientfield registrations don't match.` gate is no longer present on the latest `0406073807_7eef05` run
+- client and server field sets now align at the point where the old carrier was aborting
+
+Current remaining blocker after these fixes:
+
+- the corrected stock-visible baseline still does not reach later `[bo3_rev][connect]` / `[bo3_rev][grant]` markers in the latest direct launch
+- the run now survives past the old clientfield mismatch gate but still drops back out after `stage=init`
+- so the next frontier is no longer:
+  - over-cap invisible custom composition
+  - transit clientfield mismatch
+- it is now the later map-start / in-map handoff after those two defects
+
+## 29) Startup root cause closed: stock server plus stripped transit client now reaches live connect/grant/idle (2026-04-06)
+
+This pass finally separated startup failures from the actual first-person visibility/animation problem.
+
+What was actually wrong:
+
+- the earlier startup failures were a stack of different defects, not one issue:
+  - stale loose `maps/mp/zm_transit.gsc` / `zm_cosmodrome_standard.gsc` carrier overrides kept forcing the stripped cosmodrome carrier on the server side
+  - the base/full-map build lane was still deleting the loose `clientscripts/mp/zm_transit.csc` override whenever `USE_MAP_FULL_ZONE_SOURCE=1`, so the client fell back to stock full transit registrations
+  - the first stripped client override then broke script-mover animtree order until the stock bus/automaton/turbine init order was restored
+  - after that, the client still needed only the world `screecher_light_*` registrations restored, not the old allplayers/power-rumble transit extras
+
+What was changed:
+
+- `tools/launch_t6_offline.ps1`
+  - now removes stale loose carrier map scripts from both:
+    - `mods/bo3_rev/maps/mp`
+    - AppData runtime
+  - syncs `clientscripts/mp/zm_transit.csc` when present
+- `tools/restart_t6_probe_cycle.ps1`
+  - carrier-map sync is now opt-in only via `ROGUE_SYNC_CARRIER_MAP_SCRIPTS=1`
+  - stale loose carrier map scripts are removed from both repo mod runtime and AppData by default
+  - the runtime transit client override now resolves from repo first instead of assuming only generated build output
+- `_build/build_bo3_rev_idg_probe.py`
+  - no longer deletes the loose `zm_transit.csc` override just because `USE_MAP_FULL_ZONE_SOURCE=1`
+- `mods/bo3_rev/clientscripts/mp/zm_transit.csc.in`
+  - now keeps the stock zombie-core registrations needed by the current server contract
+  - preserves the stock script-mover animtree init order:
+    - `zm_transit_bus::init_animtree()`
+    - `zm_transit_bus::init_props_animtree()`
+    - `zm_transit_automaton::init_animtree()`
+    - `_zm_equip_turbine::init_animtree()`
+  - restores only the world `screecher_light_*` registrations the current server exports
+  - strips the old transit extras that caused mismatch on this lane:
+    - vehicle bus clientfields
+    - `power_rumble`
+    - allplayers `screecher_*` / `sq_tower_sparks`
+
+Authoritative live result:
+
+- current launch path reaches:
+  - `[bo3_rev][connect]`
+  - `[bo3_rev][grant]`
+  - `first_raise_begin/end`
+  - `pullout_begin/end`
+  - `idle_begin/end`
+- current forced shell remains:
+  - `vm=c_zom_engineer_viewhands`
+- current granted stock-visible weapon remains:
+  - `weapon=mg08_zm`
+  - `model=t6_wpn_zmb_mg08_view`
+
+Meaning:
+
+- startup/clientfield mismatch is no longer the active blocker
+- script-mover animtree order mismatch is no longer the active blocker
+- the project can now return to the real first-person visibility/animation problem on a live in-map stock baseline
+
+2026-04-06 stock-visibility control recovery
+-------------------------------------------
+
+New helper:
+
+- `tools/run_stock_visibility_control.ps1`
+  - builds a script-only stock control lane
+  - forces:
+    - `probe_weapon = m1911_zm`
+    - `starter_weapon = m1911_zm`
+    - `ROGUE_USE_BO3_IDG_ANIMS = 0`
+    - `ROGUE_FORCE_STOCK_SHELL = 0`
+    - `ROGUE_SCRIPT_ONLY_SYNC = 1`
+  - syncs loose GSC/CSC only
+  - can launch, capture a screenshot, archive log deltas, and kill the game
+
+Build/runtime helper corrections:
+
+- `_build/build_bo3_rev_idg_probe.py`
+  - runtime linker now skips missing optional DLC zombie load FFs instead of hard-failing on `dlc4_load_zm.ff`
+  - new `ROGUE_SCRIPT_ONLY_SYNC=1` mode:
+    - renders `mod_i_am_mod.gsc`
+    - renders `clientscripts/mp/zm_transit.csc`
+    - syncs loose scripts/clientscripts
+    - skips the full custom survival FF/IPAK linker path
+- `tools/run_stock_visibility_control.ps1`
+  - now stamps a unique `ROGUE_BUILD_TAG=stockctl_<timestamp>`
+  - archives per-run `games_mp.delta.log` / `console_zm.delta.log`
+  - archives the rendered repo/AppData `mod_i_am_mod.gsc` copies for the run
+
+Authoritative stock-control run:
+
+- archive:
+  - `_build/visibility_live/20260406_073637_stock_control`
+- unique build tag:
+  - `stockctl_20260406_073637`
+- mode:
+  - `weapon=m1911_zm`
+  - `starter=m1911_zm`
+  - `model=t6_wpn_pistol_m1911_view`
+  - stock survival zone
+  - no forced shell
+
+Observed live result from `games_mp.delta.log`:
+
+- the stock control lane reaches real gameplay markers:
+  - `[bo3_rev][connect]`
+  - `[bo3_rev][grant]`
+  - `first_raise_begin/end`
+  - `idle_begin`
+- live shell on this run:
+  - `vm=c_zom_reporter_viewhands`
+- stock pistol tag motion is real:
+  - `tag_flash`, `tag_weapon`, and `tag_brass` are defined and move during `first_raise` and `idle`
+  - `tag_clip` remains `<undef>` on this stock pistol lane
+- `override_won=0` on `m1911_zm`, which is expected for the stock control
+
+Meaning:
+
+- the first-person system is not globally dead
+- a plain stock `m1911_zm` lane on a stock survival zone does reach a live first-person shell and real tag motion
+- the earlier “nothing visible anywhere” assumption is now superseded
+
+What remains broken:
+
+- the install/runtime is still incomplete in parallel:
+  - `zm_transit_common` ipak is missing
+  - stock `so_zsurvival_zm_transit.ipak` is missing
+  - many stock zombie weapons still fail client load during map init
+- the custom `mg08_zm` lane is still not the same as the recovered stock control lane
+- if custom visibility fails now, the next blocker is no longer global first-person death; it is the custom weapon/survival content path
+## 2026-04-06: stock control startup regression fixed; visibility bug remains
+
+- The stock-control wrapper had drifted away from the older working lane by setting `ROGUE_SYNC_TRANSIT_CLIENTSCRIPT=0`.
+- That reintroduced the town-survival client/server contract failure on the stock pistol baseline and made the restored control unreliable.
+- `tools/run_stock_visibility_control.ps1` now syncs the loose `zm_transit.csc` override again and waits for in-map markers (`idle_begin` / `grant` / `connect`) instead of treating `[bo3_rev][start]` as success.
+
+Fresh evidence:
+
+- `stockctl_20260406_130915` reached:
+  - `[bo3_rev][connect]`
+  - `[bo3_rev][grant] weapon=m1911_zm`
+  - `[bo3_rev][anim_probe] stage=idle_begin`
+- The same run logged real moving stock first-person tags:
+  - `tag_flash`
+  - `tag_weapon`
+  - `tag_brass`
+- Manual screen capture from the live run is archived at:
+  - `_build/visibility_live/20260406_130915_stock_control_manual.png`
+
+Meaning:
+
+- startup / clientfield desync is no longer the active blocker on the restored stock control
+- the stock pistol logical first-person lane is alive again
+- the remaining blocker is narrower and unchanged in kind:
+  - the first-person object animates logically, but the visible viewmodel/hands still do not render on screen
+
+This is now the authoritative stock baseline:
+
+- build tag: `stockctl_20260406_130915`
+- weapon: `m1911_zm`
+- model: `t6_wpn_pistol_m1911_view`
+- shell observed in-run: `c_zom_farmgirl_viewhands`
+- live result: in-map + moving first-person tags + no visible first-person model
+
+## 2026-04-12: runtime split corrected; `fs_game` mod lane is now the primary crash boundary
+
+The current intended split is:
+
+- repo / tooling / Plutonium-side workspace:
+  - `Z:\Games\pluto_t6_full_game`
+- clean stock game runtime:
+  - `Z:\Games\t6-clean\pluto_t6_full_game`
+
+What is now proven:
+
+- the clean runtime can launch and play a normal stock game again
+- the repo no longer needs to be treated as the live game install
+- one earlier `ipak` failure was self-inflicted:
+  - synthetic support aliases had been created in the runtime
+  - examples:
+    - `code_post_gfx_zm.ipak`
+    - `common_zm.ipak`
+    - `lowmip.ipak`
+    - `ui_zm.ipak`
+    - `zm_transit.ipak`
+    - `zm_transit_patch.ipak`
+    - `patch_all.ipak`
+    - `dlc1_load_zm.ipak` to `dlc4_load_zm.ipak`
+- those aliases are not clean stock content and should not be reintroduced as “missing DLC”
+
+Important correction:
+
+- `t6-clean` already contains the real stock zone/fastfile/DLC set needed for ordinary stock play
+- the missing support-`ipak` names above were a probe-era/runtime-repair artifact, not a real stock-runtime gap
+
+Current launcher/runtime state:
+
+- `tools/launch_t6_offline.ps1`
+  - defaults to:
+    - `GameDir = Z:\Games\t6-clean\pluto_t6_full_game`
+    - `Name = offline_player`
+  - no longer warns about the synthetic support `ipak`s as if they were required stock assets
+- `tools/prepare_t6_clean_regular_runtime.ps1`
+  - verifies `t6-clean`
+  - copies only genuinely missing stock files from the older runtime if needed
+  - tries to remove the old Plutonium firewall block
+
+Current crash/stability boundary:
+
+- stock no-mod gameplay on `t6-clean` is good
+- any `fs_game=mods/<name>` Zombies session is still unstable
+- this is not specific to:
+  - `blackops3servant`
+  - `new_mod`
+  - or any current repo payload
+
+Proof:
+
+- `new_mod` reproduces the crash
+- even a nonexistent mod name (`ghostmod`) reproduces the same mod-session bootstrap
+- modded sessions still load:
+  - `mod`
+  - `mod_load`
+  - `mod_patch`
+  before the stock Transit survival fastfiles
+
+Clean interpretation:
+
+- the active blocker is no longer “our Servant assets are broken”
+- the active blocker is the generic `fs_game` mod support lane for Zombies on this runtime/state
+- the user-observed in-game crash should currently be treated as:
+  - a generic mod-session/runtime-support problem
+  - not a weapon/viewmodel-specific crash
+
+Practical consequence:
+
+- do not use a modded Zombies crash as evidence about the Servant weapon yet
+- first re-establish a stable modded baseline on top of `t6-clean`
+- then rebuild:
+  - `new_mod`
+  - stock-visible control mod
+  - `blackops3servant`

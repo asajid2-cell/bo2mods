@@ -26,6 +26,7 @@ Task-oriented operational docs.
 
 ## Reference
 Authoritative "look it up" material.
+- `docs/commands.md`
 - `docs/servant-fx-preview.html`
 - `docs/servant-fx-preview-data.json`
 - `docs/reference/env-vars.md`
@@ -66,6 +67,11 @@ The current documented path is:
   - blend/alpha tuning on the phosphorous core
   - phosphorous fidelity
   - final vortex layer semantics
+- current runtime/control split:
+  - repo / tooling / Plutonium-side workspace: `Z:\Games\pluto_t6_full_game`
+  - clean stock game runtime: `Z:\Games\t6-clean\pluto_t6_full_game`
+- the old synthetic zombie support alias `ipak`s were a self-inflicted runtime repair artifact, not real missing stock DLC
+- the current active crash boundary is the generic `fs_game` mod-session support lane, not the Servant payload itself
 
 ## Credits
 - `docs/credit.md`

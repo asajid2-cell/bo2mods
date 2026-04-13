@@ -1,5 +1,99 @@
 # Handoff
 
+## 59) Clean runtime restored; generic mod-session support is now the first crash boundary (2026-04-12)
+
+Current intended runtime split:
+
+- repo / tooling / Plutonium-side workspace:
+  - `Z:\Games\pluto_t6_full_game`
+- clean stock game runtime:
+  - `Z:\Games\t6-clean\pluto_t6_full_game`
+
+Current state:
+
+- the clean runtime can launch and play a normal stock game again
+- the repo should no longer be treated as the live game install
+- one earlier runtime failure was self-inflicted by synthetic support alias `ipak`s
+
+Examples of the synthetic aliases:
+
+- `code_post_gfx_zm.ipak`
+- `common_zm.ipak`
+- `lowmip.ipak`
+- `ui_zm.ipak`
+- `zm_transit.ipak`
+- `zm_transit_patch.ipak`
+- `patch_all.ipak`
+- `dlc1_load_zm.ipak` to `dlc4_load_zm.ipak`
+
+Correction:
+
+- those aliases are not clean stock content
+- `t6-clean` already has the real stock zone / fastfile / DLC set needed for ordinary stock play
+- do not treat the synthetic support names above as missing stock DLC
+
+Current launch/runtime tools:
+
+- `tools/launch_t6_offline.ps1`
+  - defaults to:
+    - `GameDir = Z:\Games\t6-clean\pluto_t6_full_game`
+    - `Name = offline_player`
+- `tools/prepare_t6_clean_regular_runtime.ps1`
+  - verifies `t6-clean`
+  - copies only genuinely missing stock files from the old runtime if needed
+  - attempts to remove the old firewall block
+
+Current crash/stability boundary:
+
+- stock no-mod gameplay on `t6-clean` is good
+- any `fs_game=mods/<name>` Zombies session is still unstable
+- this is not specific to:
+  - `blackops3servant`
+  - `new_mod`
+  - or any current repo payload
+
+Proof:
+
+- `new_mod` reproduces the crash
+- even a nonexistent mod name (`ghostmod`) reproduces the same generic mod-session bootstrap
+- modded sessions still load:
+  - `mod`
+  - `mod_load`
+  - `mod_patch`
+  before the stock Transit survival fastfiles
+
+Practical implication:
+
+- do not treat a modded Zombies crash as evidence about the Servant weapon yet
+- first re-establish a stable modded baseline on top of `t6-clean`
+- then rebuild:
+  - `new_mod`
+  - stock-visible control mod
+  - `blackops3servant`
+
+## 58) Stock engine-input dossier checkpoint (2026-04-06)
+
+Authoritative artifacts:
+
+- `tools/run_stock_visibility_control.ps1`
+- `_build/visibility_live/20260406_132914_stock_control/engine_input_dossier.json`
+- `_build/visibility_live/20260406_132949_stock_control/engine_input_dossier.json`
+
+What is now explicit:
+
+- the stock-control wrapper now archives a coherent per-run engine-input dossier
+- the restart helper now emits `resolved_sources.json` for the exact synced loose/runtime source set
+- the current coherent stock-control lane is:
+  - `m1911_zm`
+  - `gun_model_mode = base`
+  - `t6_wpn_pistol_m1911_view`
+  - no staged `handModel`
+
+Meaning:
+
+- the repo can now prove what is being emitted and synced for the current stock lane without relying on terminal output or mixed-date artifacts
+- if visuals are still missing on this coherent lane, the next blocker is deeper than simple build/source drift
+
 ## 53) Practical Pivot Update: bounded downstream same-process control did not recover a fresh accepted takeover case (2026-04-05)
 
 Authoritative summary:
@@ -5841,3 +5935,33 @@ Meaning:
 - the repo no longer depends on AppData/quarantine copies for the core shell/client runtime files
 - startup/source drift is now visible at launch time instead of silently hidden behind fallback resolution
 - practical animation runs are back on a deterministic stock-shell baseline, which is the correct prerequisite before resuming deeper animation-failure diagnosis
+## 2026-04-06: restored stock control checkpoint
+
+The stock-control wrapper had drifted into an invalid lane because it stopped syncing the loose `zm_transit.csc` override. That broke the practical stock control and made later visibility results harder to trust.
+
+Current fix:
+
+- `tools/run_stock_visibility_control.ps1`
+  - `ROGUE_SYNC_TRANSIT_CLIENTSCRIPT=1`
+  - waits for `idle_begin` / `grant` / `connect` instead of `[bo3_rev][start]`
+
+Fresh authoritative run:
+
+- build tag: `stockctl_20260406_130915`
+- runtime reached:
+  - `connect`
+  - `grant`
+  - `idle_begin`
+- stock first-person tag motion is real again on:
+  - `tag_flash`
+  - `tag_weapon`
+  - `tag_brass`
+- manual desktop capture:
+  - `_build/visibility_live/20260406_130915_stock_control_manual.png`
+
+Current project state after this correction:
+
+- the stock logical first-person lane is restored
+- the remaining live blocker is still the visible bind/render path
+- even on the restored stock pistol control, the on-screen screenshot still shows no visible first-person weapon/hands
+- that means the next work should stay on render/bind visibility, not startup recovery or animation selection

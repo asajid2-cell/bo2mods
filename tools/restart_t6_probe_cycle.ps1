@@ -2,6 +2,9 @@ param(
     [switch]$Launch,
     [switch]$InjectProbe,
     [switch]$ModOnly,
+    [switch]$UseStockSurvivalZone,
+    [switch]$SyncBaseZoneAll,
+    [switch]$SyncGeneratedClientOverrides,
     [string]$Map = "",
     [string]$UiGametype = "",
     [string]$UiZmGamemodeGroup = "",
@@ -21,13 +24,83 @@ param(
     [string]$ProbeGuardNeedle = "gfx_light_phosphorous_em_i1024",
     [int]$ProbeGuardDelayMs = 15000,
     [int]$ProbeGuardMax = 1,
-    [string]$Name = "ffprobe_offline",
+    [string]$Name = "offline_player",
     [string]$Mod = "bo3_rev",
-    [string]$GameDir = "Z:\Games\pluto_t6_full_game",
-    [string]$PlutoniumDir = "C:\Users\Ahmed\AppData\Local\Plutonium"
+    [string]$BuildRootName = "",
+    [string]$GameDir = "Z:\Games\t6-clean\pluto_t6_full_game",
+    [string]$PlutoniumDir = "C:\Users\Ahmed\AppData\Local\Plutonium",
+    [string]$RepoDir = "",
+    [ValidateRange(0, 16)]
+    [int]$MonitorIndex = 2,
+    [switch]$HiddenWorker,
+    [switch]$SkipAssetValidation,
+    [string]$ResolvedSourceReportPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoDir)) {
+    $RepoDir = Split-Path -Parent $PSScriptRoot
+}
+
+$RepoDir = [System.IO.Path]::GetFullPath($RepoDir)
+$GameDir = [System.IO.Path]::GetFullPath($GameDir)
+$PlutoniumDir = [System.IO.Path]::GetFullPath($PlutoniumDir)
+
+function Start-HiddenSelfLaunch {
+    $argList = @(
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-HiddenWorker"
+    )
+
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+        $name = [string]$entry.Key
+        if ($name -eq "HiddenWorker") {
+            continue
+        }
+
+        $value = $entry.Value
+        if ($value -is [System.Management.Automation.SwitchParameter]) {
+            if ($value.IsPresent) {
+                $argList += "-$name"
+            }
+            continue
+        }
+
+        if ($value -is [System.Array] -and -not ($value -is [string])) {
+            foreach ($item in $value) {
+                $argList += "-$name"
+                $argList += [string]$item
+            }
+            continue
+        }
+
+        $argList += "-$name"
+        $argList += [string]$value
+    }
+
+    Start-Process -FilePath "powershell" -ArgumentList $argList -WindowStyle Hidden | Out-Null
+}
+
+if ($Launch -and $MonitorIndex -gt 0 -and -not $HiddenWorker) {
+    Start-HiddenSelfLaunch
+    Write-Host "Launching hidden restart helper for monitor $MonitorIndex." -ForegroundColor Green
+    return
+}
+
+$modName = ""
+if ($Mod) {
+    $modName = $Mod.Trim()
+}
+
+if ([string]::IsNullOrWhiteSpace($BuildRootName)) {
+    if ($modName -eq "bo3_rev" -or [string]::IsNullOrWhiteSpace($modName)) {
+        $BuildRootName = "bo3_rev_idg_probe"
+    } else {
+        $BuildRootName = "{0}_idg_probe" -f $modName
+    }
+}
 
 function Copy-ItemSafe {
     param(
@@ -47,7 +120,27 @@ function Copy-ItemSafe {
     if (-not (Test-Path $dstDir)) {
         New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
     }
-    Copy-Item -Path $Source -Destination $Destination -Force
+
+    $leaf = Split-Path -Leaf $Destination
+    $sanitizeText = $leaf.EndsWith(".gsc", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $leaf.EndsWith(".csc", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $leaf.EndsWith(".gsc.in", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $leaf.EndsWith(".csc.in", [System.StringComparison]::OrdinalIgnoreCase)
+
+    if ($sanitizeText) {
+        $bytes = [System.IO.File]::ReadAllBytes($Source)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $trimmed = New-Object byte[] ($bytes.Length - 3)
+            [Array]::Copy($bytes, 3, $trimmed, 0, $trimmed.Length)
+            [System.IO.File]::WriteAllBytes($Destination, $trimmed)
+        }
+        else {
+            [System.IO.File]::WriteAllBytes($Destination, $bytes)
+        }
+    }
+    else {
+        Copy-Item -Path $Source -Destination $Destination -Force
+    }
     Write-Host "Synced: $Destination"
 }
 
@@ -64,6 +157,30 @@ function Copy-DirectoryFilesSafe {
     Get-ChildItem -Path $SourceDir -File -Filter $Filter | ForEach-Object {
         Copy-ItemSafe -Source $_.FullName -Destination (Join-Path $DestinationDir $_.Name)
     }
+}
+
+function Move-PathToLocalQuarantine {
+    param(
+        [string]$SourcePath,
+        [string]$QuarantineRoot,
+        [string]$Prefix
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path $SourcePath)) {
+        return
+    }
+
+    $safePrefix = if ([string]::IsNullOrWhiteSpace($Prefix)) { "quarantine" } else { $Prefix }
+    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $destRoot = Join-Path $QuarantineRoot $stamp
+    $destDir = Join-Path $destRoot $safePrefix
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    $destPath = Join-Path $destDir (Split-Path -Path $SourcePath -Leaf)
+    if (Test-Path $destPath) {
+        Remove-Item -LiteralPath $destPath -Recurse -Force
+    }
+    Move-Item -LiteralPath $SourcePath -Destination $destPath
+    Write-Host "Quarantined runtime override -> $destPath"
 }
 
 function Get-SharedText {
@@ -263,12 +380,13 @@ $plutoniumProcessNamePatterns = @(
     "plutonium*",
     "t6zm*"
 )
-$root = $GameDir
-$buildRoot = Join-Path $root "_build\bo3_rev_idg_probe"
+$root = $RepoDir
+$buildRoot = Join-Path $root ("_build\{0}" -f $BuildRootName)
 $outputRoot = Join-Path $buildRoot "output"
-$modRoot = Join-Path $root "mods\bo3_rev"
+$modRoot = if ($modName) { Join-Path $root ("mods\{0}" -f $modName) } else { "" }
 $runtimeQuarantineRoot = Join-Path $root "_build\runtime_quarantine\game_mods"
-$appDataModRoot = Join-Path $PlutoniumDir "storage\t6\mods\bo3_rev"
+$stockZoneControlQuarantineRoot = Join-Path $root "_build\runtime_quarantine\stock_survival_zone_control"
+$appDataModRoot = if ($modName) { Join-Path $PlutoniumDir ("storage\t6\mods\{0}" -f $modName) } else { "" }
 $generatedClientRoot = Join-Path $buildRoot "clientscripts\mp"
 $probeRoot = Join-Path $root "native\fx_runtime_probe"
 $probeBinRoot = Join-Path $probeRoot "bin\x86\Release"
@@ -278,16 +396,57 @@ $probeGuardConfigPath = Join-Path $probeRoot "active_guard_config.txt"
 $probeModeConfigPath = Join-Path $probeRoot "active_probe_mode.txt"
 $modConsoleLogPath = Join-Path $appDataModRoot "console_zm.log"
 $modGamesLogPath = Join-Path $appDataModRoot "games_mp.log"
+
+if (-not $SkipAssetValidation) {
+    $expectedZombieIpaks = @(
+        (Join-Path $root "zone\all\code_post_gfx_zm.ipak"),
+        (Join-Path $root "zone\all\common_zm.ipak"),
+        (Join-Path $root "zone\all\ui_zm.ipak"),
+        (Join-Path $root "zone\all\zm_transit.ipak"),
+        (Join-Path $root "zone\all\zm_transit_patch.ipak")
+    )
+    $missingZombieIpaks = @($expectedZombieIpaks | Where-Object { -not (Test-Path $_) })
+    if ($missingZombieIpaks.Count -gt 0) {
+        Write-Warning ("Expected zombie content ipaks missing from install: {0}" -f ($missingZombieIpaks -join ", "))
+        Write-Warning "Stock and modded first-person visuals may be incomplete until the base game content is restored."
+    }
+}
+$staleMpClientscriptFiles = @(
+    "_callbacks.csc",
+    "_load.csc",
+    "_trophy_system.csc",
+    "_dogs.csc",
+    "_rcbomb.csc",
+    "_qrdrone.csc",
+    "_ai_tank.csc",
+    "_missile_swarm.csc"
+)
+$staleCarrierMapScriptFiles = @(
+    (Join-Path $modRoot "maps\mp\zm_transit.gsc"),
+    (Join-Path $modRoot "maps\mp\zm_cosmodrome_standard.gsc"),
+    (Join-Path $appDataModRoot "maps\mp\zm_transit.gsc"),
+    (Join-Path $appDataModRoot "maps\mp\zm_cosmodrome_standard.gsc")
+)
 $skipModLoadSync = ($env:ROGUE_SKIP_MOD_LOAD_SYNC -eq "1")
-$skipSurvivalSync = ($env:ROGUE_SKIP_SURVIVAL_SYNC -eq "1")
+$skipSurvivalSync = ($env:ROGUE_SKIP_SURVIVAL_SYNC -eq "1") -or $UseStockSurvivalZone
 $skipModPatchSync = ($env:ROGUE_SKIP_MOD_PATCH_SYNC -eq "1")
 $skipClientScriptSync = ($env:ROGUE_SKIP_CLIENTSCRIPT_SYNC -eq "1")
+$syncGeneratedServantClientOverride = $SyncGeneratedClientOverrides -or ($env:ROGUE_SYNC_GENERATED_CLIENTSCRIPT_OVERRIDES -eq "1")
+$syncCarrierMapScripts = ($env:ROGUE_SYNC_CARRIER_MAP_SCRIPTS -eq "1")
+$syncTransitClientScript = ($env:ROGUE_SYNC_TRANSIT_CLIENTSCRIPT -ne "0")
+
+if ($UseStockSurvivalZone) {
+    $skipClientScriptSync = $true
+    $syncGeneratedServantClientOverride = $false
+    $syncCarrierMapScripts = $false
+    $syncTransitClientScript = $false
+}
 
 $fallbackModRoot = $null
 if (Test-Path $runtimeQuarantineRoot) {
     $latestQuarantine = Get-ChildItem $runtimeQuarantineRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
     if ($latestQuarantine) {
-        $candidate = Join-Path $latestQuarantine.FullName "bo3_rev"
+        $candidate = if ($modName) { Join-Path $latestQuarantine.FullName $modName } else { "" }
         if (Test-Path $candidate) {
             $fallbackModRoot = $candidate
             Write-Host "Fallback mod root available: $fallbackModRoot"
@@ -362,6 +521,33 @@ function Write-ResolvedSourceSummary {
     }
 }
 
+function New-ResolvedSourceRecord {
+    param(
+        [string]$Label,
+        [string]$Path
+    )
+
+    $origin = Get-SourceOriginLabel -Path $Path
+    $exists = -not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path $Path)
+    $size = 0
+    $sha256 = ""
+
+    if ($exists) {
+        $item = Get-Item -LiteralPath $Path
+        $size = [int64]$item.Length
+        $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    }
+
+    return [ordered]@{
+        label = $Label
+        path = $Path
+        origin = $origin
+        exists = $exists
+        size = $size
+        sha256 = $sha256
+    }
+}
+
 $modScriptSource = Resolve-SourcePath @(
     (Join-Path $modRoot "scripts\mod_i_am_mod.gsc"),
     (Join-Path $buildRoot "scripts\mod_i_am_mod.gsc"),
@@ -370,6 +556,10 @@ $modScriptSource = Resolve-SourcePath @(
 $zmClientSource = Resolve-SourcePath @(
     (Join-Path $modRoot "clientscripts\mp\zombies\_zm.csc"),
     $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "clientscripts\mp\zombies\_zm.csc" })
+)
+$zmPlayersClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\zombies\_players.csc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "clientscripts\mp\zombies\_players.csc" })
 )
 $farmgirlSource = Resolve-SourcePath @(
     (Join-Path $modRoot "character\c_transit_player_farmgirl.gsc"),
@@ -389,43 +579,276 @@ $reporterSource = Resolve-SourcePath @(
 )
 $spawnerSource = Resolve-SourcePath @(
     (Join-Path $modRoot "scripts\mp\zombies\_zm_spawner.gsc"),
+    (Join-Path $modRoot "maps\mp\zombies\_zm_spawner.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "maps\mp\zombies\_zm_spawner.gsc" }),
     $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "scripts\mp\zombies\_zm_spawner.gsc" })
 )
+if (
+    [string]::Equals($modName, "blackops3servant", [System.StringComparison]::OrdinalIgnoreCase) -or
+    [System.Environment]::GetEnvironmentVariable("ROGUE_ALLOW_SERVER_SPAWNER_SYNC", "Process") -ne "1"
+) {
+    $spawnerSource = ""
+}
+if ($UseStockSurvivalZone) {
+    $farmgirlSource = ""
+    $oldmanSource = ""
+    $engineerSource = ""
+    $reporterSource = ""
+}
+$vehicleClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_vehicle.csc")
+)
+$dogsClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_dogs.csc")
+)
+$rcbombClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_rcbomb.csc")
+)
+$qrdroneClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_qrdrone.csc")
+)
+$aiTankClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_ai_tank.csc")
+)
+$missileSwarmClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\_missile_swarm.csc")
+)
+$transitClientSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "clientscripts\mp\zm_transit.csc"),
+    (Join-Path $generatedClientRoot "zm_transit.csc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "clientscripts\mp\zm_transit.csc" })
+)
+$transitCarrierSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "maps\mp\zm_transit.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "maps\mp\zm_transit.gsc" })
+)
+$cosmodromeStandardSource = Resolve-SourcePath @(
+    (Join-Path $modRoot "maps\mp\zm_cosmodrome_standard.gsc"),
+    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "maps\mp\zm_cosmodrome_standard.gsc" })
+)
 $mainLobbySource = Resolve-SourcePath @(
-    (Join-Path $modRoot "ui\t6\mainlobby.lua"),
-    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "ui\t6\mainlobby.lua" })
+    (Join-Path $modRoot "ui\t6\mainlobby.lua")
 )
 $mainMenuSource = Resolve-SourcePath @(
-    (Join-Path $modRoot "ui_mp\t6\mainmenu.lua"),
-    $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "ui_mp\t6\mainmenu.lua" })
+    (Join-Path $modRoot "ui_mp\t6\mainmenu.lua")
 )
+$preferExistingModZoneSource = ($modName -and -not [string]::Equals($modName, "bo3_rev", [System.StringComparison]::OrdinalIgnoreCase))
+$survivalRuntimeSource = if ($preferExistingModZoneSource) {
+    Resolve-SourcePath @(
+        (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ff"),
+        (Join-Path $outputRoot "so_zsurvival_zm_transit.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\so_zsurvival_zm_transit.ff" })
+    )
+} else {
+    Resolve-SourcePath @(
+        (Join-Path $outputRoot "so_zsurvival_zm_transit.ff"),
+        (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\so_zsurvival_zm_transit.ff" })
+    )
+}
+$survivalRuntimeIpakSource = if ($preferExistingModZoneSource) {
+    Resolve-SourcePath @(
+        (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ipak"),
+        (Join-Path $outputRoot "so_zsurvival_zm_transit.ipak"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\so_zsurvival_zm_transit.ipak" })
+    )
+} else {
+    Resolve-SourcePath @(
+        (Join-Path $outputRoot "so_zsurvival_zm_transit.ipak"),
+        (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ipak"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\so_zsurvival_zm_transit.ipak" })
+    )
+}
+$modLoadRuntimeSource = if ($preferExistingModZoneSource) {
+    Resolve-SourcePath @(
+        (Join-Path $modRoot "zone\all\mod_load.ff"),
+        (Join-Path $outputRoot "mod_load.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_load.ff" })
+    )
+} else {
+    Resolve-SourcePath @(
+        (Join-Path $outputRoot "mod_load.ff"),
+        (Join-Path $modRoot "zone\all\mod_load.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_load.ff" })
+    )
+}
+$modPatchRuntimeSource = if ($preferExistingModZoneSource) {
+    Resolve-SourcePath @(
+        (Join-Path $modRoot "zone\all\mod_patch.ff"),
+        (Join-Path $outputRoot "mod_patch.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_patch.ff" })
+    )
+} else {
+    Resolve-SourcePath @(
+        (Join-Path $outputRoot "mod_patch.ff"),
+        (Join-Path $modRoot "zone\all\mod_patch.ff"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_patch.ff" })
+    )
+}
+$modLoadIpakRuntimeSource = if ($preferExistingModZoneSource) {
+    Resolve-SourcePath @(
+        (Join-Path $modRoot "zone\all\mod_load.ipak"),
+        (Join-Path $outputRoot "mod_load.ipak"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_load.ipak" })
+    )
+} else {
+    Resolve-SourcePath @(
+        (Join-Path $outputRoot "mod_load.ipak"),
+        (Join-Path $modRoot "zone\all\mod_load.ipak"),
+        $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "zone\all\mod_load.ipak" })
+    )
+}
+
+$buildOutputModLoad = Join-Path $outputRoot "mod_load.ff"
+$buildOutputModLoadIpak = Join-Path $outputRoot "mod_load.ipak"
+if (-not $preferExistingModZoneSource) {
+    if (-not (Test-Path $buildOutputModLoad)) {
+        $skipModLoadSync = $true
+        $modLoadRuntimeSource = $buildOutputModLoad
+        $modLoadIpakRuntimeSource = $buildOutputModLoadIpak
+        Write-Host "Current build did not emit mod_load.ff; stale mod_load sync disabled for this run."
+    }
+}
+if (-not (Test-Path $modLoadRuntimeSource)) {
+    $skipModLoadSync = $true
+    $modLoadRuntimeSource = $buildOutputModLoad
+    $modLoadIpakRuntimeSource = $buildOutputModLoadIpak
+    Write-Host "Resolved mod_load.ff source is missing; mod_load sync disabled for this run."
+}
+
+function Get-LatestQuarantinedGametypeRawDir {
+    param([string]$StorageRoot)
+
+    if ([string]::IsNullOrWhiteSpace($StorageRoot) -or -not (Test-Path $StorageRoot)) {
+        return ""
+    }
+
+    $parents = @(Get-ChildItem -Path $StorageRoot -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "_temp_disabled_raw*" -or $_.Name -eq "_manual_quarantine" } |
+        Sort-Object LastWriteTime -Descending)
+
+    foreach ($parent in $parents) {
+        $direct = Join-Path $parent.FullName "raw\maps\mp\gametypes_zm"
+        if (Test-Path $direct) {
+            return $direct
+        }
+
+        foreach ($child in @(Get-ChildItem -Path $parent.FullName -Directory -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+            $candidate = Join-Path $child.FullName "raw\maps\mp\gametypes_zm"
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    return ""
+}
+
+$quarantinedGametypeRawDir = Get-LatestQuarantinedGametypeRawDir -StorageRoot (Join-Path $PlutoniumDir "storage\t6")
 $gametypeRawSourceDir = Resolve-SourcePath @(
     (Join-Path $modRoot "maps\mp\gametypes_zm"),
     $(if ($fallbackModRoot) { Join-Path $fallbackModRoot "maps\mp\gametypes_zm" }),
-    (Join-Path $PlutoniumDir "storage\t6\maps\mp\gametypes_zm")
+    (Join-Path $PlutoniumDir "storage\t6\maps\mp\gametypes_zm"),
+    $quarantinedGametypeRawDir
 )
 
 Write-ResolvedSourceSummary -Label "mod_i_am_mod" -Path $modScriptSource
 Write-ResolvedSourceSummary -Label "_zm.csc" -Path $zmClientSource
+Write-ResolvedSourceSummary -Label "_players.csc" -Path $zmPlayersClientSource
 Write-ResolvedSourceSummary -Label "farmgirl" -Path $farmgirlSource
 Write-ResolvedSourceSummary -Label "oldman" -Path $oldmanSource
 Write-ResolvedSourceSummary -Label "engineer" -Path $engineerSource
 Write-ResolvedSourceSummary -Label "reporter" -Path $reporterSource
 Write-ResolvedSourceSummary -Label "_zm_spawner.gsc" -Path $spawnerSource
+Write-ResolvedSourceSummary -Label "_vehicle.csc" -Path $vehicleClientSource
+Write-ResolvedSourceSummary -Label "_dogs.csc" -Path $dogsClientSource
+Write-ResolvedSourceSummary -Label "_rcbomb.csc" -Path $rcbombClientSource
+Write-ResolvedSourceSummary -Label "_qrdrone.csc" -Path $qrdroneClientSource
+Write-ResolvedSourceSummary -Label "_ai_tank.csc" -Path $aiTankClientSource
+Write-ResolvedSourceSummary -Label "_missile_swarm.csc" -Path $missileSwarmClientSource
+Write-ResolvedSourceSummary -Label "zm_transit.csc" -Path $transitClientSource
+Write-ResolvedSourceSummary -Label "zm_transit.gsc" -Path $transitCarrierSource
+Write-ResolvedSourceSummary -Label "zm_cosmodrome_standard.gsc" -Path $cosmodromeStandardSource
+Write-ResolvedSourceSummary -Label "runtime_so_zsurvival_zm_transit.ff" -Path $survivalRuntimeSource
+Write-ResolvedSourceSummary -Label "runtime_so_zsurvival_zm_transit.ipak" -Path $survivalRuntimeIpakSource
+Write-ResolvedSourceSummary -Label "runtime_mod_load.ff" -Path $modLoadRuntimeSource
+Write-ResolvedSourceSummary -Label "runtime_mod_patch.ff" -Path $modPatchRuntimeSource
+if ($syncGeneratedServantClientOverride) {
+    Write-Host "Generated Servant client override: enabled"
+} else {
+    Write-Host "Generated Servant client override: disabled (contract overrides still sync; stale Servant client helper will be removed)"
+}
 
-$baseZoneTargets = @()
-if (-not $ModOnly) {
-    $baseZoneTargets = @(
-        (Join-Path $root "zone\all\so_zsurvival_zm_transit.ff"),
-        (Join-Path $root "zone\all\mod_load.ff"),
-        (Join-Path $root "zone\all\mod_patch.ff"),
-        (Join-Path $root "zone\all\mod_load.ipak")
-    )
+$resolvedSourceReportEntries = @(
+    (New-ResolvedSourceRecord -Label "mod_i_am_mod" -Path $modScriptSource),
+    (New-ResolvedSourceRecord -Label "_zm.csc" -Path $zmClientSource),
+    (New-ResolvedSourceRecord -Label "_players.csc" -Path $zmPlayersClientSource),
+    (New-ResolvedSourceRecord -Label "farmgirl" -Path $farmgirlSource),
+    (New-ResolvedSourceRecord -Label "oldman" -Path $oldmanSource),
+    (New-ResolvedSourceRecord -Label "engineer" -Path $engineerSource),
+    (New-ResolvedSourceRecord -Label "reporter" -Path $reporterSource),
+    (New-ResolvedSourceRecord -Label "_zm_spawner.gsc" -Path $spawnerSource),
+    (New-ResolvedSourceRecord -Label "_vehicle.csc" -Path $vehicleClientSource),
+    (New-ResolvedSourceRecord -Label "_dogs.csc" -Path $dogsClientSource),
+    (New-ResolvedSourceRecord -Label "_rcbomb.csc" -Path $rcbombClientSource),
+    (New-ResolvedSourceRecord -Label "_qrdrone.csc" -Path $qrdroneClientSource),
+    (New-ResolvedSourceRecord -Label "_ai_tank.csc" -Path $aiTankClientSource),
+    (New-ResolvedSourceRecord -Label "_missile_swarm.csc" -Path $missileSwarmClientSource),
+    (New-ResolvedSourceRecord -Label "zm_transit.csc" -Path $transitClientSource),
+    (New-ResolvedSourceRecord -Label "zm_transit.gsc" -Path $transitCarrierSource),
+    (New-ResolvedSourceRecord -Label "zm_cosmodrome_standard.gsc" -Path $cosmodromeStandardSource),
+    (New-ResolvedSourceRecord -Label "runtime_so_zsurvival_zm_transit.ff" -Path $survivalRuntimeSource),
+    (New-ResolvedSourceRecord -Label "runtime_so_zsurvival_zm_transit.ipak" -Path $survivalRuntimeIpakSource),
+    (New-ResolvedSourceRecord -Label "runtime_mod_load.ff" -Path $modLoadRuntimeSource),
+    (New-ResolvedSourceRecord -Label "runtime_mod_patch.ff" -Path $modPatchRuntimeSource)
+)
+
+if (-not [string]::IsNullOrWhiteSpace($ResolvedSourceReportPath)) {
+    $reportDir = Split-Path -Parent $ResolvedSourceReportPath
+    if (-not [string]::IsNullOrWhiteSpace($reportDir) -and -not (Test-Path $reportDir)) {
+        New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+    }
+
+    $resolvedSourceReport = [ordered]@{
+        generated_at = (Get-Date).ToString("o")
+        mod = $modName
+        launch = [bool]$Launch
+        inject_probe = [bool]$InjectProbe
+        probe_mode = $ProbeMode
+        map = $Map
+        ui_mapname = $UiMapName
+        ui_gametype = $UiGametype
+        ui_zm_gamemodegroup = $UiZmGamemodeGroup
+        ui_map_start_location = $UiMapStartLocation
+        g_gametype = $GGametype
+        sync_flags = [ordered]@{
+            use_stock_survival_zone = [bool]$UseStockSurvivalZone
+            sync_base_zone_all = [bool]$SyncBaseZoneAll
+            sync_generated_client_overrides = [bool]$SyncGeneratedClientOverrides
+            skip_asset_validation = [bool]$SkipAssetValidation
+            skip_mod_load_sync = [bool]$skipModLoadSync
+            skip_mod_patch_sync = [bool]$skipModPatchSync
+            skip_script_sync = [bool]$skipScriptSync
+            skip_survival_sync = [bool]$skipSurvivalSync
+            sync_generated_servant_client_override = [bool]$syncGeneratedServantClientOverride
+        }
+        source_roots = [ordered]@{
+            repo_mod = $modRoot
+            build_output = $buildRoot
+            generated_clientscripts = $generatedClientRoot
+            fallback_quarantine = $fallbackModRoot
+            appdata_runtime = $appDataModRoot
+        }
+        resolved_sources = $resolvedSourceReportEntries
+    }
+
+    $resolvedSourceReport | ConvertTo-Json -Depth 8 | Set-Content -Path $ResolvedSourceReportPath -Encoding UTF8
+    Write-Host "Resolved source report: $ResolvedSourceReportPath"
 }
 
 $runtimeFiles = @(
     @{
-        Source = Join-Path $outputRoot "so_zsurvival_zm_transit.ff"
+        Source = $survivalRuntimeSource
         Required = $true
         Skip = $skipSurvivalSync
         Destinations = @(
@@ -434,7 +857,16 @@ $runtimeFiles = @(
         )
     },
     @{
-        Source = Join-Path $outputRoot "mod_load.ff"
+        Source = $survivalRuntimeIpakSource
+        Required = $false
+        Skip = $skipSurvivalSync
+        Destinations = @(
+            (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ipak"),
+            (Join-Path $appDataModRoot "zone\all\so_zsurvival_zm_transit.ipak")
+        )
+    },
+    @{
+        Source = $modLoadRuntimeSource
         Required = $true
         Skip = $skipModLoadSync
         Destinations = @(
@@ -443,7 +875,7 @@ $runtimeFiles = @(
         )
     },
     @{
-        Source = Join-Path $outputRoot "mod_patch.ff"
+        Source = $modPatchRuntimeSource
         Required = $false
         Skip = $skipModPatchSync
         Destinations = @(
@@ -452,7 +884,7 @@ $runtimeFiles = @(
         )
     },
     @{
-        Source = Join-Path $outputRoot "mod_load.ipak"
+        Source = $modLoadIpakRuntimeSource
         Required = $false
         Skip = $skipModLoadSync
         Destinations = @(
@@ -462,27 +894,72 @@ $runtimeFiles = @(
     }
 )
 
-if (-not $ModOnly) {
+if ($SyncBaseZoneAll) {
     $runtimeFiles[0].Destinations = @(
         (Join-Path $root "zone\all\so_zsurvival_zm_transit.ff"),
         (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ff"),
         (Join-Path $appDataModRoot "zone\all\so_zsurvival_zm_transit.ff")
     )
     $runtimeFiles[1].Destinations = @(
+        (Join-Path $root "zone\all\so_zsurvival_zm_transit.ipak"),
+        (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ipak"),
+        (Join-Path $appDataModRoot "zone\all\so_zsurvival_zm_transit.ipak")
+    )
+    $runtimeFiles[2].Destinations = @(
         (Join-Path $root "zone\all\mod_load.ff"),
         (Join-Path $modRoot "zone\all\mod_load.ff"),
         (Join-Path $appDataModRoot "zone\all\mod_load.ff")
     )
-    $runtimeFiles[2].Destinations = @(
+    $runtimeFiles[3].Destinations = @(
         (Join-Path $root "zone\all\mod_patch.ff"),
         (Join-Path $modRoot "zone\all\mod_patch.ff"),
         (Join-Path $appDataModRoot "zone\all\mod_patch.ff")
     )
-    $runtimeFiles[3].Destinations = @(
+    $runtimeFiles[4].Destinations = @(
         (Join-Path $root "zone\all\mod_load.ipak"),
         (Join-Path $modRoot "zone\all\mod_load.ipak"),
         (Join-Path $appDataModRoot "zone\all\mod_load.ipak")
     )
+}
+
+if ($UseStockSurvivalZone) {
+    Write-Host "Stock survival-zone control enabled. Using base install so_zsurvival_zm_transit.ff and quarantining mod overrides."
+
+    $stockZoneEntries = @()
+    if ($modRoot) {
+        $stockZoneEntries += @(
+            @{ Path = (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ff"); Prefix = "repo_mod" },
+            @{ Path = (Join-Path $modRoot "zone\all\so_zsurvival_zm_transit.ipak"); Prefix = "repo_mod" }
+        )
+    }
+    if ($appDataModRoot) {
+        $stockZoneEntries += @(
+            @{ Path = (Join-Path $appDataModRoot "zone\all\so_zsurvival_zm_transit.ff"); Prefix = "appdata_mod" },
+            @{ Path = (Join-Path $appDataModRoot "zone\all\so_zsurvival_zm_transit.ipak"); Prefix = "appdata_mod" }
+        )
+    }
+
+    foreach ($entry in $stockZoneEntries) {
+        Move-PathToLocalQuarantine -SourcePath $entry.Path -QuarantineRoot $stockZoneControlQuarantineRoot -Prefix $entry.Prefix
+    }
+
+    $stockSurvivalSource = Join-Path $GameDir "zone\all\so_zsurvival_zm_transit.ff"
+    if (Test-Path $stockSurvivalSource) {
+        Write-Host "Stock survival source -> $stockSurvivalSource"
+    } else {
+        Write-Warning "Stock survival source missing: $stockSurvivalSource"
+    }
+
+    foreach ($staleDir in @(
+        (Join-Path $appDataModRoot "character"),
+        (Join-Path $appDataModRoot "maps\mp\gametypes_zm"),
+        (Join-Path $appDataModRoot "raw")
+    )) {
+        if (Test-Path $staleDir) {
+            Remove-Item -Path $staleDir -Recurse -Force
+            Write-Host "Removed stock-survival stale runtime tree: $staleDir"
+        }
+    }
 }
 
 $scriptFiles = @(
@@ -525,13 +1002,77 @@ $scriptFiles = @(
         Source = $spawnerSource
         RemoveIfMissing = $true
         Destinations = @(
-            Join-Path $appDataModRoot "scripts\mp\zombies\_zm_spawner.gsc"
+            (Join-Path $appDataModRoot "maps\mp\zombies\_zm_spawner.gsc")
         )
     },
     @{
-        Source = (Join-Path $generatedClientRoot "zm_transit.csc")
+        Source = $vehicleClientSource
         RemoveIfMissing = $true
         Skip = $skipClientScriptSync
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_vehicle.csc"
+        )
+    },
+    @{
+        Source = $dogsClientSource
+        RemoveIfMissing = $true
+        Skip = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_dogs.csc"
+        )
+    },
+    @{
+        Source = $rcbombClientSource
+        RemoveIfMissing = $true
+        Skip = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_rcbomb.csc"
+        )
+    },
+    @{
+        Source = $qrdroneClientSource
+        RemoveIfMissing = $true
+        Skip = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_qrdrone.csc"
+        )
+    },
+    @{
+        Source = $aiTankClientSource
+        RemoveIfMissing = $true
+        Skip = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_ai_tank.csc"
+        )
+    },
+    @{
+        Source = $missileSwarmClientSource
+        RemoveIfMissing = $true
+        Skip = $true
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\_missile_swarm.csc"
+        )
+    },
+    @{
+        Source = $transitCarrierSource
+        RemoveIfMissing = $true
+        Skip = (-not $syncCarrierMapScripts)
+        Destinations = @(
+            Join-Path $appDataModRoot "maps\mp\zm_transit.gsc"
+        )
+    },
+    @{
+        Source = $cosmodromeStandardSource
+        RemoveIfMissing = $true
+        Skip = (-not $syncCarrierMapScripts)
+        Destinations = @(
+            Join-Path $appDataModRoot "maps\mp\zm_cosmodrome_standard.gsc"
+        )
+    },
+    @{
+        Source = $transitClientSource
+        RemoveIfMissing = $true
+        Skip = ($skipClientScriptSync -or -not $syncTransitClientScript)
         Destinations = @(
             Join-Path $appDataModRoot "clientscripts\mp\zm_transit.csc"
         )
@@ -547,7 +1088,7 @@ $scriptFiles = @(
     @{
         Source = (Join-Path $generatedClientRoot "zombies\_bo3_rev_servant_fx_v3.csc")
         RemoveIfMissing = $true
-        Skip = $skipClientScriptSync
+        Skip = ($skipClientScriptSync -or -not $syncGeneratedServantClientOverride)
         Destinations = @(
             Join-Path $appDataModRoot "clientscripts\mp\zombies\_bo3_rev_servant_fx_v3.csc"
         )
@@ -558,6 +1099,14 @@ $scriptFiles = @(
         Skip = $skipClientScriptSync
         Destinations = @(
             Join-Path $appDataModRoot "clientscripts\mp\zombies\_zm.csc"
+        )
+    },
+    @{
+        Source = $zmPlayersClientSource
+        RemoveIfMissing = $true
+        Skip = $skipClientScriptSync
+        Destinations = @(
+            Join-Path $appDataModRoot "clientscripts\mp\zombies\_players.csc"
         )
     },
     @{
@@ -678,7 +1227,8 @@ foreach ($entry in $scriptFiles) {
         }
         continue
     }
-    if (-not (Test-Path $entry.Source)) {
+    $entrySource = [string]$entry.Source
+    if ([string]::IsNullOrWhiteSpace($entrySource) -or -not (Test-Path $entrySource)) {
         $removeIfMissing = $false
         if ($entry.ContainsKey("RemoveIfMissing")) {
             $removeIfMissing = [bool]$entry.RemoveIfMissing
@@ -694,16 +1244,49 @@ foreach ($entry in $scriptFiles) {
         continue
     }
     foreach ($dst in $entry.Destinations) {
-        Copy-ItemSafe -Source $entry.Source -Destination $dst
+        Copy-ItemSafe -Source $entrySource -Destination $dst
     }
 }
 
-if (Test-Path $gametypeRawSourceDir) {
+if (-not $skipClientScriptSync) {
+    $mpClientscriptDstRoot = Join-Path $appDataModRoot "clientscripts\mp"
+    New-Item -ItemType Directory -Path $mpClientscriptDstRoot -Force | Out-Null
+    foreach ($staleClientscriptName in $staleMpClientscriptFiles) {
+        $stalePath = Join-Path $mpClientscriptDstRoot $staleClientscriptName
+        if (Test-Path $stalePath) {
+            Remove-Item -Path $stalePath -Force
+            Write-Host "Removed stale MP clientscript: $stalePath"
+        }
+    }
+}
+
+$skipGametypeRawSync = $env:ROGUE_SKIP_GAMETYPE_RAW_SYNC -and $env:ROGUE_SKIP_GAMETYPE_RAW_SYNC -notin @("0", "false", "False")
+$gametypeRawDestinations = @(
+    (Join-Path $modRoot "maps\mp\gametypes_zm"),
+    (Join-Path $appDataModRoot "maps\mp\gametypes_zm")
+)
+
+if ($skipGametypeRawSync) {
+    foreach ($dstDir in $gametypeRawDestinations) {
+        if (Test-Path $dstDir) {
+            Remove-Item -Path $dstDir -Recurse -Force
+            Write-Host "Removed stale gametype rawfiles: $dstDir"
+        }
+    }
+}
+
+if (-not $syncCarrierMapScripts) {
+    foreach ($stalePath in $staleCarrierMapScriptFiles) {
+        if (Test-Path $stalePath) {
+            Remove-Item -Path $stalePath -Force
+            Write-Host "Removed stale carrier map script: $stalePath"
+        }
+    }
+}
+
+if (-not $skipGametypeRawSync -and (Test-Path $gametypeRawSourceDir)) {
     Write-Host "Syncing gametype rawfiles..."
-    foreach ($dstDir in @(
-        (Join-Path $modRoot "maps\mp\gametypes_zm"),
-        (Join-Path $appDataModRoot "maps\mp\gametypes_zm")
-    )) {
+    foreach ($dstDir in $gametypeRawDestinations) {
         Copy-DirectoryFilesSafe -SourceDir $gametypeRawSourceDir -DestinationDir $dstDir -Filter "*.txt"
     }
 }
@@ -783,8 +1366,15 @@ $launchArgs = @(
     "-ExecutionPolicy", "Bypass",
     "-File", $launchScript,
     "-Name", $Name,
-    "-Mod", $Mod
+    "-Mod", $Mod,
+    "-RepoDir", $RepoDir,
+    "-GameDir", $GameDir,
+    "-PlutoniumDir", $PlutoniumDir
 )
+$launchArgs += @("-MonitorIndex", $MonitorIndex)
+if ($MonitorIndex -gt 0) {
+    $launchArgs += @("-HiddenWorker")
+}
 if ($Map -and $Map.Trim().Length -gt 0) {
     $launchArgs += @("-Map", $Map)
     if (-not $UiMapName -or $UiMapName.Trim().Length -eq 0) {
